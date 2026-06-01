@@ -1,0 +1,38 @@
+{
+  "industry": "smart_home",
+  "industry_name": "智能家居",
+  "key_players": [
+    {"name": "小米", "strength": "生态链完整、性价比高", "weakness": "高端体验不足"},
+    {"name": "华为", "strength": "技术壁垒高、全场景覆盖", "weakness": "价格偏高、生态封闭"},
+    {"name": "Amazon Alexa", "strength": "语音交互领先、开发者生态", "weakness": "中国市场水土不服"},
+    {"name": "Google Home", "strength": "AI能力强、搜索整合", "weakness": "中国市场不可用"},
+    {"name": "天猫精灵", "strength": "电商整合、内容生态", "weakness": "设备控制深度不足"}
+  ],
+  "comparison_dimensions": [
+    {
+      "dimension": "交互触发",
+      "description": "多设备交互触发的判定策略和响应速度",
+      "our_focus": "智能联动、就近触发、响应时延"
+    },
+    {
+      "dimension": "设备控制",
+      "description": "多品类设备控制的深度和广度",
+      "our_focus": "预约控制、多模式控制、场景联动"
+    },
+    {
+      "dimension": "用户体验",
+      "description": "交互流畅度、个性化程度、多端一致性",
+      "our_focus": "交互体验、灯效/语音应答、弱网降级"
+    },
+    {
+      "dimension": "数据能力",
+      "description": "数据采集、效果评估、数据驱动迭代",
+      "our_focus": "效果追踪方案、查询系统、效果评估闭环"
+    }
+  ],
+  "market_characteristics": {
+    "growth_drivers": ["智能场景渗透率提升", "智能交互习惯养成", "AI大模型赋能"],
+    "challenges": ["设备碎片化", "跨品牌互联互通", "用户隐私顾虑"],
+    "trends": ["从单品到场景化智能", "从被动控制到主动服务", "从规则引擎到AI决策"]
+  }
+}

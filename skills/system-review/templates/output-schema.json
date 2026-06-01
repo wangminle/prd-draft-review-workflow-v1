@@ -1,0 +1,178 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "System Review Output",
+  "type": "object",
+  "required": ["project_name", "output_type", "dimensions", "metadata"],
+  "properties": {
+    "project_name": {
+      "type": "string",
+      "description": "Project name from classify result"
+    },
+    "output_type": {
+      "type": "string",
+      "enum": ["full_report", "next_directions", "quality_assessment", "prd_draft", "all"],
+      "description": "Output type that was requested"
+    },
+    "dimensions": {
+      "type": "object",
+      "properties": {
+        "business_value": {
+          "type": "object",
+          "description": "Dimension 1: Business value analysis",
+          "properties": {
+            "strategic_value": {
+              "type": "object",
+              "properties": {
+                "user_value": {"$ref": "#/$defs/strategic_score"},
+                "tech_barrier": {"$ref": "#/$defs/strategic_score"},
+                "market_scale": {"$ref": "#/$defs/strategic_score"},
+                "strategic_synergy": {"$ref": "#/$defs/strategic_score"},
+                "feasibility": {"$ref": "#/$defs/strategic_score"}
+              }
+            },
+            "business_goals": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/business_goal"}
+            },
+            "user_insights": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/user_insight"}
+            }
+          }
+        },
+        "architecture": {
+          "type": "object",
+          "description": "Dimension 2: Requirement architecture",
+          "properties": {
+            "evolution_stages": {"type": "array"},
+            "category_assessment": {"type": "array"},
+            "dependency_issues": {"type": "array"},
+            "architecture_gaps": {"type": "array"}
+          }
+        },
+        "competition": {
+          "type": "object",
+          "description": "Dimension 3: Competitive positioning",
+          "properties": {
+            "market_landscape": {"type": "object"},
+            "competitor_comparison": {"type": "array"},
+            "differentiation": {"type": "object"}
+          }
+        },
+        "product_strategy": {
+          "type": "object",
+          "description": "Dimension 4: Product strategy",
+          "properties": {
+            "current_strategy_assessment": {"type": "object"},
+            "recommendations": {"type": "array"},
+            "roadmap": {"type": "array"}
+          }
+        },
+        "tech_evolution": {
+          "type": "object",
+          "description": "Dimension 5: Technical evolution",
+          "properties": {
+            "current_architecture": {"type": "object"},
+            "key_metrics": {"type": "array"},
+            "tech_evolution": {"type": "object"},
+            "evolution_recommendations": {"type": "array"}
+          }
+        },
+        "pm_assessment": {
+          "type": "object",
+          "description": "Dimension 6: PM capability assessment",
+          "properties": {
+            "writing_scores": {"$ref": "#/$defs/score_set"},
+            "thinking_scores": {"$ref": "#/$defs/score_set"},
+            "pm_type": {"type": "string"},
+            "highlights": {"type": "array", "items": {"type": "string"}},
+            "blindspots": {"type": "array", "items": {"type": "string"}},
+            "growth_path": {"$ref": "#/$defs/growth_path"}
+          }
+        },
+        "action_plan": {
+          "type": "object",
+          "description": "Dimension 7: Action plan",
+          "properties": {
+            "short_term": {"type": "array"},
+            "mid_term": {"type": "array"},
+            "long_term": {"type": "array"},
+            "milestones": {"type": "array"},
+            "risks": {"type": "array"}
+          }
+        }
+      }
+    },
+    "reports": {
+      "type": "object",
+      "description": "Generated Markdown reports keyed by output type",
+      "additionalProperties": {"type": "string"}
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["total_docs", "dimensions_executed", "output_type"],
+      "properties": {
+        "total_docs": {"type": "integer"},
+        "dimensions_executed": {"type": "array", "items": {"type": "integer"}},
+        "output_type": {"type": "string"},
+        "models_used": {"type": "object"},
+        "target_doc": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "strategic_score": {
+      "type": "object",
+      "required": ["score", "evidence"],
+      "properties": {
+        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+        "evidence": {"type": "string"}
+      }
+    },
+    "business_goal": {
+      "type": "object",
+      "properties": {
+        "goal": {"type": "string"},
+        "coverage": {"type": "string", "enum": ["high", "medium", "low"]},
+        "gap": {"type": "string"},
+        "evidence": {"type": "string"}
+      }
+    },
+    "user_insight": {
+      "type": "object",
+      "properties": {
+        "insight": {"type": "string"},
+        "source_doc_ids": {"type": "array", "items": {"type": "string"}},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+      }
+    },
+    "score_set": {
+      "type": "object",
+      "properties": {
+        "logic": {"$ref": "#/$defs/dimension_score"},
+        "tech_depth": {"$ref": "#/$defs/dimension_score"},
+        "boundary": {"$ref": "#/$defs/dimension_score"},
+        "business": {"$ref": "#/$defs/dimension_score"},
+        "iteration": {"$ref": "#/$defs/dimension_score"},
+        "experience": {"$ref": "#/$defs/dimension_score"},
+        "data": {"$ref": "#/$defs/dimension_score"}
+      }
+    },
+    "dimension_score": {
+      "type": "object",
+      "required": ["score", "evidence"],
+      "properties": {
+        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+        "evidence": {"type": "string"}
+      }
+    },
+    "growth_path": {
+      "type": "object",
+      "properties": {
+        "short_term": {"type": "array", "items": {"type": "string"}},
+        "mid_term": {"type": "array", "items": {"type": "string"}},
+        "long_term": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

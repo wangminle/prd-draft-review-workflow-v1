@@ -1,0 +1,125 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="680" viewBox="0 0 1180 680" role="img" aria-labelledby="title desc">
+  <title id="title">下一迭代演进路线</title>
+  <desc id="desc">展示从需求审查平台升级为团队需求协作与知识增强平台的演进路线，包含三层：协作入口层、知识底座层、可配置编排层。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 24px; font-weight: 700; fill: #0f172a; }
+      .subtitle { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; fill: #64748b; }
+      .layer-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 700; fill: #0f172a; }
+      .h { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .t { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; fill: #334155; }
+      .small { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; fill: #64748b; }
+      .p0-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; fill: #dc2626; }
+      .p1-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; fill: #ea580c; }
+      .p2-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; font-weight: 700; fill: #64748b; }
+      .pill { fill: #dbeafe; stroke: #60a5fa; stroke-width: 1; rx: 18; }
+      .pill-green { fill: #dcfce7; stroke: #4ade80; stroke-width: 1; rx: 18; }
+      .pill-orange { fill: #ffedd5; stroke: #fb923c; stroke-width: 1; rx: 18; }
+      .pill-rose { fill: #ffe4e6; stroke: #fb7185; stroke-width: 1; rx: 18; }
+      .line { stroke: #2563eb; stroke-width: 2; fill: none; marker-end: url(#arrow); }
+      .line-green { stroke: #16a34a; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+      .muted-line { stroke: #94a3b8; stroke-width: 1.6; fill: none; stroke-dasharray: 6 5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+  <rect class="bg" width="1180" height="680"/>
+
+  <!-- Title -->
+  <text class="title" x="40" y="40">下一迭代演进路线</text>
+  <text class="subtitle" x="40" y="62">从需求审查平台 → 团队需求协作与知识增强平台</text>
+
+  <!-- Layer 1: 知识底座层 (P0, bottom, widest) -->
+  <rect x="40" y="440" width="1100" height="100" rx="14" fill="#ecfdf5" stroke="#86efac" stroke-width="2"/>
+  <text class="layer-label" x="60" y="468">知识底座层 (P0)</text>
+  <text class="small" x="60" y="486">最关键的共同底座——没有它，聊天空转、流程手工喂料</text>
+
+  <rect class="pill-green" x="60" y="504" width="240" height="30" rx="15"/>
+  <text class="t" x="80" y="523">团队需求知识库</text>
+  <rect class="pill-green" x="310" y="504" width="200" height="30" rx="15"/>
+  <text class="t" x="330" y="523">结构化细粒度索引</text>
+  <rect class="pill-green" x="520" y="504" width="180" height="30" rx="15"/>
+  <text class="t" x="540" y="523">权限与引用来源</text>
+  <rect class="pill-green" x="710" y="504" width="180" height="30" rx="15"/>
+  <text class="t" x="730" y="523">Agentic RAG 增强</text>
+  <rect class="pill-green" x="900" y="504" width="120" height="30" rx="15"/>
+  <text class="t" x="920" y="523">飞书导入</text>
+
+  <!-- Layer 2: 协作入口层 (P1, middle) -->
+  <rect x="40" y="280" width="1100" height="140" rx="14" fill="#eff6ff" stroke="#93c5fd" stroke-width="2"/>
+  <text class="layer-label" x="60" y="308">协作入口层 (P1)</text>
+  <text class="small" x="60" y="326">前置思考增强——需求产生前的探索、澄清和结构化</text>
+
+  <!-- 智能对话升级 -->
+  <rect x="60" y="340" width="360" height="60" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="h" x="80" y="365">智能对话升级为协作入口</text>
+  <text class="t" x="80" y="390">加载资料 · 调用 Skills · 沉淀结论回流</text>
+
+  <!-- API/CLI/Channel -->
+  <rect x="440" y="340" width="360" height="60" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="h" x="460" y="365">API / CLI / Channel 接入</text>
+  <text class="t" x="460" y="390">飞书 Bot · Webhook · CLI 批处理 · Agent 调用</text>
+
+  <!-- 搜索 Skills -->
+  <rect x="820" y="340" width="300" height="60" rx="10" fill="#ffffff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text class="h" x="840" y="365">搜索 Skills</text>
+  <text class="t" x="840" y="390">联网/内网检索 · 来源引用 · 真实信息补充</text>
+
+  <!-- Layer 3: 可配置编排层 (P2, top) -->
+  <rect x="40" y="100" width="1100" height="160" rx="14" fill="#fff7ed" stroke="#fdba74" stroke-width="2"/>
+  <text class="layer-label" x="60" y="128">可配置编排层 (P2)</text>
+  <text class="small" x="60" y="146">半开放路线——固定主干 + 扩展点 + 预设模板，而非任意自由编排</text>
+
+  <!-- 5 templates -->
+  <rect x="60" y="160" width="140" height="45" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="1.2"/>
+  <text class="t" x="80" y="180">快速自检</text>
+  <text class="small" x="80" y="198">Skills 2→3</text>
+
+  <rect x="210" y="160" width="140" height="45" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="1.2"/>
+  <text class="t" x="230" y="180">技术深审</text>
+  <text class="small" x="230" y="198">侧重架构+技术演进</text>
+
+  <rect x="360" y="160" width="140" height="45" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="1.2"/>
+  <text class="t" x="380" y="180">业务视角评审</text>
+  <text class="small" x="380" y="198">侧重价值+竞争</text>
+
+  <rect x="510" y="160" width="140" height="45" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="1.2"/>
+  <text class="t" x="530" y="180">竞品对标评审</text>
+  <text class="small" x="530" y="198">侧重竞争+策略</text>
+
+  <rect x="660" y="160" width="140" height="45" rx="8" fill="#ffffff" stroke="#fdba74" stroke-width="1.2"/>
+  <text class="t" x="680" y="180">新人引导评审</text>
+  <text class="small" x="680" y="198">侧重规范+PM评估</text>
+
+  <!-- Pi Agent -->
+  <rect x="820" y="160" width="300" height="45" rx="8" fill="#fdf2f8" stroke="#db2777" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text class="h" x="840" y="188">Pi Agent 自主编排</text>
+
+  <!-- Current platform anchor (left side) -->
+  <rect x="40" y="75" width="200" height="20" rx="10" fill="#dbeafe" stroke="#60a5fa" stroke-width="1"/>
+  <text class="small" x="60" y="89">当前：需求审查平台</text>
+
+  <rect x="940" y="75" width="240" height="20" rx="10" fill="#dcfce7" stroke="#4ade80" stroke-width="1"/>
+  <text class="small" x="960" y="89">目标：协作与知识增强平台</text>
+
+  <!-- Arrows between layers (vertical) -->
+  <!-- 知识底座 → 协作入口 (knowledge feeds chat & search) -->
+  <path class="line-green" d="M200 440 C200 400, 200 380, 200 370"/>
+  <path class="line-green" d="M900 440 C900 400, 900 380, 900 370"/>
+
+  <!-- 协作入口 → 可配置编排 -->
+  <path class="line" d="M200 280 C200 250, 200 240, 200 260"/>
+  <path class="muted-line" d="M500 280 C500 250, 500 240, 500 260"/>
+
+  <!-- Bottom principle bar -->
+  <rect x="40" y="560" width="1100" height="100" rx="14" fill="#ffffff" stroke="#cbd5e1" stroke-width="1.5"/>
+  <text class="layer-label" x="60" y="586">演进原则</text>
+  <text class="t" x="60" y="610">1. 先做知识底座，用结构化结果建细粒度索引——RAG 是增强层不是地基层</text>
+  <text class="t" x="60" y="632">2. 对话加 Skills 聚焦前置思考而非审查搬运——价值在于"文档还没写的时候"</text>
+  <text class="t" x="60" y="654">3. 流程扩展先做模板选择而非自由编排——固定主干 + 扩展点 + 预设模板</text>
+</svg>

@@ -1,0 +1,74 @@
+server:
+  host: "0.0.0.0"
+  port: 17957
+
+database:
+  path: "runtime/data/app.db"
+
+auth:
+  secret_key: "${JWT_SECRET}"
+  algorithm: "HS256"
+  access_token_expire_minutes: 480
+  allow_public_registration: true
+  sse_ticket_ttl_seconds: 60
+
+models:
+  - id: deepseek
+    name: "DeepSeek Chat"
+    adapter: openai_compatible
+    base_url: "https://api.deepseek.com/v1"
+    api_key: "${DEEPSEEK_API_KEY}"
+    model: "deepseek-chat"
+    max_tokens: 4096
+    temperature: 0.7
+    enabled: true
+
+  - id: qwen
+    name: "通义千问"
+    adapter: openai_compatible
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    api_key: "${QWEN_API_KEY}"
+    model: "qwen-plus"
+    max_tokens: 4096
+    temperature: 0.7
+    enabled: false
+
+  - id: glm
+    name: "智谱 GLM"
+    adapter: openai_compatible
+    base_url: "https://open.bigmodel.cn/api/paas/v4"
+    api_key: "${GLM_API_KEY}"
+    model: "glm-4-flash"
+    max_tokens: 4096
+    temperature: 0.7
+    enabled: false
+
+upload:
+  max_file_size_mb: 20
+  allowed_extensions: [".txt", ".pdf", ".docx", ".md", ".csv", ".json"]
+  upload_dir: "runtime/uploads"
+
+defaults:
+  model: deepseek
+  prompt_template: default
+
+review:
+  skills_dir: "./skills"
+  retry:
+    max_attempts: 5
+    initial_delay_ms: 2000
+    backoff_factor: 2.0
+    max_delay_ms: 30000
+    timeout_seconds: 300
+    connect_timeout_seconds: 10
+  pipeline:
+    step_max_retries: 3
+    step_retry_delay: 5
+    max_concurrent_docs: 3
+  llm:
+    temperature: 0.3
+    max_tokens: 4096
+  upload:
+    max_file_size_mb: 50
+    allowed_extensions: [".docx"]
+    upload_dir: "runtime/data/review_uploads"

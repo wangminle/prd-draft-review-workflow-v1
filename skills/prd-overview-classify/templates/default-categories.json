@@ -1,0 +1,5 @@
+{
+  "categories": [],
+  "version_pattern": "V\\d+\\.\\d+[\\.\\d]*",
+  "subcategory_pattern": "【(.+?)v(\\d+)】"
+}

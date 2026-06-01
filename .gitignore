@@ -1,0 +1,30 @@
+# Runtime data — dynamic, clearable (data/code separation)
+# Keep README.md as placeholder, ignore all other runtime data
+runtime/*
+!runtime/README.md
+
+# Python bytecode & cache
+__pycache__/
+*.pyc
+*.pyo
+app/**/__pycache__/
+
+# Test cache
+.pytest_cache/
+
+# IDE & OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Environment & secrets
+.env
+.venv/
+
+# Logs
+*.log
+
+# Distribution packages
+dist/

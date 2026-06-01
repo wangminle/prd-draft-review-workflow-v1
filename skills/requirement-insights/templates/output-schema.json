@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Requirement Insights Output",
+  "type": "object",
+  "required": ["project_name", "output_type", "metadata"],
+  "properties": {
+    "project_name": {"type": "string"},
+    "output_type": {
+      "type": "string",
+      "enum": ["evolution", "gap", "all"],
+      "description": "Which insight dimension was requested"
+    },
+    "evolution": {
+      "type": "object",
+      "description": "Evolution tracking results (when output-type includes evolution)",
+      "properties": {
+        "evolution_chains": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["chain_name", "versions"],
+            "properties": {
+              "chain_name": {"type": "string"},
+              "versions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["version", "doc_id", "title"],
+                  "properties": {
+                    "version": {"type": "string"},
+                    "doc_id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "boundary_issues_raised": {"type": "array", "items": {"type": "string"}},
+                    "boundary_issues_resolved": {"type": "array", "items": {"type": "string"}},
+                    "boundary_issues_remaining": {"type": "array", "items": {"type": "string"}}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_chains": {"type": "integer"},
+            "total_issues": {"type": "integer"},
+            "resolved": {"type": "integer"},
+            "partial": {"type": "integer"},
+            "unresolved": {"type": "integer"}
+          }
+        },
+        "mermaid_graph": {
+          "type": "string",
+          "description": "Mermaid flowchart code (only when --include-mermaid)"
+        }
+      }
+    },
+    "gap_analysis": {
+      "type": "object",
+      "description": "Gap analysis results (when output-type includes gap)",
+      "properties": {
+        "feature_dimensions": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Extracted feature dimension names"
+        },
+        "coverage_matrix": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feature", "covered_by", "status"],
+            "properties": {
+              "feature": {"type": "string"},
+              "covered_by": {"type": "array", "items": {"type": "string"}},
+              "status": {"type": "string", "enum": ["covered", "gap", "overlap"]}
+            }
+          }
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["feature", "severity"],
+            "properties": {
+              "feature": {"type": "string"},
+              "description": {"type": "string"},
+              "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+              "suggestion": {"type": "string"}
+            }
+          }
+        },
+        "overlaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "feature": {"type": "string"},
+              "covered_by": {"type": "array", "items": {"type": "string"}},
+              "note": {"type": "string"}
+            }
+          }
+        },
+        "summary": {
+          "type": "object",
+          "properties": {
+            "total_features": {"type": "integer"},
+            "covered": {"type": "integer"},
+            "gaps": {"type": "integer"},
+            "overlap_count": {"type": "integer"}
+          }
+        }
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["total_docs", "output_type"],
+      "properties": {
+        "total_docs": {"type": "integer"},
+        "output_type": {"type": "string"},
+        "models_used": {"type": "object"}
+      }
+    }
+  }
+}
