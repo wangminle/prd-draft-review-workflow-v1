@@ -86,8 +86,9 @@ async def test_non_admin_cannot_manage_skills(client):
 
 
 def test_recent_access_records_only_include_last_7_days(tmp_path):
-    from app.routers.admin import _load_recent_access_records
+    from app.log_writers.audit_log_reader import AuditLogReader
 
+    reader = AuditLogReader()
     now = datetime(2026, 5, 26, 10, 0, tzinfo=timezone.utc)
     log_file = tmp_path / "audit.jsonl"
     entries = [
@@ -109,14 +110,14 @@ def test_recent_access_records_only_include_last_7_days(tmp_path):
     ]
     log_file.write_text("\n".join(json.dumps(e, ensure_ascii=False) for e in entries) + "\n", encoding="utf-8")
 
-    records = _load_recent_access_records(logs_dir=tmp_path, now=now, days=7, limit=20)
+    records = reader.list_recent_access_records(logs_dir=tmp_path, now=now, days=7, limit=20)
 
     assert len(records) == 1
-    assert records[0]["username"] == "admin"
-    assert records[0]["action"] == "admin.stats.view"
-    assert records[0]["method"] == "GET"
-    assert records[0]["path"] == "/api/admin/stats"
-    assert records[0]["client_ip"] == "127.0.0.1"
+    assert records[0].username == "admin"
+    assert records[0].action == "admin.stats.view"
+    assert records[0].method == "GET"
+    assert records[0].path == "/api/admin/stats"
+    assert records[0].client_ip == "127.0.0.1"
 
 
 def test_llm_skills_have_system_context_prompts():

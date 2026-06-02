@@ -57,7 +57,7 @@ def test_conversation_history_deduplicates_adjacent_same_assistant_message():
 
 
 def test_conversation_delete_button_is_top_right_hover_action():
-    assert 'class="conv-item ${c.id === this._currentConvId ? \'active\' : \'\'}"' in CHAT_JS
+    assert "String(c.id) === String(this._currentConvId)" in CHAT_JS
     assert 'class="conv-title"' in CHAT_JS
     assert 'class="conv-del"' in CHAT_JS
     assert ".conv-item {" in CSS
@@ -114,6 +114,19 @@ def test_selecting_current_conversation_returns_early_and_blocks_switch_while_st
     select_block = CHAT_JS.split("async selectConversation(convId)", 1)[1].split("newConversation()", 1)[0]
     assert "if (String(this._currentConvId) === String(convId)) return;" in select_block
     assert "if (this._sending) return;" in select_block
+
+
+def test_new_conversation_clears_unsent_attachments_and_urls():
+    new_block = CHAT_JS.split("newConversation()", 1)[1].split("async sendMessage()", 1)[0]
+    clear_idx = new_block.index("this._clearAttachments();")
+    reset_idx = new_block.index("this._currentConvId = null;")
+    assert clear_idx < reset_idx
+
+
+def test_conversation_list_active_state_compares_ids_as_strings():
+    load_block = CHAT_JS.split("async loadConversations()", 1)[1].split("async selectConversation", 1)[0]
+    assert "String(c.id) === String(this._currentConvId)" in load_block
+    assert "c.id === this._currentConvId" not in load_block
 
 
 def test_new_conversation_context_is_synced_after_first_sse_conversation_id():

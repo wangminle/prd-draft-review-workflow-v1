@@ -17,6 +17,7 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from tests.conftest import init_test_db, make_test_app
+from app.storage.chat_file_storage import ChatFileStorage
 
 
 def _write_minimal_docx(path: Path, text: str) -> None:
@@ -310,8 +311,8 @@ async def test_disabled_context_item_not_injected(auth_client, tmp_path, monkeyp
     saved_name = "disabled-doc.txt"
     (upload_dir / saved_name).write_text("被禁用的文档内容", encoding="utf-8")
 
+    from app.config import get_settings as original_get_settings
     from app.routers import chat as chat_router
-    original_get_settings = chat_router.get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -321,7 +322,8 @@ async def test_disabled_context_item_not_injected(auth_client, tmp_path, monkeyp
         cloned["upload"] = upload_cfg
         return cloned
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
+    monkeypatch.setattr(chat_router, "_chat_file_storage", ChatFileStorage(upload_dir=str(upload_dir)))
 
     async def bootstrap_stream(model_id, messages, **kwargs):
         yield StreamChunk(delta="首轮回复")
@@ -378,8 +380,8 @@ async def test_context_item_delete_removes_from_llm_context(auth_client, tmp_pat
     saved_name = "to-delete-doc.txt"
     (upload_dir / saved_name).write_text("即将删除的文档内容", encoding="utf-8")
 
+    from app.config import get_settings as original_get_settings
     from app.routers import chat as chat_router
-    original_get_settings = chat_router.get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -389,7 +391,8 @@ async def test_context_item_delete_removes_from_llm_context(auth_client, tmp_pat
         cloned["upload"] = upload_cfg
         return cloned
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
+    monkeypatch.setattr(chat_router, "_chat_file_storage", ChatFileStorage(upload_dir=str(upload_dir)))
 
     async def bootstrap_stream(model_id, messages, **kwargs):
         yield StreamChunk(delta="首轮")
@@ -449,9 +452,8 @@ async def test_mention_context_item_ids_limit_persisted_doc_injection(auth_clien
     (upload_dir / doc_a).write_text("文档A核心信息", encoding="utf-8")
     (upload_dir / doc_b).write_text("文档B核心信息", encoding="utf-8")
 
+    from app.config import get_settings as original_get_settings
     from app.routers import chat as chat_router
-
-    original_get_settings = chat_router.get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -461,7 +463,8 @@ async def test_mention_context_item_ids_limit_persisted_doc_injection(auth_clien
         cloned["upload"] = upload_cfg
         return cloned
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
+    monkeypatch.setattr(chat_router, "_chat_file_storage", ChatFileStorage(upload_dir=str(upload_dir)))
 
     async def bootstrap_stream(model_id, messages, **kwargs):
         yield StreamChunk(delta="首轮")
@@ -528,8 +531,8 @@ async def test_docx_context_item_injects_extracted_text_not_zip_payload(auth_cli
     saved_name = "context-doc.docx"
     _write_minimal_docx(upload_dir / saved_name, "DOCX正文里的关键业务逻辑")
 
+    from app.config import get_settings as original_get_settings
     from app.routers import chat as chat_router
-    original_get_settings = chat_router.get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -539,7 +542,8 @@ async def test_docx_context_item_injects_extracted_text_not_zip_payload(auth_cli
         cloned["upload"] = upload_cfg
         return cloned
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
+    monkeypatch.setattr(chat_router, "_chat_file_storage", ChatFileStorage(upload_dir=str(upload_dir)))
 
     async def bootstrap_stream(model_id, messages, **kwargs):
         yield StreamChunk(delta="首轮")

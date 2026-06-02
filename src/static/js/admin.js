@@ -1028,6 +1028,8 @@ const Admin = {
     },
 };
 
+window.Admin = Admin;
+
 /* ── Tab 切换 ── */
 document.addEventListener('click', (e) => {
     const tab = e.target.closest('.admin-nav-item');

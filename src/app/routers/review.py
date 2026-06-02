@@ -2,8 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import shutil
-import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -15,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import async_session, get_db
-from app.logging_config import log_audit
+from app.log_writers.audit_log_writer import AuditLogWriter
 from app.middleware.auth import get_current_user, require_admin
 from app.services.review_helpers import (
     build_context_injection,
@@ -34,6 +32,7 @@ from app.models.review import (
 )
 from app.models.user import ModelConfig, User
 from app.runtime_paths import runtime_path
+from app.storage.review_file_storage import ReviewFileStorage
 from app.schemas.review import (
     AnalysisInfo,
     ContextInfo,
@@ -56,10 +55,31 @@ from app.services.retry import (
     RetryConfig,
     structured_chat,
 )
+from app.repositories.review_task_repository import (
+    DocAnalysisPayload,
+    NewReviewTask,
+    ReviewTaskRepository,
+    SystemReviewPayload,
+    TaskProgressPatch,
+)
+from app.repositories.review_project_repository import ReviewProjectRepository
+from app.repositories.review_context_repository import (
+    ReviewContextRepository,
+    ContextCreateData,
+)
+from app.repositories.review_prompt_repository import (
+    ReviewPromptRepository,
+    ReviewPromptCreateData,
+    ReviewPromptPatch,
+)
+from app.services.review_pipeline_persistence import ReviewPipelinePersistenceService
 from app.services.skill_runner import SkillRunner, normalize_dimension_result
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+_audit_log_writer = AuditLogWriter()
+_review_file_storage = ReviewFileStorage()
 
 # Skills directory: configured in config.yaml, resolved to absolute path at startup
 _settings = get_settings()
@@ -121,68 +141,17 @@ progress_queues: dict[int, asyncio.Queue] = {}
 
 
 def _resolve_stored_file_path(stored_path: str | os.PathLike[str] | None) -> str | None:
-    """Resolve DB-stored file paths against the workspace runtime root.
-
-    New rows should store runtime-relative paths such as
-    ``data/review_uploads/6/requirement/a.docx``. Older rows may contain
-    ``./runtime/...`` or ``../runtime/...``; those must remain readable
-    regardless of the process working directory.
-    """
-    if not stored_path:
-        return None
-
-    path = Path(str(stored_path))
-    if path.is_absolute():
-        return str(path)
-
-    parts = list(path.parts)
-    while parts and parts[0] == ".":
-        parts.pop(0)
-
-    if "runtime" in parts:
-        runtime_index = parts.index("runtime")
-        return str(runtime_path(*parts[runtime_index + 1:]))
-
-    if parts[:1] == ["data"]:
-        return str(runtime_path(*parts))
-
-    return str(path)
+    """Delegate path resolution to ReviewFileStorage."""
+    return _review_file_storage._resolve_stored_file_path(stored_path)
 
 
 def _to_runtime_relative_path(file_path: str | os.PathLike[str] | None) -> str | None:
-    """Store runtime files as paths relative to runtime root."""
-    if not file_path:
-        return None
-
-    path = Path(str(file_path))
-    if not path.is_absolute():
-        resolved = _resolve_stored_file_path(str(path))
-        path = Path(resolved) if resolved else path
-
-    try:
-        return path.resolve().relative_to(runtime_path().resolve()).as_posix()
-    except ValueError:
-        return str(file_path)
+    """Delegate runtime-relative conversion to ReviewFileStorage."""
+    return _review_file_storage.to_runtime_relative_path(file_path)
 
 
 def _system_review_has_complete_dimensions(sr: SystemReview) -> bool:
-    required_fields = [
-        "business_value",
-        "architecture",
-        "competition",
-        "product_strategy",
-        "tech_evolution",
-        "action_plan",
-    ]
-    if not all(getattr(sr, field, None) for field in required_fields):
-        return False
-    if not getattr(sr, "pm_scores", None):
-        return False
-    try:
-        pm_scores = json.loads(sr.pm_scores)
-    except (TypeError, json.JSONDecodeError):
-        return False
-    return extract_pm_assessment_payload(pm_scores) is not None
+    return ReviewTaskRepository._system_review_has_complete_dimensions(sr)
 
 
 async def _find_cached_system_review(
@@ -192,89 +161,19 @@ async def _find_cached_system_review(
     context_version: int | None = None,
     model_id: str | None = None,
 ) -> SystemReview | None:
-    """Find a completed SystemReview from any previous task in the same project.
-
-    Returns the most recent one with ALL 7 dimensions present and valid.
-    If doc_ids/context_version/model_id are provided, only reuse cache from the same scope.
-    """
-    expected_doc_ids = set(doc_ids) if doc_ids is not None else None
-    query = select(SystemReview).where(SystemReview.project_id == project_id)
-    if context_version is not None or model_id is not None:
-        query = query.join(ReviewTask, SystemReview.task_id == ReviewTask.id)
-        if context_version is not None:
-            query = query.where(ReviewTask.context_version == context_version)
-        if model_id is not None:
-            query = query.where(ReviewTask.model_id == model_id)
-    query = query.order_by(SystemReview.id.desc())
-    result = await db.execute(query)
-    rows = result.scalars().all()
-    for sr in rows:
-        if not _system_review_has_complete_dimensions(sr):
-            continue
-        if expected_doc_ids is not None:
-            doc_result = await db.execute(
-                select(DocAnalysis.document_id).where(DocAnalysis.task_id == sr.task_id)
-            )
-            cached_doc_ids = set(doc_result.scalars().all())
-            if cached_doc_ids != expected_doc_ids:
-                continue
-        return sr
-    return None
+    repo = ReviewTaskRepository(db)
+    return await repo.find_cached_system_review(project_id, doc_ids, context_version, model_id)
 
 
-_REQUIRED_EXPERT_REVIEW_RULE_KEYS = {
-    "scope_realism",
-    "boundary_completeness",
-    "structured_entitlements",
-    "user_facing_naming",
-    "copy_consistency",
-    "phased_tech_plan",
-}
 
 
 def _analysis_has_required_expert_review(analysis: DocAnalysis) -> bool:
-    if not getattr(analysis, "full_analysis", None):
-        return False
-    try:
-        data = json.loads(analysis.full_analysis)
-    except (TypeError, json.JSONDecodeError):
-        return False
-
-    expert_review = data.get("expert_review")
-    if not isinstance(expert_review, dict):
-        return False
-    summary = str(expert_review.get("summary") or "").strip()
-    checks = expert_review.get("checks")
-    if not summary or not isinstance(checks, list):
-        return False
-
-    rule_keys = {check.get("rule_key") for check in checks if isinstance(check, dict)}
-    return _REQUIRED_EXPERT_REVIEW_RULE_KEYS.issubset(rule_keys)
+    return ReviewTaskRepository._analysis_has_required_expert_review(analysis)
 
 
 async def _find_cached_analyses(db: AsyncSession, doc_ids: list[int], context_version: int | None = None) -> dict[int, DocAnalysis]:
-    """Find existing DocAnalysis for given doc_ids from any previous task.
-
-    Returns {doc_id: DocAnalysis} for docs that already have analysis results.
-    If context_version is provided, only reuse cache from same context version.
-    Cached analysis must include the current expert-review block; older rows
-    are intentionally skipped so the third Skill can regenerate them.
-    """
-    query = select(DocAnalysis).where(DocAnalysis.document_id.in_(doc_ids))
-    if context_version is not None:
-        query = query.join(ReviewTask, DocAnalysis.task_id == ReviewTask.id).where(ReviewTask.context_version == context_version)
-    query = query.order_by(DocAnalysis.id.desc())
-    result = await db.execute(query)
-    all_analyses = result.scalars().all()
-    # Pick the most recent analysis per document
-    cache = {}
-    for a in all_analyses:
-        if not _analysis_has_required_expert_review(a):
-            logger.info("Cached analysis skipped for doc %d because expert_review is missing or incomplete", a.document_id)
-            continue
-        if a.document_id not in cache:
-            cache[a.document_id] = a
-    return cache
+    repo = ReviewTaskRepository(db)
+    return await repo.find_cached_analyses(doc_ids, context_version)
 
 
 progress_queues: dict[int, asyncio.Queue] = {}
@@ -355,9 +254,6 @@ async def _save_project_documents(
     upload_cfg = review_cfg.get("upload", {})
     max_size_mb = upload_cfg.get("max_file_size_mb", 50)
     allowed_ext = upload_cfg.get("allowed_extensions", [".docx"])
-    upload_root = upload_cfg.get("upload_dir", str(runtime_path("data", "review_uploads")))
-    upload_dir = os.path.join(upload_root, str(project_id), document_type)
-    os.makedirs(upload_dir, exist_ok=True)
 
     saved = []
     for f in files:
@@ -369,20 +265,21 @@ async def _save_project_documents(
         if len(content) > max_size_mb * 1024 * 1024:
             raise HTTPException(status_code=413, detail=f"文件过大: {f.filename}")
 
-        saved_name = f"{uuid.uuid4().hex}{ext}"
-        saved_path = os.path.join(upload_dir, saved_name)
-        with open(saved_path, "wb") as out_f:
-            out_f.write(content)
+        stored = await _review_file_storage.save_uploaded_docx(
+            project_id=project_id, document_type=document_type,
+            filename=f.filename or "upload.docx", content=content,
+        )
 
         doc = ReviewDocument(
             project_id=project_id,
-            filename=f.filename or saved_name,
-            file_path=_to_runtime_relative_path(saved_path),
+            filename=f.filename or stored.file_id,
+            file_path=stored.runtime_relative_path,
             file_size=len(content),
             document_type=document_type,
             status="uploaded",
         )
-        db.add(doc)
+        repo = ReviewProjectRepository(db)
+        await repo.add_document(doc)
         saved.append({"filename": f.filename, "size": len(content), "document_type": document_type})
 
     await db.commit()
@@ -392,11 +289,8 @@ async def _save_project_documents(
 # ── Projects ──
 
 async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int) -> ReviewProject:
-    """Verify the user owns the project. Returns 404 if not found or not owned."""
-    result = await db.execute(
-        select(ReviewProject).where(ReviewProject.id == project_id, ReviewProject.created_by == user_id)
-    )
-    project = result.scalar_one_or_none()
+    repo = ReviewProjectRepository(db)
+    project = await repo.get_project_with_owner_check(project_id, user_id)
     if project is None:
         raise HTTPException(status_code=404, detail="项目不存在或无权访问")
     return project
@@ -437,11 +331,10 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
 
 @router.post("/projects", response_model=ProjectInfo)
 async def create_project(req: ProjectCreate, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    p = ReviewProject(name=req.name, description=req.description, created_by=user.id)
-    db.add(p)
+    repo = ReviewProjectRepository(db)
+    p = await repo.create_project(name=req.name, description=req.description, created_by=user.id)
     await db.commit()
-    await db.refresh(p)
-    log_audit(
+    _audit_log_writer.write(
         "project.create",
         actor=user,
         request=request,
@@ -488,7 +381,7 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
     )
     active_task_id = active_task_result.scalar_one_or_none()
     if active_task_id is not None:
-        log_audit(
+        _audit_log_writer.write(
             "project.delete",
             actor=user,
             request=request,
@@ -502,35 +395,15 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
 
     doc_result = await db.execute(select(ReviewDocument).where(ReviewDocument.project_id == project_id))
     docs = doc_result.scalars().all()
+
+    await _review_file_storage.delete_project_files(project_id)
+
     for doc in docs:
-        for path in (doc.file_path, doc.md_path):
-            resolved_path = _resolve_stored_file_path(path)
-            if resolved_path and os.path.exists(resolved_path):
-                try:
-                    os.remove(resolved_path)
-                except OSError:
-                    pass
-
-    upload_dir = str(runtime_path("data", "review_uploads", str(project_id)))
-    if os.path.isdir(upload_dir):
-        try:
-            shutil.rmtree(upload_dir)
-        except OSError:
-            pass
-
-    converted_dir = str(runtime_path("data", "converted"))
-    if os.path.isdir(converted_dir):
-        doc_ids = {str(doc.id) for doc in docs}
-        for d in Path(converted_dir).glob("doc_*"):
-            if d.name.replace("doc_", "") in doc_ids:
-                try:
-                    shutil.rmtree(str(d))
-                except OSError:
-                    pass
+        await _review_file_storage.delete_document_files(doc.id, file_path=doc.file_path, md_path=doc.md_path)
 
     await db.delete(p)
     await db.commit()
-    log_audit(
+    _audit_log_writer.write(
         "project.delete",
         actor=user,
         request=request,
@@ -554,7 +427,7 @@ async def upload_docs(
     await _verify_project_owner(db, project_id, user.id)
 
     result = await _save_project_documents(project_id, files, db, "requirement")
-    log_audit(
+    _audit_log_writer.write(
         "document.upload",
         actor=user,
         request=request,
@@ -576,7 +449,7 @@ async def upload_historical_docs(
     await _verify_project_owner(db, project_id, user.id)
 
     result = await _save_project_documents(project_id, files, db, "historical")
-    log_audit(
+    _audit_log_writer.write(
         "document.upload",
         actor=user,
         request=request,
@@ -602,16 +475,10 @@ async def delete_doc(project_id: int, doc_id: int, request: Request, user: User 
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     filename = doc.filename
-    for path in (doc.file_path, doc.md_path):
-        resolved_path = _resolve_stored_file_path(path)
-        if resolved_path and os.path.exists(resolved_path):
-            try:
-                os.remove(resolved_path)
-            except OSError:
-                pass
+    await _review_file_storage.delete_document_files(doc.id, file_path=doc.file_path, md_path=doc.md_path)
     await db.delete(doc)
     await db.commit()
-    log_audit(
+    _audit_log_writer.write(
         "document.delete",
         actor=user,
         request=request,
@@ -702,11 +569,10 @@ async def start_review(
             estimated_seconds=est,
         )
 
-    task = ReviewTask(
+    repo = ReviewTaskRepository(db)
+    task = await repo.create_task(NewReviewTask(
         project_id=project_id,
         mode=req.mode,
-        status="pending",
-        total_docs=len(docs),
         context_version=ctx_ver,
         model_id=model_cfg["model_id"],
         created_by=user.id,
@@ -715,11 +581,10 @@ async def start_review(
             "document_ids": selected_doc_ids,
             "historical_document_ids": historical_doc_ids,
         }, ensure_ascii=False),
-    )
-    db.add(task)
+        total_docs=len(docs),
+    ))
     await db.commit()
-    await db.refresh(task)
-    log_audit(
+    _audit_log_writer.write(
         "review.start",
         actor=user,
         request=request,
@@ -813,7 +678,7 @@ async def review_task_status(project_id: int, review_id: int, user: User = Depen
 async def cancel_review(project_id: int, review_id: int, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     task = await _verify_review_task_owner(db, project_id, review_id, user.id)
     if task.status not in ("pending", "running"):
-        log_audit(
+        _audit_log_writer.write(
             "review.cancel",
             actor=user,
             request=request,
@@ -829,7 +694,7 @@ async def cancel_review(project_id: int, review_id: int, request: Request, user:
     q = progress_queues.get(review_id)
     if q:
         await q.put({"task_status": "cancelled"})
-    log_audit(
+    _audit_log_writer.write(
         "review.cancel",
         actor=user,
         request=request,
@@ -927,37 +792,19 @@ async def _find_active_review_task(
     document_ids: list[int],
     historical_document_ids: list[int] | None = None,
 ) -> ReviewTask | None:
-    result = await db.execute(
-        select(ReviewTask)
-        .where(
-            ReviewTask.project_id == project_id,
-            ReviewTask.mode == mode,
-            ReviewTask.status.in_(("pending", "running")),
-        )
-        .order_by(ReviewTask.created_at.desc())
-    )
-    for task in result.scalars().all():
-        if _is_same_active_review_scope(task, mode, document_ids, historical_document_ids):
-            return task
-    return None
+    repo = ReviewTaskRepository(db)
+    return await repo.find_active_review_task(project_id, mode, document_ids, historical_document_ids)
 
 
 def _merge_task_step_details(task: ReviewTask, **updates) -> None:
-    data = _extract_task_artifacts(task)
-    data.update({k: v for k, v in updates.items() if v is not None})
-    task.step_details = json.dumps(data, ensure_ascii=False)
+    ReviewPipelinePersistenceService.merge_step_details_static(task, **updates)
 
 
 def _mark_current_step_failed(task: ReviewTask) -> dict:
-    try:
-        step_statuses = json.loads(task.step_statuses) if task.step_statuses else {}
-    except (TypeError, json.JSONDecodeError):
-        step_statuses = {}
-
+    step_statuses = ReviewPipelinePersistenceService.parse_step_statuses(task)
     current_step = getattr(task, "current_step", None)
     if current_step is not None:
         step_statuses[str(current_step)] = "failed"
-
     task.step_statuses = json.dumps(step_statuses, ensure_ascii=False)
     return step_statuses
 
@@ -1000,7 +847,7 @@ async def get_report(
 
     artifacts = _extract_task_artifacts(task)
 
-    log_audit(
+    _audit_log_writer.write(
         "review.report_view",
         actor=user,
         request=request,
@@ -1040,12 +887,10 @@ async def get_context(project_id: int, user: User = Depends(get_current_user), d
 @router.put("/projects/{project_id}/context", response_model=ContextInfo)
 async def update_context(project_id: int, req: ContextUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     await _verify_project_owner(db, project_id, user.id)
-    result = await db.execute(select(ReviewContext).where(ReviewContext.project_id == project_id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
-    old = result.scalar_one_or_none()
-    new_version = (old.version + 1) if old else 1
-    data = merge_review_context_defaults(json.loads(old.context_data)) if old and old.context_data else default_review_context()
-    if old:
-        old.is_active = False
+    ctx_repo = ReviewContextRepository(db)
+    # Load old context for merge
+    old_ctx = await ctx_repo.get_active_context(project_id)
+    data = merge_review_context_defaults(json.loads(old_ctx.context_data)) if old_ctx and old_ctx.context_data else default_review_context()
 
     if req.specifications is not None:
         data["specifications"] = req.specifications
@@ -1058,14 +903,8 @@ async def update_context(project_id: int, req: ContextUpdate, user: User = Depen
     if req.professional_guidance is not None:
         data["professional_guidance"] = req.professional_guidance
 
-    ctx = ReviewContext(
-        project_id=project_id, version=new_version, is_active=True,
-        change_log=req.change_log, updated_by=user.id,
-        context_data=json.dumps(data, ensure_ascii=False),
-    )
-    db.add(ctx)
+    ctx = await ctx_repo.activate_new_version(project_id, data=data, change_log=req.change_log, updated_by=user.id)
     await db.commit()
-    await db.refresh(ctx)
     return ContextInfo(context_id=ctx.id, version=ctx.version, is_active=True, updated_at=ctx.updated_at, context_data=data)
 
 
@@ -1079,10 +918,9 @@ async def list_prompts(user: User = Depends(get_current_user), db: AsyncSession 
 
 @router.post("/prompts", response_model=PromptInfo)
 async def create_prompt(req: PromptCreate, user: User = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    p = ReviewPrompt(name=req.name, description=req.description, content=req.content)
-    db.add(p)
+    prompt_repo = ReviewPromptRepository(db)
+    p = await prompt_repo.create_prompt(ReviewPromptCreateData(name=req.name, description=req.description, content=req.content))
     await db.commit()
-    await db.refresh(p)
     return PromptInfo(id=p.id, name=p.name, description=p.description, version=p.version, is_active=p.is_active)
 
 
@@ -1142,6 +980,7 @@ async def _run_pipeline(
         step_statuses = json.loads(task.step_statuses) if task.step_statuses else {}
         await db.commit()
 
+        repo = ReviewTaskRepository(db)
         queue = progress_queues.get(task_id)
 
         try:
@@ -1197,10 +1036,11 @@ async def _run_pipeline(
             doc_dicts = []
             for doc in converted_docs:
                 md_content = ""
-                resolved_md_path = _resolve_stored_file_path(doc.md_path)
-                if resolved_md_path and os.path.exists(resolved_md_path):
-                    with open(resolved_md_path, "r", encoding="utf-8") as f:
-                        md_content = f.read()
+                if doc.md_path:
+                    try:
+                        md_content = await _review_file_storage.read_markdown(doc.md_path)
+                    except FileNotFoundError:
+                        md_content = ""
                 doc_dicts.append({
                     "doc_id": str(doc.id),
                     "id": doc.id,
@@ -1232,10 +1072,11 @@ async def _run_pipeline(
                     await db.commit()
 
                     md_content = ""
-                    resolved_md_path = _resolve_stored_file_path(hdoc.md_path)
-                    if resolved_md_path and os.path.exists(resolved_md_path):
-                        with open(resolved_md_path, "r", encoding="utf-8") as f:
-                            md_content = f.read()
+                    if hdoc.md_path:
+                        try:
+                            md_content = await _review_file_storage.read_markdown(hdoc.md_path)
+                        except FileNotFoundError:
+                            md_content = ""
                     if md_content:
                         hist_dicts.append({
                             "doc_id": str(hdoc.id),
@@ -1343,7 +1184,7 @@ async def _run_pipeline(
                         runner.state["analyses"] = analyses
                     analyses[str(doc.id)] = cached_analysis
                     # Also create a DocAnalysis record for this task
-                    da = DocAnalysis(
+                    await repo.save_doc_analysis(DocAnalysisPayload(
                         document_id=doc.id, task_id=task_id,
                         core_problem=ca.core_problem,
                         category=ca.category or doc.category,
@@ -1352,8 +1193,7 @@ async def _run_pipeline(
                         spec_violations=ca.spec_violations,
                         quality_score=ca.quality_score,
                         full_analysis=ca.full_analysis,
-                    )
-                    db.add(da)
+                    ))
                     doc.status = "analyzed"
                     completed += 1
                     await db.commit()
@@ -1372,7 +1212,7 @@ async def _run_pipeline(
                     doc_id = str(doc.id)
                     analysis = analyses_state.get(doc_id, {})
                     if analysis and not analysis.get("error"):
-                        da = DocAnalysis(
+                        await repo.save_doc_analysis(DocAnalysisPayload(
                             document_id=doc.id, task_id=task_id,
                             core_problem=analysis.get("core_problem"),
                             category=analysis.get("category", doc.category),
@@ -1381,8 +1221,7 @@ async def _run_pipeline(
                             spec_violations=json.dumps(analysis.get("spec_violations", []), ensure_ascii=False) if isinstance(analysis.get("spec_violations"), list) else None,
                             quality_score=analysis.get("quality_score"),
                             full_analysis=json.dumps(analysis, ensure_ascii=False),
-                        )
-                        db.add(da)
+                        ))
                         doc.status = "analyzed"
                         completed += 1
                     else:
@@ -1473,7 +1312,7 @@ async def _run_pipeline(
                                 runner.pipeline_state["review_dimensions"] = dim_results
 
                                 # Copy cached SystemReview into current task's record
-                                sr = SystemReview(
+                                await repo.save_system_review(SystemReviewPayload(
                                     task_id=task_id, project_id=project_id,
                                     business_value=cached_sr.business_value,
                                     architecture=cached_sr.architecture,
@@ -1483,8 +1322,7 @@ async def _run_pipeline(
                                     pm_growth=cached_sr.pm_growth,
                                     action_plan=cached_sr.action_plan,
                                     pm_scores=cached_sr.pm_scores,
-                                )
-                                db.add(sr)
+                                ))
                                 await db.commit()
 
                                 if queue:
@@ -1512,7 +1350,7 @@ async def _run_pipeline(
                                     merged[col] = dim_data
 
                                 pm_scores = extract_pm_assessment_payload(merged.get("pm_scores"))
-                                sr = SystemReview(
+                                await repo.save_system_review(SystemReviewPayload(
                                     task_id=task_id, project_id=project_id,
                                     business_value=json.dumps(merged.get("business_value"), ensure_ascii=False) if merged.get("business_value") else None,
                                     architecture=json.dumps(merged.get("architecture"), ensure_ascii=False) if merged.get("architecture") else None,
@@ -1522,8 +1360,7 @@ async def _run_pipeline(
                                     pm_growth=json.dumps(merged.get("pm_growth"), ensure_ascii=False) if merged.get("pm_growth") else None,
                                     action_plan=json.dumps(merged.get("action_plan"), ensure_ascii=False) if merged.get("action_plan") else None,
                                     pm_scores=json.dumps(pm_scores, ensure_ascii=False) if pm_scores else None,
-                                )
-                                db.add(sr)
+                                ))
                                 await db.commit()
 
                                 # Emit dimension-level progress
@@ -1615,145 +1452,17 @@ async def _run_pipeline(
 
 
 async def _convert_docx(file_path: str | None, doc_id: int, original_filename: str | None = None, force: bool = False) -> str:
-    """Convert DOCX to Markdown, skip if cached result exists and source unchanged.
-
-    Args:
-        force: If True, always re-convert even if cache exists.
-    """
-    file_path = _resolve_stored_file_path(file_path)
-    if not file_path or not os.path.exists(file_path):
-        raise FileNotFoundError(f"docx not found: {file_path}")
-
-    output_dir = str(runtime_path("data", "converted", f"doc_{doc_id}"))
-
-    # Check cache: if md files exist in output_dir and source hash matches, skip conversion
-    if not force:
-        existing_md = list(Path(output_dir).rglob("*.md"))
-        if existing_md:
-            source_hash = _file_hash(file_path)
-            hash_file = os.path.join(output_dir, ".source_hash")
-            cache_valid = False
-            if os.path.exists(hash_file):
-                with open(hash_file, "r") as f:
-                    stored_hash = f.read().strip()
-                if stored_hash == source_hash:
-                    cache_valid = True
-
-            if cache_valid:
-                # Pick the best MD: prefer one whose parent dir stem matches original_filename stem
-                md_path_candidate = _pick_best_md(existing_md, original_filename)
-                logger.info("Skipping docx conversion for doc_%d (cached, hash matches)", doc_id)
-                return md_path_candidate
-            else:
-                # MD exists but hash mismatch or no hash file — source may have changed, re-convert
-                logger.info("MD cache exists for doc_%d but source changed (hash mismatch), re-converting", doc_id)
-
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Write source hash before conversion for future cache validation
-    source_hash = _file_hash(file_path)
-    hash_file = os.path.join(output_dir, ".source_hash")
-
-    skills_path = os.path.join(SKILLS_DIR, "docx-to-markdown", "scripts")
-    md_path = ""
-
-    if os.path.isdir(skills_path):
-        try:
-            if skills_path not in sys.path:
-                sys.path.insert(0, skills_path)
-            from convert_docx import convert_docx_to_markdown
-            kwargs = {}
-            if original_filename:
-                kwargs["output_name"] = original_filename
-            result = await asyncio.to_thread(convert_docx_to_markdown, file_path, output_dir, **kwargs)
-            if isinstance(result, dict):
-                md_path = result.get("output_path") or result.get("md_path") or result.get("path") or ""
-            elif isinstance(result, (str, os.PathLike)):
-                md_path = str(result)
-            else:
-                logger.warning("Skill docx-to-markdown returned unsupported type: %s", type(result).__name__)
-        except Exception as e:
-            logger.warning("Skill docx-to-markdown failed, falling back to mammoth: %s", e)
-
-    if not md_path:
-        try:
-            import mammoth
-            with open(file_path, "rb") as f:
-                result = await asyncio.to_thread(mammoth.convert_to_markdown, f)
-            md_content = result.value
-            stem = os.path.splitext(original_filename)[0] if original_filename else "output"
-            safe_stem = "".join(c if c.isalnum() or c in "._- " else "_" for c in stem).strip(". ")
-            out_file = os.path.join(output_dir, f"{safe_stem}.md")
-            with open(out_file, "w", encoding="utf-8") as f:
-                f.write(md_content)
-            md_path = out_file
-        except ImportError:
-            logger.error("mammoth not installed, cannot convert docx")
-            raise
-        except Exception as e:
-            logger.error("mammoth conversion failed: %s", e)
-            raise
-
-    if not md_path:
-        md_files = list(Path(output_dir).rglob("*.md"))
-        md_path = str(md_files[0]) if md_files else ""
-
-    _write_source_hash(hash_file, source_hash)
-
-    return md_path
-
-
-def _write_source_hash(hash_file: str, source_hash: str) -> bool:
-    try:
-        with open(hash_file, "w") as f:
-            f.write(source_hash)
-        return True
-    except OSError as e:
-        logger.warning("Failed to write source hash cache %s: %s", hash_file, e)
-        return False
+    """Delegate DOCX conversion to ReviewFileStorage, return md_path."""
+    result = await _review_file_storage.convert_docx(
+        file_path=file_path, document_id=doc_id,
+        original_filename=original_filename, force=force,
+        skills_dir=SKILLS_DIR,
+    )
+    return result.md_path
 
 
 def _file_hash(file_path: str) -> str:
-    """SHA-256 hash of file content for cache validation."""
-    import hashlib
-    resolved_path = _resolve_stored_file_path(file_path)
-    if not resolved_path:
-        raise FileNotFoundError(f"file not found: {file_path}")
-    h = hashlib.sha256()
-    with open(resolved_path, "rb") as f:
-        while True:
-            chunk = f.read(8192)
-            if not chunk:
-                break
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def _pick_best_md(md_files: list[Path], original_filename: str | None = None) -> str:
-    """From a list of MD files, pick the best one to use as the converted result.
-
-    Priority: file whose parent directory name or stem matches the original filename stem.
-    Fallback: largest file (most complete conversion) or most recently modified.
-    """
-    if len(md_files) == 1:
-        return str(md_files[0])
-
-    if original_filename:
-        target_stem = os.path.splitext(original_filename)[0]
-        # First: look for a file whose parent dir name matches the stem
-        for md in md_files:
-            if md.parent.name == target_stem or md.stem == target_stem:
-                return str(md)
-        # Second: look for any file whose stem contains a significant portion of the original stem
-        # (handles sanitization where special chars become underscores)
-        safe_stem = "".join(c if c.isalnum() or c in "._- " else "_" for c in target_stem).strip(". ")
-        for md in md_files:
-            if md.stem == safe_stem or md.parent.name == safe_stem:
-                return str(md)
-
-    # Fallback: largest file (most content = most complete conversion)
-    best = max(md_files, key=lambda p: p.stat().st_size)
-    return str(best)
+    return _review_file_storage.compute_file_hash(file_path)
 
 def _render_markdown_report(analyses: list[AnalysisInfo], sr_data: dict, pm_assessment: dict | None, task: ReviewTask | None) -> str:
     artifacts = _extract_task_artifacts(task)

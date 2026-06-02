@@ -222,13 +222,16 @@ def test_analysis_cache_requires_expert_review_block():
 
 def test_legacy_runtime_file_path_resolves_to_workspace_runtime(tmp_path, monkeypatch):
     from app.routers import review
+    from app.storage import review_file_storage
 
     runtime_root = tmp_path / "runtime"
     source = runtime_root / "data" / "review_uploads" / "6" / "requirement" / "legacy.docx"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"legacy docx")
 
-    monkeypatch.setattr(review, "runtime_path", lambda *parts: runtime_root.joinpath(*parts))
+    fake_runtime_path = lambda *parts: runtime_root.joinpath(*parts)
+    monkeypatch.setattr(review, "runtime_path", fake_runtime_path)
+    monkeypatch.setattr(review_file_storage, "runtime_path", fake_runtime_path)
 
     resolved = review._resolve_stored_file_path("./runtime/data/review_uploads/6/requirement/legacy.docx")
 
@@ -237,13 +240,16 @@ def test_legacy_runtime_file_path_resolves_to_workspace_runtime(tmp_path, monkey
 
 def test_parent_relative_runtime_file_path_resolves_to_workspace_runtime(tmp_path, monkeypatch):
     from app.routers import review
+    from app.storage import review_file_storage
 
     runtime_root = tmp_path / "runtime"
     source = runtime_root / "data" / "review_uploads" / "6" / "requirement" / "legacy.docx"
     source.parent.mkdir(parents=True)
     source.write_bytes(b"legacy docx")
 
-    monkeypatch.setattr(review, "runtime_path", lambda *parts: runtime_root.joinpath(*parts))
+    fake_runtime_path = lambda *parts: runtime_root.joinpath(*parts)
+    monkeypatch.setattr(review, "runtime_path", fake_runtime_path)
+    monkeypatch.setattr(review_file_storage, "runtime_path", fake_runtime_path)
 
     resolved = review._resolve_stored_file_path("../../runtime/data/review_uploads/6/requirement/legacy.docx")
 
@@ -496,11 +502,12 @@ def test_active_review_task_matching_uses_mode_and_document_scope():
 
 
 def test_source_hash_write_failure_is_non_fatal(tmp_path, caplog):
-    from app.routers.review import _write_source_hash
+    from app.storage.review_file_storage import ReviewFileStorage
 
+    storage = ReviewFileStorage()
     missing_parent_hash = tmp_path / "missing" / ".source_hash"
 
-    assert _write_source_hash(str(missing_parent_hash), "abc123") is False
+    assert storage._write_source_hash(str(missing_parent_hash), "abc123") is False
     assert "Failed to write source hash cache" in caplog.text
 
 
@@ -518,13 +525,14 @@ def test_issue_sse_ticket_prunes_expired_tickets():
 
     from app.services import auth
 
-    auth._sse_tickets.clear()
-    auth._sse_tickets["expired-ticket"] = {
+    store = auth._sse_ticket_store
+    store._tickets.clear()
+    store._tickets["expired-ticket"] = {
         "user_id": 1,
         "expires_at": datetime.now(timezone.utc) - timedelta(seconds=5),
     }
 
     ticket = auth.issue_sse_ticket(2)
 
-    assert ticket in auth._sse_tickets
-    assert "expired-ticket" not in auth._sse_tickets
+    assert ticket in store._tickets
+    assert "expired-ticket" not in store._tickets

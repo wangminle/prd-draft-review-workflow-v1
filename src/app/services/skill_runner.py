@@ -385,7 +385,7 @@ class SkillRunner:
         # Validate and repair against output schema
         diagnostics = []
         schema_valid = None
-        schema = self.schema_loader.load(skill_dir)
+        schema = self.schema_loader.load(skill_dir, prompt_name)
         if schema:
             errors = self.schema_loader.validate(raw_result, schema)
             if errors:
@@ -775,7 +775,7 @@ class SkillRunner:
                 )
                 result = normalize_dimension_result(dim_name, result)
 
-                schema = self.schema_loader.load(skill_dir)
+                schema = self.schema_loader.load(skill_dir, dim_name)
                 if schema:
                     errors = self.schema_loader.validate(result, schema)
                     if errors:
@@ -831,7 +831,7 @@ class SkillRunner:
                     config=self.retry_config,
                 )
 
-                schema = self.schema_loader.load(skill_dir)
+                schema = self.schema_loader.load(skill_dir, prompt_name)
                 if schema:
                     errors = self.schema_loader.validate(result, schema)
                     if errors:

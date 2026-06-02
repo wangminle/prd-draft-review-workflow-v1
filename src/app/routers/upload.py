@@ -2,9 +2,7 @@
 
 import ipaddress
 import logging
-import os
 import socket
-import uuid
 from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
@@ -15,11 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.runtime_paths import runtime_path
-from app.services.file_text import extract_text_from_bytes
+from app.storage.chat_file_storage import ChatFileStorage
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# Resolve upload_dir from settings on each call, so test monkeypatches work
+_chat_file_storage = ChatFileStorage()
 
 
 def _get_upload_config() -> dict:
@@ -30,6 +30,7 @@ def _get_upload_config() -> dict:
 
 def _extract_text(content: bytes, filename: str) -> str | None:
     """Extract text content from uploaded file based on extension."""
+    from app.services.file_text import extract_text_from_bytes
     return extract_text_from_bytes(content, filename)
 
 
@@ -118,7 +119,6 @@ async def upload_file(
     config = _get_upload_config()
     max_size = config.get("max_file_size_mb", 20) * 1024 * 1024
     allowed_extensions = config.get("allowed_extensions", [])
-    upload_dir = config.get("upload_dir", str(runtime_path("uploads")))
 
     content = await file.read()
     file_size = len(content)
@@ -135,22 +135,14 @@ async def upload_file(
             detail=f"不支持的文件类型: {ext}，允许: {', '.join(allowed_extensions)}",
         )
 
-    # Save file
-    saved_name = f"{uuid.uuid4().hex}{ext}"
-    saved_path = os.path.join(upload_dir, saved_name)
-    os.makedirs(upload_dir, exist_ok=True)
-    with open(saved_path, "wb") as f:
-        f.write(content)
-
-    # Extract text content
-    extracted_text = _extract_text(content, file.filename or saved_name)
+    stored = await _chat_file_storage.save_upload(filename=file.filename or "upload", content=content)
 
     return {
-        "file_id": saved_name,
-        "filename": file.filename,
-        "size": file_size,
-        "extracted_text": extracted_text,
-        "has_content": extracted_text is not None,
+        "file_id": stored.file_id,
+        "filename": stored.original_filename,
+        "size": stored.size,
+        "extracted_text": stored.extracted_text,
+        "has_content": stored.extracted_text is not None,
     }
 
 

@@ -1,12 +1,13 @@
-"""历史记录路由"""
+"""历史记录路由 — 使用 ConversationRepository 进行数据访问"""
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import Conversation, Message, User
+from app.repositories.conversation_repository import ConversationRepository
 from app.schemas.history import (
     ConversationDetail,
     ConversationInfo,
@@ -78,24 +79,12 @@ async def get_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """获取对话详情（含所有消息）"""
-    from fastapi import HTTPException
-
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.id == conv_id,
-            Conversation.user_id == user.id,
-        )
-    )
-    conv = result.scalar_one_or_none()
+    conv_repo = ConversationRepository(db)
+    conv = await conv_repo.get_conversation(conv_id, user_id=user.id)
     if conv is None:
         raise HTTPException(status_code=404, detail="对话不存在")
 
-    msg_result = await db.execute(
-        select(Message)
-        .where(Message.conversation_id == conv_id)
-        .order_by(Message.created_at)
-    )
-    messages = msg_result.scalars().all()
+    messages = await conv_repo.list_messages(conv_id, user_id=user.id)
 
     return ConversationDetail(
         id=conv.id,
@@ -121,19 +110,12 @@ async def delete_conversation(
     db: AsyncSession = Depends(get_db),
 ):
     """删除对话"""
-    from fastapi import HTTPException
-
-    result = await db.execute(
-        select(Conversation).where(
-            Conversation.id == conv_id,
-            Conversation.user_id == user.id,
-        )
-    )
-    conv = result.scalar_one_or_none()
+    conv_repo = ConversationRepository(db)
+    conv = await conv_repo.get_conversation(conv_id, user_id=user.id)
     if conv is None:
         raise HTTPException(status_code=404, detail="对话不存在")
 
-    await db.delete(conv)
+    await conv_repo.delete_conversation(conv_id, user_id=user.id)
     await db.commit()
     return {"message": "对话已删除"}
 
@@ -145,30 +127,18 @@ async def search_messages(
     db: AsyncSession = Depends(get_db),
 ):
     """全文搜索消息内容"""
-    from sqlalchemy import text
+    conv_repo = ConversationRepository(db)
+    hits = await conv_repo.search_messages(user_id=user.id, query=q)
 
-    # FTS5 搜索，仅搜索当前用户的消息
-    sql = text("""
-        SELECT m.id, m.conversation_id, m.role, m.content, m.created_at
-        FROM messages m
-        JOIN messages_fts fts ON m.id = fts.rowid
-        JOIN conversations c ON m.conversation_id = c.id
-        WHERE messages_fts MATCH :query
-        AND c.user_id = :user_id
-        ORDER BY rank
-        LIMIT 50
-    """)
-
-    rows = await db.execute(sql, {"query": q, "user_id": user.id})
     results = [
         SearchResult(
-            conversation_id=row.conversation_id,
-            message_id=row.id,
-            role=row.role,
-            content=row.content[:200],  # 只返回前200字作为预览
-            created_at=row.created_at.isoformat() if row.created_at else "",
+            conversation_id=hit.conversation_id,
+            message_id=hit.message_id,
+            role=hit.role,
+            content=hit.content[:200],
+            created_at=hit.created_at.isoformat() if hit.created_at else "",
         )
-        for row in rows
+        for hit in hits
     ]
 
     return SearchResults(results=results, total=len(results))

@@ -180,9 +180,7 @@ async def test_chat_injects_uploaded_string_file_ids_into_llm_context(auth_clien
     saved_name = "abc123.txt"
     (upload_dir / saved_name).write_text("这是上传文档里的关键上下文", encoding="utf-8")
 
-    from app.routers import chat as chat_router
-
-    original_get_settings = chat_router.get_settings
+    from app.config import get_settings as original_get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -192,13 +190,15 @@ async def test_chat_injects_uploaded_string_file_ids_into_llm_context(auth_clien
         cloned["upload"] = upload_cfg
         return cloned
 
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
+
     async def mock_stream(model_id, messages, **kwargs):
         user_message = next(m for m in messages if m["role"] == "user")
         assert "这是上传文档里的关键上下文" in user_message["content"]
         yield StreamChunk(delta="已读取文档")
         yield StreamChunk(delta="", finish_reason="stop", usage={"total_tokens": 1})
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
 
     with patch("app.routers.chat.stream_chat", side_effect=mock_stream):
         async with auth_client.stream(
@@ -226,9 +226,7 @@ async def test_chat_injects_persisted_context_items_on_follow_up(auth_client, tm
     saved_name = "persisted-doc.txt"
     (upload_dir / saved_name).write_text("持久化文档中的产品背景", encoding="utf-8")
 
-    from app.routers import chat as chat_router
-
-    original_get_settings = chat_router.get_settings
+    from app.config import get_settings as original_get_settings
 
     def fake_get_settings():
         settings = original_get_settings()
@@ -238,7 +236,7 @@ async def test_chat_injects_persisted_context_items_on_follow_up(auth_client, tm
         cloned["upload"] = upload_cfg
         return cloned
 
-    monkeypatch.setattr(chat_router, "get_settings", fake_get_settings)
+    monkeypatch.setattr("app.config.get_settings", fake_get_settings)
 
     async def bootstrap_stream(model_id, messages, **kwargs):
         yield StreamChunk(delta="首轮回复")

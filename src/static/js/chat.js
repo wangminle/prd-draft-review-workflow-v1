@@ -78,7 +78,7 @@ const Chat = {
             const list = document.getElementById('conversation-list');
             const items = data.conversations || data.items || data || [];
             list.innerHTML = items.map(c => `
-                <div class="conv-item ${c.id === this._currentConvId ? 'active' : ''}"
+                <div class="conv-item ${String(c.id) === String(this._currentConvId) ? 'active' : ''}"
                      data-id="${c.id}">
                     <span class="conv-title">${this._esc(c.title || '新对话')}</span>
                     <button class="conv-del" title="删除">&times;</button>
@@ -131,6 +131,7 @@ const Chat = {
     },
 
     newConversation() {
+        this._clearAttachments();
         this._currentConvId = null;
         this._contextItems = [];
         this._renderContextPanel();
@@ -1098,3 +1099,5 @@ const Chat = {
         }
     },
 };
+
+window.Chat = Chat;

@@ -2741,3 +2741,5 @@ const Review = {
         return d.innerHTML;
     },
 };
+
+window.Review = Review;

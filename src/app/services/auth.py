@@ -1,27 +1,15 @@
 """认证服务：密码哈希、JWT 签发与验证"""
 
-import secrets
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
 from jose import JWTError, jwt
 
 from app.config import get_settings
+from app.stores.sse_ticket_store import SseTicketStore
 
 _settings = get_settings()
-_sse_tickets: dict[str, dict] = {}
-
-
-def _prune_expired_sse_tickets(now: datetime | None = None) -> None:
-    current = now or datetime.now(timezone.utc)
-    expired = [
-        ticket
-        for ticket, payload in _sse_tickets.items()
-        if not isinstance(payload.get("expires_at"), datetime)
-        or payload.get("expires_at") <= current
-    ]
-    for ticket in expired:
-        _sse_tickets.pop(ticket, None)
+_sse_ticket_store = SseTicketStore()
 
 
 def hash_password(password: str) -> str:
@@ -62,25 +50,9 @@ def issue_sse_ticket(user_id: int) -> str:
     """签发短时一次性 SSE 票据，避免在 URL 上传输主 JWT。"""
     auth_cfg = _settings.get("auth", {})
     ttl_seconds = int(auth_cfg.get("sse_ticket_ttl_seconds", 60))
-    _prune_expired_sse_tickets()
-    ticket = secrets.token_urlsafe(24)
-    _sse_tickets[ticket] = {
-        "user_id": user_id,
-        "expires_at": datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds),
-    }
-    return ticket
+    return _sse_ticket_store.issue(user_id, ttl_seconds)
 
 
 def consume_sse_ticket(ticket: str) -> int | None:
     """消费一次性 SSE 票据，返回绑定用户 ID。"""
-    _prune_expired_sse_tickets()
-    payload = _sse_tickets.pop(ticket, None)
-    if not payload:
-        return None
-
-    expires_at = payload.get("expires_at")
-    if not isinstance(expires_at, datetime) or expires_at <= datetime.now(timezone.utc):
-        return None
-
-    user_id = payload.get("user_id")
-    return int(user_id) if user_id is not None else None
+    return _sse_ticket_store.consume(ticket)

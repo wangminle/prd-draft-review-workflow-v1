@@ -3,13 +3,12 @@
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.user import User
+from app.repositories.user_repository import UserRepository
 from app.services.auth import decode_token
-from app.utils import now_cn
 
 security = HTTPBearer(auto_error=False)
 
@@ -38,8 +37,8 @@ async def get_current_user(
         )
 
     user_id = int(payload.get("sub", 0))
-    result = await db.execute(select(User).where(User.id == user_id))
-    user = result.scalar_one_or_none()
+    repo = UserRepository(db)
+    user = await repo.get_by_id(user_id)
 
     if user is None or not user.is_active:
         raise HTTPException(
@@ -47,7 +46,7 @@ async def get_current_user(
             detail="用户不存在或已被禁用",
         )
 
-    user.last_active_at = now_cn()
+    await repo.update_last_active(user_id)
     await db.commit()
 
     return user

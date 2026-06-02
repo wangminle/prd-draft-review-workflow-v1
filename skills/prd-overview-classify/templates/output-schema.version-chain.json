@@ -1,0 +1,42 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PRD Version Chain Output",
+  "type": "object",
+  "required": ["chains"],
+  "properties": {
+    "chains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["chain_name", "versions"],
+        "properties": {
+          "chain_name": {
+            "type": "string",
+            "description": "Short name for the evolution chain"
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["version", "doc_id", "title"],
+              "properties": {
+                "version": {
+                  "type": "string",
+                  "description": "Version label from the document"
+                },
+                "doc_id": {
+                  "type": "string",
+                  "description": "Document identifier from the input list"
+                },
+                "title": {
+                  "type": "string",
+                  "description": "Document title"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

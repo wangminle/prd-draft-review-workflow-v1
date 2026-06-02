@@ -1,0 +1,37 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PRD Overview Classification Output",
+  "type": "object",
+  "required": ["classifications"],
+  "properties": {
+    "classifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["doc_id", "category", "confidence"],
+        "properties": {
+          "doc_id": {
+            "type": "string",
+            "description": "Document identifier from the input list"
+          },
+          "category": {
+            "type": "string",
+            "description": "Primary category assigned to the document"
+          },
+          "confidence": {
+            "type": "number",
+            "description": "Classification confidence from 0.0 to 1.0"
+          },
+          "suggested_category": {
+            "type": "string",
+            "description": "Suggested new category when no configured category fits"
+          },
+          "reason": {
+            "type": "string",
+            "description": "Short rationale for low-confidence or uncategorized documents"
+          }
+        }
+      }
+    }
+  }
+}

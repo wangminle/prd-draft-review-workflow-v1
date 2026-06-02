@@ -1,14 +1,14 @@
-"""认证路由"""
+"""认证路由 — 使用 AuditLogWriter 记录审计日志"""
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
+from app.repositories.user_repository import UserRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -16,23 +16,23 @@ from app.schemas.auth import (
     TokenResponse,
     UserInfo,
 )
-from app.logging_config import log_audit
+from app.log_writers.audit_log_writer import AuditLogWriter
 from app.services.auth import create_access_token, hash_password, issue_sse_ticket, verify_password
-from app.utils import now_cn
 
 router = APIRouter()
 security = HTTPBearer()
 _settings = get_settings()
+_audit_log_writer = AuditLogWriter()
 
 
 @router.post("/login", response_model=TokenResponse)
 async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """用户登录，返回 JWT token"""
-    result = await db.execute(select(User).where(User.username == req.username))
-    user = result.scalar_one_or_none()
+    repo = UserRepository(db)
+    user = await repo.get_by_username(req.username)
 
     if user is None or not verify_password(req.password, user.password_hash):
-        log_audit(
+        _audit_log_writer.write(
             "auth.login",
             request=request,
             result="failed",
@@ -42,7 +42,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         raise HTTPException(status_code=401, detail="用户名或密码错误")
 
     if not user.is_active:
-        log_audit(
+        _audit_log_writer.write(
             "auth.login",
             actor=user,
             request=request,
@@ -52,23 +52,20 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
         )
         raise HTTPException(status_code=403, detail="用户已被禁用")
 
-    user.last_active_at = now_cn()
+    await repo.update_last_active(user.id)
     await db.commit()
 
     token = create_access_token(user.id, user.role)
-    log_audit("auth.login", actor=user, request=request, detail={"username": user.username})
+    _audit_log_writer.write("auth.login", actor=user, request=request, detail={"username": user.username})
     return TokenResponse(access_token=token)
 
 
 @router.post("/register", response_model=TokenResponse)
 async def register(req: RegisterRequest, request: Request, db: AsyncSession = Depends(get_db)):
-    """用户注册
-
-    默认注册为普通用户。是否开放公开注册由配置控制。
-    """
+    """用户注册"""
     auth_settings = _settings.get("auth", {})
     if not auth_settings.get("allow_public_registration", True):
-        log_audit(
+        _audit_log_writer.write(
             "auth.register",
             request=request,
             result="failed",
@@ -77,10 +74,10 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         )
         raise HTTPException(status_code=403, detail="当前环境未开放公开注册")
 
-    # 检查用户名是否已存在
-    result = await db.execute(select(User).where(User.username == req.username))
-    if result.scalar_one_or_none() is not None:
-        log_audit(
+    repo = UserRepository(db)
+    existing = await repo.get_by_username(req.username)
+    if existing is not None:
+        _audit_log_writer.write(
             "auth.register",
             request=request,
             result="failed",
@@ -89,18 +86,15 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         )
         raise HTTPException(status_code=400, detail="用户名已存在")
 
-    user = User(
+    user = await repo.create(
         username=req.username,
         password_hash=hash_password(req.password),
         role="user",
-        last_active_at=now_cn(),
     )
-    db.add(user)
     await db.commit()
-    await db.refresh(user)
 
     token = create_access_token(user.id, user.role)
-    log_audit("auth.register", actor=user, request=request, detail={"username": user.username, "role": user.role})
+    _audit_log_writer.write("auth.register", actor=user, request=request, detail={"username": user.username, "role": user.role})
     return TokenResponse(access_token=token)
 
 
@@ -129,10 +123,8 @@ async def change_password(
     db: AsyncSession = Depends(get_db),
 ):
     """修改当前用户密码"""
-    from fastapi import HTTPException, status
-
     if not verify_password(req.old_password, user.password_hash):
-        log_audit(
+        _audit_log_writer.write(
             "auth.password_change",
             actor=user,
             request=request,
@@ -144,5 +136,5 @@ async def change_password(
 
     user.password_hash = hash_password(req.new_password)
     await db.commit()
-    log_audit("auth.password_change", actor=user, request=request)
+    _audit_log_writer.write("auth.password_change", actor=user, request=request)
     return {"message": "密码修改成功"}
