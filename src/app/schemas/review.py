@@ -41,6 +41,7 @@ class StartReviewRequest(BaseModel):
     document_ids: list[int] | None = None
     model_id: str | None = None
     force_reanalysis: bool = False
+    thinking_level: str | None = None
 
 
 class TaskInfo(BaseModel):

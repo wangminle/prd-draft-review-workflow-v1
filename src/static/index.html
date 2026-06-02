@@ -79,6 +79,11 @@
                     <div class="topbar-divider"></div>
                     <div class="topbar-selects">
                         <select id="model-select" class="select-mini" aria-label="选择模型"></select>
+                        <select id="thinking-level-select" class="select-mini" aria-label="思考级别" style="display:none">
+                            <option value="off">思考: 关</option>
+                            <option value="low">思考: low</option>
+                            <option value="high">思考: high</option>
+                        </select>
                         <select id="prompt-select" class="select-mini" aria-label="选择提示词"></select>
                     </div>
                 </div>
@@ -293,6 +298,11 @@
                     <div class="topbar-divider"></div>
                     <div class="topbar-selects review-topbar-selects">
                         <select id="review-model-select" class="select-mini" aria-label="选择审查模型"></select>
+                        <select id="review-thinking-level-select" class="select-mini" aria-label="思考级别" style="display:none">
+                            <option value="off">思考: 关</option>
+                            <option value="low">思考: low</option>
+                            <option value="high">思考: high</option>
+                        </select>
                         <span id="review-model-status" class="model-selector-status"></span>
                     </div>
                 </div>
@@ -723,14 +733,14 @@
         <div class="modal-box" id="modal-content"></div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.7/dist/purify.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/marked@15.0.12/marked.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-    <script src="/js/api.js"></script>
-    <script src="/js/auth.js"></script>
-    <script src="/js/chat.js"></script>
-    <script src="/js/admin.js"></script>
-    <script src="/js/review.js"></script>
-    <script src="/js/app.js"></script>
+    <script src="/vendor/purify.min.js?v=20260602-6" onerror="console.error('DOMPurify load failed')"></script>
+    <script src="/vendor/marked.min.js?v=20260602-6" onerror="console.error('marked load failed')"></script>
+    <script src="/vendor/mermaid.min.js?v=20260602-6" onerror="console.error('mermaid load failed')"></script>
+    <script src="/js/api.js?v=20260602-6"></script>
+    <script src="/js/auth.js?v=20260602-6"></script>
+    <script src="/js/chat.js?v=20260602-6"></script>
+    <script src="/js/admin.js?v=20260602-6"></script>
+    <script src="/js/review.js?v=20260602-6"></script>
+    <script src="/js/app.js?v=20260602-6"></script>
 </body>
 </html>

@@ -55,6 +55,7 @@ async def test_skill_runner_executes_classify_and_per_analysis_steps(tmp_path, m
             assert "需求A.docx" in inputs["doc_titles_and_excerpts"]
             return SkillStepResult(data={"categories": [{"name": "功能需求"}], "version_chains": []})
         if skill_name == "per_analysis":
+            assert inputs["doc_id"] == "1"
             assert inputs["category"] == "功能需求"
             return SkillStepResult(data={
                 "core_problem": "统一预约入口",

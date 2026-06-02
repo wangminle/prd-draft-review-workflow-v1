@@ -114,6 +114,41 @@ const Admin = {
         input.addEventListener('paste', () => requestAnimationFrame(hideValue));
     },
 
+    _syncThinkingFieldsVisibility() {
+        const supported = document.getElementById('modal-thinking-supported')?.value === 'true';
+        const adapter = document.getElementById('modal-thinking-adapter')?.value;
+        const cfgFields = document.getElementById('thinking-config-fields');
+        const adapterFields = document.getElementById('thinking-adapter-fields');
+        const payloadFields = document.getElementById('thinking-payload-fields');
+        if (cfgFields) cfgFields.style.display = supported ? '' : 'none';
+        if (adapterFields) adapterFields.style.display = supported ? '' : 'none';
+        if (payloadFields) payloadFields.style.display = (supported && adapter === 'custom_json') ? '' : 'none';
+    },
+
+    _bindThinkingFieldsVisibility() {
+        const supportedEl = document.getElementById('modal-thinking-supported');
+        const adapterEl = document.getElementById('modal-thinking-adapter');
+        if (supportedEl) supportedEl.addEventListener('change', () => this._syncThinkingFieldsVisibility());
+        if (adapterEl) adapterEl.addEventListener('change', () => this._syncThinkingFieldsVisibility());
+    },
+
+    _bindNewThinkingFieldsVisibility() {
+        const supportedEl = document.getElementById('modal-new-thinking-supported');
+        const adapterEl = document.getElementById('modal-new-thinking-adapter');
+        const sync = () => {
+            const supported = supportedEl?.value === 'true';
+            const adapter = adapterEl?.value;
+            const cfgFields = document.getElementById('new-thinking-config-fields');
+            const adapterFields = document.getElementById('new-thinking-adapter-fields');
+            const payloadFields = document.getElementById('new-thinking-payload-fields');
+            if (cfgFields) cfgFields.style.display = supported ? '' : 'none';
+            if (adapterFields) adapterFields.style.display = supported ? '' : 'none';
+            if (payloadFields) payloadFields.style.display = (supported && adapter === 'custom_json') ? '' : 'none';
+        };
+        if (supportedEl) supportedEl.addEventListener('change', sync);
+        if (adapterEl) adapterEl.addEventListener('change', sync);
+    },
+
     async _persistModelOrder(modelIds) {
         if (typeof API.reorderAdminModels === 'function') {
             await API.reorderAdminModels(modelIds);
@@ -527,6 +562,7 @@ const Admin = {
                         ${m.enabled
                             ? '<span style="color:var(--green-6)">已启用</span>'
                             : '<span style="color:var(--red-6)">已禁用</span>'}
+                        ${m.thinking_supported ? ' <span class="tag tag-blue" style="font-size:var(--fs-11)">思考</span>' : ''}
                     </td>
                     <td class="model-connection-cell">
                         <span data-role="model-connection-status">
@@ -596,12 +632,43 @@ const Admin = {
                 <label>Temperature</label>
                 <input type="number" id="modal-new-temperature" value="0.7" step="0.1" min="0" max="2">
             </div>
+            <div class="field">
+                <label>支持思考模式</label>
+                <select id="modal-new-thinking-supported">
+                    <option value="false">不支持</option>
+                    <option value="true">支持</option>
+                </select>
+            </div>
+            <div class="field" id="new-thinking-config-fields" style="display:none">
+                <label>默认思考等级</label>
+                <select id="modal-new-thinking-level">
+                    <option value="off">关</option>
+                    <option value="low">Low</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+            <div class="field" id="new-thinking-adapter-fields" style="display:none">
+                <label>思考适配器</label>
+                <select id="modal-new-thinking-adapter">
+                    <option value="none">无</option>
+                    <option value="openai_reasoning">OpenAI Reasoning</option>
+                    <option value="deepseek_reasoner">DeepSeek Reasoner</option>
+                    <option value="qwen_thinking">Qwen Thinking</option>
+                    <option value="custom_json">自定义 JSON</option>
+                </select>
+            </div>
+            <div class="field" id="new-thinking-payload-fields" style="display:none">
+                <label>自定义思考参数 (JSON)</label>
+                <textarea id="modal-new-thinking-payload" rows="4" placeholder='{"reasoning_effort":"{{level}}"}'></textarea>
+                <small style="color:var(--color-text-muted)">支持 {{level}} 占位符，运行时替换为 low/high</small>
+            </div>
             <div class="btn-row">
                 <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">取消</button>
                 <button class="btn btn-primary btn-sm" onclick="Admin.saveNewModel()">创建</button>
             </div>
         `);
         this._bindSensitiveInputToggle('modal-new-api-key');
+        this._bindNewThinkingFieldsVisibility();
     },
 
     async saveNewModel() {
@@ -612,21 +679,29 @@ const Admin = {
         const apiKey = document.getElementById('modal-new-api-key').value;
         const maxTokens = parseInt(document.getElementById('modal-new-max-tokens').value);
         const temperature = parseFloat(document.getElementById('modal-new-temperature').value);
+        const thinkingSupported = document.getElementById('modal-new-thinking-supported').value === 'true';
+        const thinkingLevel = document.getElementById('modal-new-thinking-level').value;
+        const thinkingAdapter = document.getElementById('modal-new-thinking-adapter').value;
+        const thinkingPayloadRaw = document.getElementById('modal-new-thinking-payload').value.trim();
+        const thinkingPayload = thinkingPayloadRaw || null;
 
         if (!modelId || !name || !apiBase || !llmModel) {
             alert('模型 ID、显示名称、API Base URL、LLM 模型名 为必填项');
             return;
         }
 
+        if (thinkingPayload) {
+            try { JSON.parse(thinkingPayload); } catch { alert('自定义思考参数必须是合法 JSON'); return; }
+        }
+
         try {
             await API.createModel({
-                model_id: modelId,
-                name: name,
-                api_base: apiBase,
-                llm_model: llmModel,
-                api_key: apiKey || undefined,
-                max_tokens: maxTokens,
-                temperature: temperature,
+                model_id: modelId, name, api_base: apiBase, llm_model: llmModel,
+                api_key: apiKey || undefined, max_tokens: maxTokens, temperature,
+                thinking_supported: thinkingSupported,
+                thinking_level: thinkingSupported ? thinkingLevel : 'off',
+                thinking_adapter: thinkingSupported ? thinkingAdapter : 'none',
+                thinking_payload: thinkingSupported ? thinkingPayload : null,
             });
             this.closeModal();
             this.loadModels();
@@ -677,6 +752,36 @@ const Admin = {
                     <option value="false">禁用</option>
                 </select>
             </div>
+            <div class="field">
+                <label>支持思考模式</label>
+                <select id="modal-thinking-supported">
+                    <option value="false">不支持</option>
+                    <option value="true">支持</option>
+                </select>
+            </div>
+            <div class="field" id="thinking-config-fields" style="display:none">
+                <label>默认思考等级</label>
+                <select id="modal-thinking-level">
+                    <option value="off">关</option>
+                    <option value="low">Low</option>
+                    <option value="high">High</option>
+                </select>
+            </div>
+            <div class="field" id="thinking-adapter-fields" style="display:none">
+                <label>思考适配器</label>
+                <select id="modal-thinking-adapter">
+                    <option value="none">无</option>
+                    <option value="openai_reasoning">OpenAI Reasoning</option>
+                    <option value="deepseek_reasoner">DeepSeek Reasoner</option>
+                    <option value="qwen_thinking">Qwen Thinking</option>
+                    <option value="custom_json">自定义 JSON</option>
+                </select>
+            </div>
+            <div class="field" id="thinking-payload-fields" style="display:none">
+                <label>自定义思考参数 (JSON)</label>
+                <textarea id="modal-thinking-payload" rows="4" placeholder='{"reasoning_effort":"{{level}}"}'></textarea>
+                <small style="color:var(--color-text-muted)">支持 {{level}} 占位符，运行时替换为 low/high</small>
+            </div>
             <div class="btn-row">
                 <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">取消</button>
                 <button class="btn btn-primary btn-sm" id="btn-save-model">保存</button>
@@ -684,6 +789,7 @@ const Admin = {
         `);
 
         this._bindSensitiveInputToggle('modal-api-key');
+        this._bindThinkingFieldsVisibility();
         document.getElementById('btn-save-model').addEventListener('click', () => this.saveModel(modelId));
 
         API.getAdminModels().then(models => {
@@ -695,6 +801,11 @@ const Admin = {
                 document.getElementById('modal-max-tokens').value = m.max_tokens || 4096;
                 document.getElementById('modal-temperature').value = m.temperature || 0.7;
                 document.getElementById('modal-enabled').value = String(m.enabled);
+                document.getElementById('modal-thinking-supported').value = String(m.thinking_supported || false);
+                document.getElementById('modal-thinking-level').value = m.thinking_level || 'off';
+                document.getElementById('modal-thinking-adapter').value = m.thinking_adapter || 'none';
+                if (m.thinking_payload) document.getElementById('modal-thinking-payload').value = m.thinking_payload;
+                this._syncThinkingFieldsVisibility();
             }
         });
     },
@@ -707,16 +818,25 @@ const Admin = {
         const maxTokens = parseInt(document.getElementById('modal-max-tokens').value);
         const temperature = parseFloat(document.getElementById('modal-temperature').value);
         const enabled = document.getElementById('modal-enabled').value === 'true';
+        const thinkingSupported = document.getElementById('modal-thinking-supported').value === 'true';
+        const thinkingLevel = document.getElementById('modal-thinking-level').value;
+        const thinkingAdapter = document.getElementById('modal-thinking-adapter').value;
+        const thinkingPayloadRaw = document.getElementById('modal-thinking-payload').value.trim();
+        const thinkingPayload = thinkingPayloadRaw || null;
+
+        if (thinkingPayload) {
+            try { JSON.parse(thinkingPayload); } catch { alert('自定义思考参数必须是合法 JSON'); return; }
+        }
 
         try {
             if (apiKey) await API.updateModelApiKey(modelId, apiKey);
             await API.updateModelConfig(modelId, {
-                name: name,
-                api_base: apiBase,
-                llm_model: llmModel,
-                max_tokens: maxTokens,
-                temperature: temperature,
-                enabled: enabled,
+                name, api_base: apiBase, llm_model: llmModel,
+                max_tokens: maxTokens, temperature, enabled,
+                thinking_supported: thinkingSupported,
+                thinking_level: thinkingSupported ? thinkingLevel : 'off',
+                thinking_adapter: thinkingSupported ? thinkingAdapter : 'none',
+                thinking_payload: thinkingSupported ? thinkingPayload : null,
             });
             this.closeModal();
             this.loadModels();

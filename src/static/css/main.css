@@ -1401,7 +1401,61 @@ input::placeholder, textarea::placeholder {
 .msg-text .mermaid-error {
     margin: 0;
     font-size: var(--fs-13);
+    color: var(--red-6);
+}
+
+.mermaid-source {
+    display: none;
+}
+
+.mermaid-chart:has(.mermaid-source)::before {
+    content: '';
+    display: block;
+    width: 24px;
+    height: 24px;
+    margin: var(--sp-2) auto;
+    border: 2px solid var(--blue-3);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: mermaid-spin 0.8s linear infinite;
+}
+
+@keyframes mermaid-spin {
+    to { transform: rotate(360deg); }
+}
+
+.mermaid-source-details {
+    margin-top: var(--sp-2);
+}
+
+.mermaid-source-details summary {
+    font-size: var(--fs-12);
     color: var(--color-text-secondary);
+    cursor: pointer;
+}
+
+.mermaid-source-code {
+    margin: var(--sp-1) 0 0;
+    padding: var(--sp-2);
+    background: var(--gray-1);
+    border-radius: var(--radius-small);
+    font-size: var(--fs-12);
+    overflow-x: auto;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.mermaid-error {
+    color: var(--red-6);
+    font-size: var(--fs-13);
+}
+
+.mermaid-container .mermaid-error {
+    margin: 0 0 var(--sp-1);
+}
+
+.mermaid-container .mermaid-source-details {
+    margin-top: var(--sp-1);
 }
 
 .msg-text th,
@@ -1419,6 +1473,17 @@ input::placeholder, textarea::placeholder {
 .msg-error {
     color: var(--color-danger);
     font-weight: var(--fw-medium);
+}
+
+.msg-reasoning {
+    color: #888;
+    font-size: 0.85em;
+    margin-bottom: 4px;
+    white-space: pre-wrap;
+    border-left: 2px solid #ccc;
+    padding-left: 8px;
+    max-height: 200px;
+    overflow-y: auto;
 }
 
 .typing-dots {

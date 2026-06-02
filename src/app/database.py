@@ -130,6 +130,22 @@ async def _ensure_review_schema(conn):
         await conn.execute(text(
             "ALTER TABLE model_configs ADD COLUMN deleted_by_user BOOLEAN NOT NULL DEFAULT 0"
         ))
+    if "thinking_supported" not in mc_columns:
+        await conn.execute(text(
+            "ALTER TABLE model_configs ADD COLUMN thinking_supported BOOLEAN NOT NULL DEFAULT 0"
+        ))
+    if "thinking_level" not in mc_columns:
+        await conn.execute(text(
+            "ALTER TABLE model_configs ADD COLUMN thinking_level VARCHAR(10) NOT NULL DEFAULT 'off'"
+        ))
+    if "thinking_adapter" not in mc_columns:
+        await conn.execute(text(
+            "ALTER TABLE model_configs ADD COLUMN thinking_adapter VARCHAR(30) NOT NULL DEFAULT 'none'"
+        ))
+    if "thinking_payload" not in mc_columns:
+        await conn.execute(text(
+            "ALTER TABLE model_configs ADD COLUMN thinking_payload TEXT"
+        ))
 
 
 async def _ensure_fts5():

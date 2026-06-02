@@ -15,6 +15,7 @@ class LlmSessionLogWriter:
         usage: dict | None = None,
         elapsed_ms: int | None = None,
         error: str | None = None,
+        reasoning_content: str | None = None,
     ) -> None:
         log_llm_session(
             model,
@@ -23,4 +24,5 @@ class LlmSessionLogWriter:
             usage=usage,
             elapsed_ms=elapsed_ms,
             error=error,
+            reasoning_content=reasoning_content,
         )

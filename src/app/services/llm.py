@@ -49,6 +49,7 @@ class StreamChunk:
     delta: str
     finish_reason: str | None = None
     usage: dict | None = None
+    reasoning_content: str = ""
 
 
 def build_messages(
@@ -136,6 +137,7 @@ async def stream_chat(
     messages: list[dict[str, str]],
     max_tokens: int = 4096,
     temperature: float = 0.7,
+    extra_body: dict | None = None,
 ) -> AsyncIterator[StreamChunk]:
     """Stream chat completion from an OpenAI-compatible API."""
     if not api_key:
@@ -153,6 +155,8 @@ async def stream_chat(
         "temperature": temperature,
         "stream": True,
     }
+    if extra_body:
+        payload.update(extra_body)
 
     token_count = 0
     start_time = time.time()
@@ -188,16 +192,24 @@ async def stream_chat(
 
                 delta_obj = choices[0].get("delta", {})
                 delta_text = delta_obj.get("content", "")
+                reasoning_text = delta_obj.get("reasoning_content", "")
                 finish_reason = choices[0].get("finish_reason")
 
                 if delta_text:
+                    token_count += 1
+                if reasoning_text:
                     token_count += 1
 
                 usage = None
                 if finish_reason and "usage" in data:
                     usage = data["usage"]
 
-                yield StreamChunk(delta=delta_text, finish_reason=finish_reason, usage=usage)
+                yield StreamChunk(
+                    delta=delta_text,
+                    finish_reason=finish_reason,
+                    usage=usage,
+                    reasoning_content=reasoning_text,
+                )
 
 
 async def check_connection(api_base: str, api_key: str, llm_model: str) -> dict:
@@ -293,6 +305,7 @@ async def non_stream_chat(
     messages: list[dict[str, str]],
     max_tokens: int = 4096,
     temperature: float = 0.7,
+    extra_body: dict | None = None,
 ) -> tuple[str, dict | None]:
     """Non-streaming chat completion — returns (full_text, usage)."""
     if not api_key:
@@ -313,6 +326,8 @@ async def non_stream_chat(
         "temperature": temperature,
         "stream": False,
     }
+    if extra_body:
+        payload.update(extra_body)
 
     async with httpx.AsyncClient(timeout=httpx.Timeout(120.0, connect=10.0)) as client:
         resp = await client.post(url, json=payload, headers=headers)
@@ -321,8 +336,10 @@ async def non_stream_chat(
             raise RuntimeError(f"LLM API error {resp.status_code}: {resp.text[:200]}")
 
         data = resp.json()
-        text = data["choices"][0]["message"]["content"]
+        message = data["choices"][0].get("message", {})
+        text = message.get("content") or ""
+        reasoning_content = message.get("reasoning_content") or ""
         usage = data.get("usage")
         elapsed_ms = int((time.time() - start_time) * 1000)
-        log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms)
+        log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms, reasoning_content=reasoning_content)
         return text, usage

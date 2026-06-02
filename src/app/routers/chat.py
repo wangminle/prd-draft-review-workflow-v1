@@ -53,6 +53,7 @@ async def chat(
         file_ids=req.file_ids,
         mention_context_item_ids=req.mention_context_item_ids,
         context_rules=req.context_rules,
+        thinking_level=req.thinking_level,
     )
     if session is None:
         if req.conversation_id:
@@ -66,6 +67,7 @@ async def chat(
 
     async def _stream(db_session: AsyncSession):
         collected = []
+        reasoning_parts = []
         token_count = 0
 
         try:
@@ -77,7 +79,16 @@ async def chat(
                 messages=llm_messages,
                 max_tokens=model_cfg["max_tokens"],
                 temperature=model_cfg["temperature"],
+                extra_body=model_cfg.get("extra_body"),
             ):
+                if chunk.reasoning_content:
+                    reasoning_parts.append(chunk.reasoning_content)
+                    data = json.dumps({
+                        "reasoning_content": chunk.reasoning_content,
+                        "conversation_id": conv_id,
+                    })
+                    yield f"data: {data}\n\n"
+
                 if chunk.delta:
                     collected.append(chunk.delta)
                     token_count += 1
@@ -144,7 +155,11 @@ async def list_models(
     )
     models = result.scalars().all()
     return [
-        ModelInfo(id=mc.model_id, name=mc.name, enabled=mc.enabled)
+        ModelInfo(
+            id=mc.model_id, name=mc.name, enabled=mc.enabled,
+            thinking_supported=mc.thinking_supported,
+            thinking_level=mc.thinking_level,
+        )
         for mc in models
     ]
 

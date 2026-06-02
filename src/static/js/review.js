@@ -177,6 +177,7 @@ const Review = {
     async loadModels() {
         try {
             const models = await API.getModels();
+            this._models = models;
             const sel = document.getElementById('review-model-select');
             const enabled = models.filter(m => m.enabled);
             sel.innerHTML = enabled.map(m => `<option value="${m.id}">${m.name}</option>`).join('');
@@ -188,6 +189,8 @@ const Review = {
                 statusEl.textContent = '无可用模型，请先在管理后台配置';
                 statusEl.style.color = 'var(--red-6)';
             }
+            this._updateReviewThinkingDropdown();
+            sel.addEventListener('change', () => this._updateReviewThinkingDropdown());
         } catch (e) {
             const statusEl = document.getElementById('review-model-status');
             if (statusEl) {
@@ -195,6 +198,30 @@ const Review = {
                 statusEl.style.color = 'var(--red-6)';
             }
         }
+    },
+
+    _updateReviewThinkingDropdown() {
+        const sel = document.getElementById('review-model-select');
+        const thinkingSel = document.getElementById('review-thinking-level-select');
+        if (!sel || !thinkingSel) return;
+        const modelId = sel.value;
+        const model = (this._models || []).find(m => m.id === modelId);
+        if (model && model.thinking_supported) {
+            thinkingSel.style.display = '';
+            thinkingSel.value = localStorage.getItem('thinking_level') || 'off';
+        } else {
+            thinkingSel.style.display = 'none';
+            thinkingSel.value = 'off';
+        }
+        thinkingSel.addEventListener('change', () => {
+            localStorage.setItem('thinking_level', thinkingSel.value);
+        });
+    },
+
+    _getReviewThinkingLevel() {
+        const thinkingSel = document.getElementById('review-thinking-level-select');
+        if (!thinkingSel || thinkingSel.style.display === 'none') return undefined;
+        return thinkingSel.value;
     },
 
     _getSelectedModelId() {
@@ -923,6 +950,7 @@ const Review = {
                 mode,
                 model_id: modelId,
                 document_ids: mode === 'full' ? undefined : [this.selectedDocumentId],
+                thinking_level: this._getReviewThinkingLevel(),
             });
             this.currentTaskId = resp.task_id;
             API.log('info', 'review.start.frontend_success', {
@@ -964,6 +992,7 @@ const Review = {
                 model_id: modelId,
                 document_ids: mode === 'full' ? undefined : [this.selectedDocumentId],
                 force_reanalysis: true,
+                thinking_level: this._getReviewThinkingLevel(),
             });
             this.currentTaskId = resp.task_id;
             API.log('info', 'review.restart.frontend_success', {
@@ -2393,7 +2422,7 @@ const Review = {
             // Mermaid evolution graph
             const mermaidCode = this._buildEvolutionMermaid(evMatches);
             if (mermaidCode) {
-                html += `<div class="mermaid-container"><div class="mermaid-chart" data-mermaid="${this._escAttr(mermaidCode)}"></div></div>`;
+                html += `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(mermaidCode)}</pre></div></div>`;
             }
             html += '<div class="insight-evo-list">';
             for (const m of evMatches) {
@@ -2495,25 +2524,68 @@ const Review = {
     },
 
     async _renderMermaidCharts() {
-        if (!window.mermaid) return;
-        const charts = document.querySelectorAll('.mermaid-chart[data-mermaid]');
+        const charts = Array.from(document.querySelectorAll('.mermaid-chart')).filter(el => this._getMermaidSource(el));
         if (charts.length === 0) return;
+        if (!window.mermaid) {
+            this._markMermaidChartsFailed(charts, 'Mermaid library not loaded');
+            return;
+        }
         try {
             mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'loose', themeVariables: { fontSize: '14px' } });
             for (const el of charts) {
-                const code = el.getAttribute('data-mermaid');
-                const id = 'mermaid-' + Math.random().toString(36).substring(2, 8);
-                const { svg } = await mermaid.render(id, code);
-                el.innerHTML = svg;
-                el.removeAttribute('data-mermaid');
+                const rawCode = this._getMermaidSource(el);
+                if (!rawCode) continue;
+                const code = this._normalizeMermaidCode(rawCode);
+                try {
+                    await mermaid.parse(code);
+                    const id = 'mermaid-' + Math.random().toString(36).substring(2, 8);
+                    const { svg } = await mermaid.render(id, code);
+                    el.innerHTML = svg;
+                    el.removeAttribute('data-mermaid');
+                } catch (renderErr) {
+                    this._markMermaidChartsFailed([el], renderErr?.message || 'Mermaid render failed');
+                }
             }
         } catch (e) {
             console.warn('Mermaid render failed:', e);
-            for (const el of charts) {
-                el.innerHTML = '<p style="color:var(--color-text-muted)">流程图渲染失败</p>';
-                el.removeAttribute('data-mermaid');
-            }
+            this._markMermaidChartsFailed(charts, e?.message || 'Mermaid render failed');
         }
+    },
+
+    _markMermaidChartsFailed(charts, reason = 'Mermaid render failed') {
+        const list = Array.from(charts || []);
+        if (window.API && typeof window.API.log === 'function') {
+            window.API.log('error', 'review.mermaid.render_failed', {
+                reason,
+                chart_count: list.length,
+            }, 'Mermaid 渲染失败');
+        }
+        for (const el of list) {
+            const code = this._getMermaidSource(el);
+            if (!code) continue;
+            const safeCode = this._esc(code);
+            const message = reason === 'Mermaid library not loaded' ? '流程图库加载失败，请刷新页面' : '流程图渲染失败';
+            el.innerHTML = `<p class="mermaid-error">${message}</p><details class="mermaid-source-details"><summary>查看源码</summary><pre class="mermaid-source-code">${safeCode}</pre></details>`;
+            el.removeAttribute('data-mermaid');
+        }
+    },
+
+    _getMermaidSource(el) {
+        return el.getAttribute('data-mermaid') || el.querySelector('.mermaid-source')?.textContent || '';
+    },
+
+    _normalizeMermaidCode(code) {
+        return String(code || '')
+            .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\[([^"\]\n][^\]\n]*)\]/g, (_, prefix, id, label) => {
+                return `${prefix}${id}["${this._escapeMermaidLabel(label)}"]`;
+            })
+            .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\{([^"{}\n][^{}\n]*)\}/g, (_, prefix, id, label) => {
+                return `${prefix}${id}{"${this._escapeMermaidLabel(label)}"}`;
+            });
+    },
+
+    _escapeMermaidLabel(label) {
+        return String(label || '').replace(/"/g, '\\"');
     },
 
     _renderDraft(report) {
@@ -2699,32 +2771,81 @@ const Review = {
     _renderMarkdown(text) {
         if (!text) return '';
         if (window.marked && window.DOMPurify) {
-            const renderer = new window.marked.Renderer();
-            renderer.code = (code, infostring) => {
-                const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
-                const rawLang = typeof code === 'object' && code !== null ? (code.lang || '') : (infostring || '');
-                const lang = String(rawLang).trim();
-                const safeCode = this._esc(rawCode);
-                const safeLang = this._esc(lang || 'text');
-                const safeLangClass = this._escAttr(lang || 'text');
-                const safeCodeAttr = this._escAttr(rawCode);
-                return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${safeLang}</span><button class="code-copy-btn" data-code="${safeCodeAttr}">复制</button></div><pre><code class="language-${safeLangClass}">${safeCode}</code></pre></div>`;
-            };
-            window.marked.setOptions({
-                breaks: true,
-                gfm: true,
-                renderer,
-            });
-            return window.DOMPurify.sanitize(window.marked.parse(text));
+            return this._renderMarkdownWithLibraries(text);
         }
-        // Fallback: minimal regex-based rendering
+        return this._renderMarkdownFallback(text);
+    },
+
+    _renderMarkdownWithLibraries(text) {
+        const renderer = new window.marked.Renderer();
+        renderer.code = (code, infostring) => {
+            const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
+            const rawLang = typeof code === 'object' && code !== null ? (code.lang || '') : (infostring || '');
+            const lang = String(rawLang).trim();
+
+            if (lang.toLowerCase() === 'mermaid') {
+                return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(rawCode)}</pre></div></div>`;
+            }
+
+            const safeCode = this._esc(rawCode);
+            const safeLang = this._esc(lang || 'text');
+            const safeLangClass = this._escAttr(lang || 'text');
+            const safeCodeAttr = this._escAttr(rawCode);
+            return `<div class="code-block-wrapper"><div class="code-block-header"><span class="code-lang">${safeLang}</span><button class="code-copy-btn" data-code="${safeCodeAttr}">复制</button></div><pre><code class="language-${safeLangClass}">${safeCode}</code></pre></div>`;
+        };
+        window.marked.setOptions({
+            breaks: true,
+            gfm: true,
+            renderer,
+        });
+        return window.DOMPurify.sanitize(window.marked.parse(text), {
+            USE_PROFILES: { html: true, svg: true, svgFilters: true },
+        });
+    },
+
+    _renderMarkdownFallback(text) {
         let html = this._esc(text);
-        html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
-        html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
-        html = html.replace(/^# (.+)$/gm, '<h1>$1</h1>');
+        html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+        html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+        html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+        html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        html = html.replace(/```mermaid\n([\s\S]*?)```/g, (_, code) => {
+            return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(code)}</pre></div></div>`;
+        });
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>');
+        html = this._wrapListItems(html, /^\*\s+(.+)$/gm, 'ul');
+        html = this._wrapListItems(html, /^\d+\.\s+(.+)$/gm, 'ol');
+        html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
         html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+        html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
         html = html.replace(/\n/g, '<br>');
-        return '<p>' + html + '</p>';
+        return html;
+    },
+
+    _wrapListItems(html, pattern, tag) {
+        const regex = new RegExp(pattern.source, pattern.flags);
+        const lines = html.split('\n');
+        const result = [];
+        let i = 0;
+        while (i < lines.length) {
+            const m = regex.exec(lines[i]);
+            if (m) {
+                const items = [`<li>${m[1]}</li>`];
+                let j = i + 1;
+                while (j < lines.length) {
+                    const m2 = regex.exec(lines[j]);
+                    if (m2) { items.push(`<li>${m2[1]}</li>`); j++; } else break;
+                }
+                result.push(`<${tag}>${items.join('')}</${tag}>`);
+                i = j;
+            } else {
+                result.push(lines[i]);
+                i++;
+            }
+        }
+        return result.join('\n');
     },
 
     _escAttr(s) {

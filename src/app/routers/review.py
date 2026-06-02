@@ -223,6 +223,10 @@ async def _get_model_config(model_id: str | None, db: AsyncSession) -> dict:
         "llm_model": mc.llm_model,
         "max_tokens": mc.max_tokens,
         "temperature": 0.3,
+        "thinking_supported": mc.thinking_supported,
+        "thinking_level": mc.thinking_level,
+        "thinking_adapter": mc.thinking_adapter,
+        "thinking_payload": mc.thinking_payload,
     }
 
 
@@ -539,6 +543,17 @@ async def start_review(
 
     model_cfg = await _get_model_config(req.model_id, db)
 
+    # Enrich model_cfg with thinking extra_body
+    if model_cfg.get("thinking_supported") and model_cfg.get("thinking_adapter") != "none":
+        from app.services.thinking_adapter import build_thinking_payload
+        extra_body = build_thinking_payload(
+            thinking_level=model_cfg.get("thinking_level", "off"),
+            thinking_adapter=model_cfg.get("thinking_adapter", "none"),
+            thinking_payload=model_cfg.get("thinking_payload"),
+            runtime_level_override=req.thinking_level,
+        )
+        model_cfg["extra_body"] = extra_body
+
     cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == project_id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
     ctx_ver = cv.scalar_one_or_none() or 1
 
@@ -580,6 +595,7 @@ async def start_review(
         step_details=json.dumps({
             "document_ids": selected_doc_ids,
             "historical_document_ids": historical_doc_ids,
+            "thinking_level": req.thinking_level,
         }, ensure_ascii=False),
         total_docs=len(docs),
     ))

@@ -379,6 +379,7 @@ class SkillRunner:
             llm_model=self.model_cfg["llm_model"],
             max_tokens=max_tokens,
             temperature=temperature,
+            extra_body=self.model_cfg.get("extra_body"),
             config=self.retry_config,
         )
 
@@ -467,6 +468,7 @@ class SkillRunner:
             version = doc.get("version", "")
 
             inputs = {
+                "doc_id": str(doc_id),
                 "md_content": md_content,
                 "category": category,
                 "version": version,
@@ -771,6 +773,7 @@ class SkillRunner:
                     llm_model=self.model_cfg["llm_model"],
                     max_tokens=self.model_cfg["max_tokens"],
                     temperature=0.3,
+                    extra_body=self.model_cfg.get("extra_body"),
                     config=self.retry_config,
                 )
                 result = normalize_dimension_result(dim_name, result)
@@ -828,6 +831,7 @@ class SkillRunner:
                     llm_model=self.model_cfg["llm_model"],
                     max_tokens=self.model_cfg["max_tokens"],
                     temperature=0.3,
+                    extra_body=self.model_cfg.get("extra_body"),
                     config=self.retry_config,
                 )
 

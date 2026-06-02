@@ -184,6 +184,10 @@ class ChatApplicationService:
             "max_tokens": mc.max_tokens,
             "temperature": mc.temperature,
             "enabled": mc.enabled,
+            "thinking_supported": mc.thinking_supported,
+            "thinking_level": mc.thinking_level,
+            "thinking_adapter": mc.thinking_adapter,
+            "thinking_payload": mc.thinking_payload,
         }
 
     async def prepare_chat_session(
@@ -199,6 +203,7 @@ class ChatApplicationService:
         file_ids: list[str] | None = None,
         mention_context_item_ids: list[int] | None = None,
         context_rules: list[str] | None = None,
+        thinking_level: str | None = None,
     ) -> ChatSession | None:
         model_cfg = await self.get_model_config(model_id)
         if not model_cfg:
@@ -234,6 +239,16 @@ class ChatApplicationService:
 
         context = "\n\n".join(context_parts) if context_parts else None
         llm_messages = build_messages(template, history, message, context)
+
+        if model_cfg.get("thinking_supported") and model_cfg.get("thinking_adapter") != "none":
+            from app.services.thinking_adapter import build_thinking_payload
+            extra_body = build_thinking_payload(
+                thinking_level=model_cfg.get("thinking_level", "off"),
+                thinking_adapter=model_cfg.get("thinking_adapter", "none"),
+                thinking_payload=model_cfg.get("thinking_payload"),
+                runtime_level_override=thinking_level,
+            )
+            model_cfg["extra_body"] = extra_body
 
         return ChatSession(
             conversation_id=conv_id,

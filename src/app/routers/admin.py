@@ -78,6 +78,24 @@ class ModelConfigUpdate(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     enabled: bool | None = None
+    thinking_supported: bool | None = None
+    thinking_level: str | None = None
+    thinking_adapter: str | None = None
+    thinking_payload: str | None = None
+
+    @field_validator("thinking_level")
+    @classmethod
+    def validate_thinking_level(cls, v):
+        if v is not None and v not in ("off", "low", "high"):
+            raise ValueError("thinking_level must be off, low, or high")
+        return v
+
+    @field_validator("thinking_adapter")
+    @classmethod
+    def validate_thinking_adapter(cls, v):
+        if v is not None and v not in ("none", "openai_reasoning", "deepseek_reasoner", "qwen_thinking", "custom_json"):
+            raise ValueError("invalid thinking_adapter")
+        return v
 
 
 class ModelConfigCreate(BaseModel):
@@ -90,6 +108,24 @@ class ModelConfigCreate(BaseModel):
     temperature: float = 0.7
     enabled: bool = True
     api_key: str | None = None
+    thinking_supported: bool = False
+    thinking_level: str = "off"
+    thinking_adapter: str = "none"
+    thinking_payload: str | None = None
+
+    @field_validator("thinking_level")
+    @classmethod
+    def validate_thinking_level(cls, v):
+        if v not in ("off", "low", "high"):
+            raise ValueError("thinking_level must be off, low, or high")
+        return v
+
+    @field_validator("thinking_adapter")
+    @classmethod
+    def validate_thinking_adapter(cls, v):
+        if v not in ("none", "openai_reasoning", "deepseek_reasoner", "qwen_thinking", "custom_json"):
+            raise ValueError("invalid thinking_adapter")
+        return v
 
 
 class ApiKeyUpdate(BaseModel):
@@ -311,6 +347,10 @@ def _serialize_model(mc: ModelConfig, masked_key: str = "") -> dict:
         "max_tokens": mc.max_tokens,
         "temperature": mc.temperature,
         "enabled": mc.enabled,
+        "thinking_supported": mc.thinking_supported,
+        "thinking_level": mc.thinking_level,
+        "thinking_adapter": mc.thinking_adapter,
+        "thinking_payload": mc.thinking_payload,
         "last_test_status": mc.last_test_status,
         "last_test_time": mc.last_test_time.isoformat() if mc.last_test_time else None,
         "last_test_latency_ms": mc.last_test_latency_ms,
@@ -367,6 +407,10 @@ async def create_model(
         temperature=req.temperature,
         enabled=req.enabled,
         deleted_by_user=False,
+        thinking_supported=req.thinking_supported,
+        thinking_level=req.thinking_level,
+        thinking_adapter=req.thinking_adapter,
+        thinking_payload=req.thinking_payload,
     )
     if req.api_key:
         secret = get_settings().get("auth", {}).get("secret_key", "")
@@ -427,8 +471,7 @@ async def update_model_config(
     """更新模型配置（名称、API Base、参数等）"""
     _require_admin(user)
     repo = ModelConfigRepository(db)
-    mc = await repo.update(
-        model_id,
+    update_kwargs = dict(
         name=req.name,
         provider=req.provider,
         api_base=req.api_base,
@@ -436,7 +479,13 @@ async def update_model_config(
         max_tokens=req.max_tokens,
         temperature=req.temperature,
         enabled=req.enabled,
+        thinking_supported=req.thinking_supported,
+        thinking_level=req.thinking_level,
+        thinking_adapter=req.thinking_adapter,
     )
+    if "thinking_payload" in req.model_fields_set:
+        update_kwargs["thinking_payload"] = req.thinking_payload
+    mc = await repo.update(model_id, **update_kwargs)
     if mc is None:
         raise HTTPException(status_code=404, detail="模型不存在")
 

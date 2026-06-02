@@ -14,30 +14,29 @@ def test_chat_events_are_bound_once():
 
 
 def test_chat_uses_open_source_markdown_renderer_with_sanitizer():
-    assert "marked" in HTML
-    assert "dompurify" in HTML
+    assert "/vendor/purify.min.js" in HTML
+    assert "/vendor/marked.min.js" in HTML
+    assert "/vendor/mermaid.min.js" in HTML
     assert "window.marked.parse(text)" in CHAT_JS
     assert "window.DOMPurify.sanitize" in CHAT_JS
 
 
 def test_chat_markdown_renders_mermaid_fences_as_chart_containers():
-    markdown_block = CHAT_JS.split("_renderMarkdown(text)", 1)[1].split("_scrollBottom()", 1)[0]
-    assert "const renderer = new window.marked.Renderer();" in markdown_block
-    assert "renderer.code = (code, infostring) => {" in markdown_block
-    assert "if (lang === 'mermaid') {" in markdown_block
-    assert "mermaid-container" in markdown_block
-    assert "mermaid-chart" in markdown_block
-    assert "data-mermaid=" in markdown_block
+    assert "_renderMarkdownWithLibraries" in CHAT_JS
+    assert "const renderer = new window.marked.Renderer();" in CHAT_JS
+    assert "if (lang === 'mermaid')" in CHAT_JS
+    assert "mermaid-container" in CHAT_JS
+    assert "mermaid-chart" in CHAT_JS
+    assert "mermaid-source" in CHAT_JS
     assert ".msg-text .mermaid-container" in CSS
     assert ".msg-text .mermaid-chart svg" in CSS
 
 
-def test_chat_message_rendering_triggers_mermaid_render_queue():
+def test_chat_message_rendering_defers_mermaid_until_stream_end():
     send_message_block = CHAT_JS.split("async sendMessage()", 1)[1].split("_normalizeHistoryMessages(messages)", 1)[0]
     append_block = CHAT_JS.split("_appendMessage(role, content)", 1)[1].split("_renderMarkdown(text)", 1)[0]
-    assert "this._queueMermaidRender(contentEl);" in send_message_block
-    assert "this._queueMermaidRender(div);" in append_block
-    assert "_queueMermaidRender(scope = document)" in CHAT_JS
+    assert "this._schedulePostStreamMermaid(contentEl);" in send_message_block
+    assert "_renderMermaidOnStreamEnd" in CHAT_JS
     assert "async _renderMermaidCharts(scope = document)" in CHAT_JS
 
 

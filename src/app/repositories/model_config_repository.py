@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import ModelConfig
 
+_UNSET = object()
+
 
 class ModelConfigRepository:
     """模型配置的结构化持久化实现。"""
@@ -54,6 +56,10 @@ class ModelConfigRepository:
         max_tokens: int | None = None,
         temperature: float | None = None,
         enabled: bool | None = None,
+        thinking_supported: bool | None = None,
+        thinking_level: str | None = None,
+        thinking_adapter: str | None = None,
+        thinking_payload: str | None = _UNSET,
     ) -> ModelConfig | None:
         mc = await self.get_by_model_id(model_id)
         if mc is None:
@@ -72,6 +78,14 @@ class ModelConfigRepository:
             mc.temperature = temperature
         if enabled is not None:
             mc.enabled = enabled
+        if thinking_supported is not None:
+            mc.thinking_supported = thinking_supported
+        if thinking_level is not None:
+            mc.thinking_level = thinking_level
+        if thinking_adapter is not None:
+            mc.thinking_adapter = thinking_adapter
+        if thinking_payload is not _UNSET:
+            mc.thinking_payload = thinking_payload
         await self._db.flush()
         return mc
 

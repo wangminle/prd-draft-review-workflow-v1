@@ -13,6 +13,7 @@ class ChatRequest(BaseModel):
     url_texts: dict[str, str] = Field(default_factory=dict)
     context_rules: list[str] = Field(default_factory=list)
     mention_context_item_ids: list[int] = Field(default_factory=list)
+    thinking_level: str | None = None
     stream: bool = True
 
 
@@ -25,6 +26,8 @@ class ModelInfo(BaseModel):
     id: str
     name: str
     enabled: bool
+    thinking_supported: bool = False
+    thinking_level: str = "off"
 
 
 class ModelList(BaseModel):

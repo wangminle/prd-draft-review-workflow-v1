@@ -6,6 +6,7 @@ const Chat = {
     _abortCtrl: null,
     _streamCtrl: null,
     _mermaidTimer: null,
+    _mermaidDebounceTimer: null,
     _contextSync: Promise.resolve(),
     _files: [],      // { file_id, filename, extracted_text }
     _urls: [],       // { url, extracted_text }
@@ -41,9 +42,9 @@ const Chat = {
         this._contextBound = false;
         this._currentConvId = null;
         this._contextSync = Promise.resolve();
-        if (this._mermaidTimer) {
-            clearTimeout(this._mermaidTimer);
-            this._mermaidTimer = null;
+        if (this._mermaidDebounceTimer) {
+            clearTimeout(this._mermaidDebounceTimer);
+            this._mermaidDebounceTimer = null;
         }
         this._hideMentionSuggestions();
     },
@@ -51,14 +52,41 @@ const Chat = {
     async loadModels() {
         try {
             const models = await API.getModels();
+            this._models = models;
             const sel = document.getElementById('model-select');
             sel.innerHTML = models
                 .filter(m => m.enabled)
                 .map(m => `<option value="${m.id}">${m.name}</option>`)
                 .join('');
+            this._updateThinkingDropdown();
+            sel.addEventListener('change', () => this._updateThinkingDropdown());
         } catch (e) {
             console.error('加载模型失败:', e);
         }
+    },
+
+    _updateThinkingDropdown() {
+        const sel = document.getElementById('model-select');
+        const thinkingSel = document.getElementById('thinking-level-select');
+        if (!sel || !thinkingSel) return;
+        const modelId = sel.value;
+        const model = (this._models || []).find(m => m.id === modelId);
+        if (model && model.thinking_supported) {
+            thinkingSel.style.display = '';
+            thinkingSel.value = localStorage.getItem('thinking_level') || 'off';
+        } else {
+            thinkingSel.style.display = 'none';
+            thinkingSel.value = 'off';
+        }
+        thinkingSel.addEventListener('change', () => {
+            localStorage.setItem('thinking_level', thinkingSel.value);
+        });
+    },
+
+    _getThinkingLevel() {
+        const thinkingSel = document.getElementById('thinking-level-select');
+        if (!thinkingSel || thinkingSel.style.display === 'none') return undefined;
+        return thinkingSel.value;
     },
 
     async loadPrompts() {
@@ -220,9 +248,11 @@ const Chat = {
                 url_texts: Object.keys(url_texts).length ? url_texts : undefined,
                 context_rules: contextRules.length ? contextRules : undefined,
                 mention_context_item_ids: mentionContextItemIds.length ? mentionContextItemIds : undefined,
+                thinking_level: this._getThinkingLevel(),
             });
 
             let fullText = '';
+            let reasoningText = '';
             let hadError = false;
             const decoder = new TextDecoder();
             const signal = this._streamCtrl.signal;
@@ -254,15 +284,34 @@ const Chat = {
                             this.loadConversations();
                         }
 
+                        if (data.reasoning_content) {
+                            reasoningText += data.reasoning_content;
+                            const dots = contentEl.querySelector('.typing-dots');
+                            if (dots) dots.remove();
+                            contentEl.innerHTML = '';
+                            const rEl = document.createElement('div');
+                            rEl.className = 'msg-reasoning';
+                            rEl.textContent = reasoningText;
+                            contentEl.appendChild(rEl);
+                        }
+
                         if (data.content) {
                             fullText += data.content;
+                            const dots = contentEl.querySelector('.typing-dots');
+                            if (dots) dots.remove();
                             contentEl.innerHTML = this._renderMarkdown(fullText);
-                            this._queueMermaidRender(contentEl);
+                            if (reasoningText) {
+                                const rEl = document.createElement('div');
+                                rEl.className = 'msg-reasoning';
+                                rEl.textContent = reasoningText;
+                                contentEl.insertBefore(rEl, contentEl.firstChild);
+                            }
+                            this._schedulePostStreamMermaid(contentEl);
                             this._scrollBottom();
                         }
 
                         if (data.done) {
-                            // Stream complete
+                            this._renderMermaidOnStreamEnd(contentEl);
                         }
                     } catch {
                         // Skip malformed JSON lines
@@ -272,6 +321,8 @@ const Chat = {
 
             if (!fullText && !hadError) {
                 contentEl.innerHTML = '<span class="msg-error">未收到回复</span>';
+            } else if (fullText) {
+                this._renderMermaidOnStreamEnd(contentEl);
             }
 
         } catch (e) {
@@ -317,37 +368,57 @@ const Chat = {
             </div>`;
 
         container.appendChild(div);
-        this._queueMermaidRender(div);
+        this._renderMermaidOnStreamEnd(div);
         this._scrollBottom();
         return div;
     },
 
     _renderMarkdown(text) {
         if (window.marked && window.DOMPurify) {
-            const renderer = new window.marked.Renderer();
-            renderer.code = (code, infostring) => {
-                const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
-                const rawLang = typeof code === 'object' && code !== null ? (code.lang || '') : (infostring || '');
-                const lang = String(rawLang).trim().toLowerCase();
-
-                if (lang === 'mermaid') {
-                    return `<div class="mermaid-container"><div class="mermaid-chart" data-mermaid="${this._escAttr(rawCode)}"></div></div>`;
-                }
-
-                const safeCode = this._esc(rawCode);
-                const safeLangClass = this._escAttr(lang || 'text');
-                return `<pre><code class="language-${safeLangClass}">${safeCode}</code></pre>`;
-            };
-            window.marked.setOptions({
-                gfm: true,
-                breaks: true,
-                renderer,
-            });
-            return window.DOMPurify.sanitize(window.marked.parse(text));
+            return this._renderMarkdownWithLibraries(text);
         }
+        return this._renderMarkdownFallback(text);
+    },
 
+    _renderMarkdownWithLibraries(text) {
+        const renderer = new window.marked.Renderer();
+        renderer.code = (code, infostring) => {
+            const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
+            const rawLang = typeof code === 'object' && code !== null ? (code.lang || '') : (infostring || '');
+            const lang = String(rawLang).trim().toLowerCase();
+
+            if (lang === 'mermaid') {
+                return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(rawCode)}</pre></div></div>`;
+            }
+
+            const safeCode = this._esc(rawCode);
+            const safeLangClass = this._escAttr(lang || 'text');
+            return `<pre><code class="language-${safeLangClass}">${safeCode}</code></pre>`;
+        };
+        window.marked.setOptions({
+            gfm: true,
+            breaks: true,
+            renderer,
+        });
+        return window.DOMPurify.sanitize(window.marked.parse(text), {
+            USE_PROFILES: { html: true, svg: true, svgFilters: true },
+        });
+    },
+
+    _renderMarkdownFallback(text) {
         let html = this._esc(text);
+        html = html.replace(/^######\s+(.+)$/gm, '<h6>$1</h6>');
+        html = html.replace(/^#####\s+(.+)$/gm, '<h5>$1</h5>');
+        html = html.replace(/^####\s+(.+)$/gm, '<h4>$1</h4>');
+        html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+        html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+        html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+        html = html.replace(/```mermaid\n([\s\S]*?)```/g, (_, code) => {
+            return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(code)}</pre></div></div>`;
+        });
         html = html.replace(/```(\w*)\n([\s\S]*?)```/g, '<pre><code class="lang-$1">$2</code></pre>');
+        html = this._wrapListItems(html, /^\*\s+(.+)$/gm, 'ul');
+        html = this._wrapListItems(html, /^\d+\.\s+(.+)$/gm, 'ol');
         html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
         html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
         html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
@@ -355,18 +426,55 @@ const Chat = {
         return html;
     },
 
+    _wrapListItems(html, pattern, tag) {
+        const regex = new RegExp(pattern.source, pattern.flags);
+        const lines = html.split('\n');
+        const result = [];
+        let i = 0;
+        while (i < lines.length) {
+            const m = regex.exec(lines[i]);
+            if (m) {
+                const items = [`<li>${m[1]}</li>`];
+                let j = i + 1;
+                while (j < lines.length) {
+                    const m2 = regex.exec(lines[j]);
+                    if (m2) { items.push(`<li>${m2[1]}</li>`); j++; } else break;
+                }
+                result.push(`<${tag}>${items.join('')}</${tag}>`);
+                i = j;
+            } else {
+                result.push(lines[i]);
+                i++;
+            }
+        }
+        return result.join('\n');
+    },
+
     _queueMermaidRender(scope = document) {
-        if (this._mermaidTimer) clearTimeout(this._mermaidTimer);
-        this._mermaidTimer = setTimeout(() => {
+        // During streaming, don't render Mermaid — only schedule for after stream ends
+    },
+
+    _schedulePostStreamMermaid(scope, delay = 2000) {
+        // Debounce: if no new chunk within `delay` ms, render Mermaid
+        if (this._mermaidDebounceTimer) clearTimeout(this._mermaidDebounceTimer);
+        this._mermaidDebounceTimer = setTimeout(() => {
             this._renderMermaidCharts(scope);
-        }, 120);
+        }, delay);
+    },
+
+    _renderMermaidOnStreamEnd(scope) {
+        if (this._mermaidDebounceTimer) clearTimeout(this._mermaidDebounceTimer);
+        this._renderMermaidCharts(scope);
     },
 
     async _renderMermaidCharts(scope = document) {
-        if (!window.mermaid) return;
         const root = scope && typeof scope.querySelectorAll === 'function' ? scope : document;
-        const charts = root.querySelectorAll('.mermaid-chart[data-mermaid]');
+        const charts = Array.from(root.querySelectorAll('.mermaid-chart')).filter(el => this._getMermaidSource(el));
         if (charts.length === 0) return;
+        if (!window.mermaid) {
+            this._markMermaidChartsFailed(charts, 'Mermaid library not loaded');
+            return;
+        }
 
         try {
             window.mermaid.initialize({
@@ -377,20 +485,59 @@ const Chat = {
             });
 
             for (const el of charts) {
-                const code = el.getAttribute('data-mermaid');
-                if (!code) continue;
-                const id = 'chat-mermaid-' + Math.random().toString(36).substring(2, 8);
-                const { svg } = await window.mermaid.render(id, code);
-                el.innerHTML = svg;
-                el.removeAttribute('data-mermaid');
+                const rawCode = this._getMermaidSource(el);
+                if (!rawCode) continue;
+                const code = this._normalizeMermaidCode(rawCode);
+                try {
+                    await window.mermaid.parse(code);
+                    const id = 'chat-mermaid-' + Math.random().toString(36).substring(2, 8);
+                    const { svg } = await window.mermaid.render(id, code);
+                    el.innerHTML = svg;
+                    el.removeAttribute('data-mermaid');
+                } catch (renderErr) {
+                    this._markMermaidChartsFailed([el], renderErr?.message || 'Mermaid render failed');
+                }
             }
         } catch (e) {
             console.warn('Chat Mermaid render failed:', e);
-            for (const el of charts) {
-                el.innerHTML = '<p class="mermaid-error">流程图渲染失败，请检查 Mermaid 语法</p>';
-                el.removeAttribute('data-mermaid');
-            }
+            this._markMermaidChartsFailed(charts, e?.message || 'Mermaid render failed');
         }
+    },
+
+    _markMermaidChartsFailed(charts, reason = 'Mermaid render failed') {
+        const list = Array.from(charts || []);
+        if (window.API && typeof window.API.log === 'function') {
+            window.API.log('error', 'chat.mermaid.render_failed', {
+                reason,
+                chart_count: list.length,
+            }, 'Mermaid 渲染失败');
+        }
+        for (const el of list) {
+            const code = this._getMermaidSource(el);
+            if (!code) continue;
+            const safeCode = this._esc(code);
+            const message = reason === 'Mermaid library not loaded' ? '流程图库加载失败，请刷新页面' : '流程图渲染失败';
+            el.innerHTML = `<p class="mermaid-error">${message}</p><details class="mermaid-source-details"><summary>查看源码</summary><pre class="mermaid-source-code">${safeCode}</pre></details>`;
+            el.removeAttribute('data-mermaid');
+        }
+    },
+
+    _getMermaidSource(el) {
+        return el.getAttribute('data-mermaid') || el.querySelector('.mermaid-source')?.textContent || '';
+    },
+
+    _normalizeMermaidCode(code) {
+        return String(code || '')
+            .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\[([^"\]\n][^\]\n]*)\]/g, (_, prefix, id, label) => {
+                return `${prefix}${id}["${this._escapeMermaidLabel(label)}"]`;
+            })
+            .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\{([^"{}\n][^{}\n]*)\}/g, (_, prefix, id, label) => {
+                return `${prefix}${id}{"${this._escapeMermaidLabel(label)}"}`;
+            });
+    },
+
+    _escapeMermaidLabel(label) {
+        return String(label || '').replace(/"/g, '\\"');
     },
 
     _scrollBottom() {

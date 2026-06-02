@@ -127,12 +127,25 @@ def test_llm_skills_have_system_context_prompts():
 
     for skill_id in [
         "prd-overview-classify",
+        "prd-per-analysis",
         "requirement-insights",
         "report-generator",
     ]:
         prompt = root / "skills" / skill_id / "prompts" / "system-context.md"
         assert prompt.exists(), f"{skill_id} 缺少 system-context.md"
         assert "JSON" in prompt.read_text(encoding="utf-8")
+
+
+def test_per_analysis_prompt_requires_doc_id_output():
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    prompt = root / "skills" / "prd-per-analysis" / "prompts" / "per-doc-analysis.md"
+    text = prompt.read_text(encoding="utf-8")
+
+    assert "- 文档 ID：{{doc_id}}" in text
+    assert '"doc_id": "输入文档ID"' in text
+    assert "`doc_id` 必须沿用输入中的 `{{doc_id}}`" in text
 
 
 @pytest.mark.asyncio

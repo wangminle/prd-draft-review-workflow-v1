@@ -82,6 +82,7 @@ async def retryable_chat(
     llm_model: str,
     max_tokens: int = 4096,
     temperature: float = 0.3,
+    extra_body: dict | None = None,
     config: RetryConfig = RetryConfig(),
 ) -> tuple[str, dict | None]:
     from app.logging_config import log_llm_session
@@ -102,6 +103,8 @@ async def retryable_chat(
                 "temperature": temperature,
                 "stream": False,
             }
+            if extra_body:
+                payload.update(extra_body)
 
             timeout = httpx.Timeout(
                 config.timeout_seconds,
@@ -114,12 +117,13 @@ async def retryable_chat(
                 data = resp.json()
                 message = data["choices"][0].get("message", {})
                 text = message.get("content")
+                reasoning_content = message.get("reasoning_content", "") or ""
                 if not isinstance(text, str) or not text.strip():
                     finish_reason = data["choices"][0].get("finish_reason")
                     raise ValueError(f"LLM returned empty content (finish_reason={finish_reason})")
                 usage = data.get("usage")
                 elapsed_ms = int((time.time() - start_time) * 1000)
-                log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms)
+                log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms, reasoning_content=reasoning_content)
                 return text, usage
 
             error_text = resp.text[:500]
@@ -190,6 +194,7 @@ async def structured_chat(
     llm_model: str,
     max_tokens: int = 4096,
     temperature: float = 0.3,
+    extra_body: dict | None = None,
     config: RetryConfig = RetryConfig(),
 ) -> dict:
     text, usage = await retryable_chat(
@@ -199,6 +204,7 @@ async def structured_chat(
         llm_model=llm_model,
         max_tokens=max_tokens,
         temperature=temperature,
+        extra_body=extra_body,
         config=config,
     )
     return _parse_json_response(text)

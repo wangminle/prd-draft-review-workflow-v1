@@ -153,6 +153,7 @@ def log_llm_session(
     usage: dict | None = None,
     elapsed_ms: int | None = None,
     error: str | None = None,
+    reasoning_content: str | None = None,
 ) -> None:
     """记录一次 LLM API 调用session到 llm_sessions.jsonl"""
     log_dir = get_logs_dir()
@@ -165,6 +166,8 @@ def log_llm_session(
         "elapsed_ms": elapsed_ms,
         "error": error,
     }
+    if reasoning_content:
+        entry["reasoning_content"] = reasoning_content
     with open(log_dir / "llm_sessions.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 

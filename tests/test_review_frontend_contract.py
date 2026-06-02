@@ -378,7 +378,7 @@ def test_re_review_forces_fresh_backend_analysis():
 
 
 def test_markdown_code_blocks_render_copy_button():
-    markdown_block = REVIEW_JS.split("_renderMarkdown(text)", 1)[1].split("_escAttr(s)", 1)[0]
+    markdown_block = REVIEW_JS.split("_renderMarkdownWithLibraries(text) {", 1)[1].split("_renderMarkdownFallback(text) {", 1)[0]
     assert "const renderer = new window.marked.Renderer();" in markdown_block
     assert "renderer.code = (code, infostring) => {" in markdown_block
     assert "code-block-wrapper" in markdown_block
