@@ -192,7 +192,7 @@ async def stream_chat(
 
                 delta_obj = choices[0].get("delta", {})
                 delta_text = delta_obj.get("content", "")
-                reasoning_text = delta_obj.get("reasoning_content", "")
+                reasoning_text = delta_obj.get("reasoning_content") or ""
                 finish_reason = choices[0].get("finish_reason")
 
                 if delta_text:

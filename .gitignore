@@ -1,7 +1,12 @@
 # Runtime data — dynamic, clearable (data/code separation)
-# Keep README.md as placeholder, ignore all other runtime data
+# Keep README.md and ui-branding.example.yaml as templates, ignore all other runtime data
 runtime/*
 !runtime/README.md
+!runtime/config/
+!runtime/config/ui-branding.example.yaml
+# Re-ignore runtime config files that should never be committed
+runtime/config/ui-branding.yaml
+runtime/config/ui-branding.scan-report.md
 
 # Python bytecode & cache
 **/__pycache__/

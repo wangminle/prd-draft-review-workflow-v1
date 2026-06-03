@@ -188,7 +188,8 @@ def test_css_006_modal_has_overscroll_behavior():
 
 def test_css_007_theme_color_meta():
     html = _read(HTML)
-    assert '<meta name="theme-color" content="#005AAA">' in html, "theme-color meta tag not found"
+    assert 'name="theme-color"' in html and 'content="#005AAA"' in html, "theme-color meta tag not found"
+    assert 'id="theme-color-meta"' in html, "theme-color meta must have id for branding override"
 
 
 # ─── JS-001: Intl.DateTimeFormat ───

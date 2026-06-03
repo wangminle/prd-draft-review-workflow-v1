@@ -69,7 +69,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.1.0"}
+        return {"status": "ok", "version": "0.2.7"}
 
     return app, engine, TestSessionLocal
 

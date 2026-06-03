@@ -2825,7 +2825,9 @@ const Review = {
     },
 
     _wrapListItems(html, pattern, tag) {
-        const regex = new RegExp(pattern.source, pattern.flags);
+        // Strip 'g' flag — we match one-at-a-time per line, global flag leaks lastIndex across strings
+        const flags = pattern.flags.replace('g', '');
+        const regex = new RegExp(pattern.source, flags);
         const lines = html.split('\n');
         const result = [];
         let i = 0;

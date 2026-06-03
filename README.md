@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.2.7。
 
 ### 架构设计
 
@@ -61,7 +61,8 @@ flowchart LR
 ### 功能要点
 
 - 项目化评审：按项目管理需求文档、上下文版本、评审任务和报告输出。
-- OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，以及思考级别相关配置。
+- OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
+- 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。版本号通过 `app_version` 字段配置。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
 - 实时任务体验：评审流程支持流式进度反馈，适合长流程 AI 审查任务。
@@ -72,9 +73,10 @@ flowchart LR
 当前后台管理聚焦“把工作流跑稳”和“让模型配置可控”，主要包括：
 
 - 用户管理：创建、禁用、删除普通用户或管理员账号。
-- 模型管理：维护模型列表、显示顺序、启停状态、API Key、思考级别配置，并支持连通性测试与测速。
+- 模型管理：维护模型列表、显示顺序、启停状态、API Key、思考级别配置与适配方式，并支持连通性测试与测速。
 - Prompt 管理：维护通用 Prompt 模板和评审专用 Prompt。
 - 技能管理：查看当前技能配置，并维护技能更新地址等元信息。
+- 品牌配置管理：查看和导出当前品牌配置模板。
 - 统计与审计：查看系统统计数据和最近访问记录，辅助运营与排障。
 
 ### 技术实现概览
@@ -102,13 +104,16 @@ cp .env.example .env
 ```text
 src/main.py                 FastAPI 入口与静态站点挂载
 src/app/routers/            API 路由层
-src/app/services/           应用服务、SkillRunner、LLM 适配
+src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置
 src/app/repositories/       数据访问层
 src/app/storage/            文档与运行时文件存储
 src/app/log_writers/        审计、前端、LLM 会话日志
 src/static/                 前端 SPA
 skills/                     需求评审技能链
 runtime/                    数据库、上传、转换、结果、日志
+runtime/config/             品牌配置模板（ui-branding.example.yaml）
+runtime/assets/branding/    品牌资产目录（Logo、favicon）
+tools/                      品牌迁移工具（migrate_branding.py）
 tests/                      自动化测试
 ```
 
@@ -128,7 +133,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.2.7.
 
 ### Architecture
 
@@ -180,6 +185,7 @@ Supported review modes:
 
 - Project-centric review management for documents, context versions, tasks, and reports.
 - OpenAI-compatible multi-model integration with encrypted API key storage and configurable thinking settings.
+- Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
 - Streaming progress for long-running AI review tasks.
@@ -193,6 +199,7 @@ The admin console focuses on operational control of the workflow:
 - Model management for ordering, enabling, configuring API keys, testing connectivity, measuring latency, and tuning thinking-related settings.
 - Prompt management for general prompts and review prompts.
 - Skill management for skill metadata such as update URLs.
+- Branding template export and configuration guidance.
 - System stats and recent access records for lightweight operations and troubleshooting.
 
 ### Tech Stack
@@ -220,13 +227,16 @@ The default server port is 17957.
 ```text
 src/main.py                 FastAPI entry point and static site mount
 src/app/routers/            API routes
-src/app/services/           Application services, SkillRunner, LLM integration
+src/app/services/           Application services, SkillRunner, LLM integration, branding config
 src/app/repositories/       Persistence layer
 src/app/storage/            Runtime file storage
 src/app/log_writers/        Audit, frontend, and LLM session logs
 src/static/                 Frontend SPA
 skills/                     Review skill chain
 runtime/                    Database, uploads, conversions, results, logs
+runtime/config/             Branding config template (ui-branding.example.yaml)
+runtime/assets/branding/    Branding assets directory (Logo, favicon)
+tools/                      Branding migration tool (migrate_branding.py)
 tests/                      Automated tests
 ```
 

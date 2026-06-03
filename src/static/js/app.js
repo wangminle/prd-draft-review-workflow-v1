@@ -1,6 +1,7 @@
 /* 应用入口 */
 const App = {
     async init() {
+        Branding.load();
         this._showLoading();
         this._bindAuthForms();
         this._bindNavigation();

@@ -76,8 +76,9 @@ def test_chat_sse_error_is_not_overwritten_by_empty_reply_fallback():
     assert "let hadError = false;" in send_message_block
     assert "if (data.error) {" in send_message_block
     assert "hadError = true;" in send_message_block
-    assert "if (!fullText && !hadError) {" in send_message_block
+    assert "if (!fullText && !reasoningText && !hadError)" in send_message_block
     assert "contentEl.innerHTML = '<span class=\"msg-error\">未收到回复</span>';" in send_message_block
+    assert "if (!fullText && reasoningText)" in send_message_block
 
 
 def test_chat_css_class_names_match_rendered_message_dom():

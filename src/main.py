@@ -29,6 +29,7 @@ from app.runtime_paths import runtime_path
 _logs_dir = setup_logging(runtime_path("logs"))
 
 from fastapi import Depends, FastAPI, Request, Response
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -36,6 +37,12 @@ from app.database import init_db
 from app.middleware.auth import get_optional_user
 from app.models.user import User
 from app.routers import admin, auth, chat, history, review, upload
+from app.services.branding_config import (
+    get_branding_config,
+    resolve_branding_asset,
+    ensure_branding_dirs,
+    DEFAULT_BRANDING,
+)
 
 
 class NoCacheMiddleware(BaseHTTPMiddleware):
@@ -52,16 +59,15 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动：初始化数据库
+    ensure_branding_dirs()
     await init_db()
     yield
-    # 关闭：清理资源（如需要）
 
 
 app = FastAPI(
-    title="AI产品需求初审",
+    title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.1.0",
+    version="0.2.7",
     lifespan=lifespan,
 )
 
@@ -78,7 +84,46 @@ app.include_router(review.router, prefix="/api/review", tags=["需求审查"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.1.0"}
+    return {"status": "ok", "version": "0.2.7"}
+
+
+@app.get("/api/app/branding")
+async def get_branding():
+    """返回合并后的品牌配置供前端使用。"""
+    config = get_branding_config()
+    result = dict(config)
+    # 将资产文件名转换为可访问 URL
+    for key in ("login_logo", "topbar_logo", "favicon"):
+        val = result.get(key)
+        if val:
+            result[key] = f"/assets/branding/{val}"
+        else:
+            result[key] = ""
+    return result
+
+
+@app.get("/assets/branding/{path:path}")
+async def serve_branding_asset(path: str):
+    """只服务 runtime/assets/branding/ 下的静态资产文件。
+
+    拒绝穿越、绝对路径等非法请求。
+    """
+    if not path or path.startswith(".") or ".." in path.split("/"):
+        return Response(status_code=404)
+
+    asset_dir = runtime_path("assets", "branding")
+    file_path = asset_dir / path
+
+    # 安全检查：确保文件在 branding 目录内
+    try:
+        file_path.resolve().relative_to(asset_dir.resolve())
+    except ValueError:
+        return Response(status_code=404)
+
+    if not file_path.exists() or not file_path.is_file():
+        return Response(status_code=404)
+
+    return FileResponse(str(file_path))
 
 
 @app.post("/api/log")

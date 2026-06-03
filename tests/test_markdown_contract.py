@@ -75,6 +75,11 @@ class TestMarkdownRenderingSplit:
         assert "'ul'" in CHAT_JS
         assert "'ol'" in CHAT_JS
 
+    def test_chat_wrap_list_items_strips_g_flag(self):
+        """BUG-011 regression: _wrapListItems must strip 'g' flag to prevent lastIndex leak."""
+        wrap_block = CHAT_JS.split("_wrapListItems(html, pattern, tag) {", 1)[1].split("_queueMermaidRender", 1)[0]
+        assert "replace('g', '')" in wrap_block or "'g'" not in wrap_block
+
     def test_chat_fallback_list_preserves_position(self):
         wrap_block = CHAT_JS.split("_wrapListItems(html, pattern, tag) {", 1)[1].split("_queueMermaidRender", 1)[0]
         assert "split('\\n')" in wrap_block
@@ -98,6 +103,11 @@ class TestMarkdownRenderingSplit:
         assert "_wrapListItems" in REVIEW_JS
         assert "'ul'" in REVIEW_JS
         assert "'ol'" in REVIEW_JS
+
+    def test_review_wrap_list_items_strips_g_flag(self):
+        """BUG-011 regression: _wrapListItems must strip 'g' flag to prevent lastIndex leak."""
+        wrap_block = REVIEW_JS.split("_wrapListItems(html, pattern, tag) {", 1)[1].split("_escAttr(s)", 1)[0]
+        assert "replace('g', '')" in wrap_block or "'g'" not in wrap_block
 
     def test_review_fallback_list_preserves_position(self):
         wrap_block = REVIEW_JS.split("_wrapListItems(html, pattern, tag) {", 1)[1].split("_escAttr(s)", 1)[0]

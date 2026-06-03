@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="theme-color" content="#005AAA">
-    <title>AI产品需求初审</title>
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <meta name="theme-color" content="#005AAA" id="theme-color-meta">
+    <title id="page-title">AI产品需求初审</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" id="favicon-link">
     <link rel="stylesheet" href="/css/main.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -18,14 +18,14 @@
                 <div class="auth-brand">
                     <div class="breath-circle breath-circle-1"></div>
                     <div class="breath-circle breath-circle-2"></div>
-                    <div class="brand-mark"><svg viewBox="0 0 72 72" width="72" height="72" fill="none" aria-hidden="true"><rect width="72" height="72" rx="16" fill="#005AAA"/><path d="M26 22h6v16h20V22h6v44h-6V38H32v28h-6V22z" fill="#fff"/></svg></div>
-                    <h1 class="brand-title">AI产品需求初审</h1>
-                    <p class="brand-desc">AI 驱动的需求审查工作流平台</p>
+                    <div class="brand-mark" data-branding="login-logo"><svg viewBox="0 0 72 72" width="72" height="72" fill="none" aria-hidden="true"><rect width="72" height="72" rx="16" fill="#005AAA"/><path d="M26 22h6v16h20V22h6v44h-6V38H32v28h-6V22z" fill="#fff"/></svg></div>
+                    <h1 class="brand-title" data-branding="login-title">AI产品需求初审</h1>
+                    <p class="brand-desc" data-branding="login-subtitle">AI 驱动的需求审查工作流平台</p>
                 </div>
                 <div class="auth-card">
                     <!-- 登录表单 -->
                     <div id="login-form-block">
-                        <div class="auth-login-notice" role="note" aria-label="部署提示">
+                        <div class="auth-login-notice" role="note" aria-label="部署提示" data-branding="login-notice">
                             <p>💡 <strong>部署提示：</strong></p>
                             <p>1. 首次启动时系统自动创建管理员账号，密码见服务端日志。</p>
                             <p>2. 请在 .env 中配置 JWT_SECRET 和 LLM API Key 后再启动。</p>
@@ -71,11 +71,14 @@
             <header class="topbar">
                 <div class="topbar-left">
                     <div class="topbar-brand">
-                        <div class="brand-dot"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
-                        <span class="topbar-title">AI产品需求初审</span>
+                        <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
+                        <div class="topbar-brand-text">
+                            <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.7</span>
+                        </div>
                     </div>
                     <div class="topbar-divider"></div>
-                    <span class="topbar-badge" style="background:var(--blue-6)">智能对话</span>
+                    <span class="topbar-badge" style="background:var(--blue-6)" data-branding="chat-badge">智能对话</span>
                     <div class="topbar-divider"></div>
                     <div class="topbar-selects">
                         <select id="model-select" class="select-mini" aria-label="选择模型"></select>
@@ -88,8 +91,8 @@
                     </div>
                 </div>
                 <div class="topbar-right">
-                    <button id="go-review" class="topbar-link" style="color:var(--green-6);font-weight:600">需求审查工作台</button>
-                    <button id="go-admin" class="topbar-link" style="display:none">管理后台</button>
+                    <button id="go-review" class="topbar-link" style="color:var(--green-6);font-weight:600" data-branding="review-workspace-label">需求审查工作台</button>
+                    <button id="go-admin" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
                     <div class="topbar-user-wrap">
                         <span class="topbar-user" id="user-display"></span>
                         <div id="user-menu-dropdown" class="user-menu-dropdown" style="display:none">
@@ -290,11 +293,14 @@
             <header class="topbar">
                 <div class="topbar-left">
                     <div class="topbar-brand">
-                        <div class="brand-dot"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
-                        <span class="topbar-title">需求审查工作台</span>
+                        <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
+                        <div class="topbar-brand-text">
+                            <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.7</span>
+                        </div>
                     </div>
                     <div class="topbar-divider"></div>
-                    <span class="topbar-badge" style="background: var(--green-6);">审查模式</span>
+                    <span class="topbar-badge" style="background: var(--green-6);" data-branding="review-badge">审查模式</span>
                     <div class="topbar-divider"></div>
                     <div class="topbar-selects review-topbar-selects">
                         <select id="review-model-select" class="select-mini" aria-label="选择审查模型"></select>
@@ -308,7 +314,7 @@
                 </div>
                 <div class="topbar-right">
                     <button id="back-to-chat-from-review" class="topbar-link">智能对话</button>
-                    <button id="go-admin-from-review" class="topbar-link" style="display:none">管理后台</button>
+                    <button id="go-admin-from-review" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
                     <span class="topbar-user" id="review-user-display"></span>
                     <button id="review-logout-btn" class="topbar-link topbar-logout">退出</button>
                 </div>
@@ -556,11 +562,14 @@
             <header class="topbar">
                 <div class="topbar-left">
                     <div class="topbar-brand">
-                        <div class="brand-dot"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
-                        <span class="topbar-title">AI产品需求初审</span>
+                        <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
+                        <div class="topbar-brand-text">
+                            <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.7</span>
+                        </div>
                     </div>
                     <div class="topbar-divider"></div>
-                    <span class="topbar-badge">管理后台</span>
+                    <span class="topbar-badge" data-branding="admin-badge">管理后台</span>
                     <div class="topbar-divider"></div>
                 </div>
                 <div class="topbar-right">

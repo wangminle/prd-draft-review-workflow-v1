@@ -4,17 +4,31 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "src/static/index.html").read_text(encoding="utf-8")
 CSS = (ROOT / "src/static/css/main.css").read_text(encoding="utf-8")
+AUTH_JS = (ROOT / "src/static/js/auth.js").read_text(encoding="utf-8")
 
 
 def test_chat_page_has_distinct_page_badge():
     user_page_block = HTML.split('<div id="user-page" class="page">', 1)[1].split('<!-- ===== 审查工作台页 ===== -->', 1)[0]
-    assert '<span class="topbar-badge" style="background:var(--blue-6)">智能对话</span>' in user_page_block
-    assert '<span class="topbar-title">AI产品需求初审</span>' in user_page_block
+    assert 'class="topbar-badge"' in user_page_block
+    assert '智能对话' in user_page_block
+    assert 'data-branding="topbar-title"' in user_page_block
     assert ".topbar-badge" in CSS
 
 
+def test_all_topbars_use_same_product_title_and_show_version():
+    assert 'data-branding="review-title"' not in HTML
+    assert HTML.count('data-branding="topbar-title"') == 3
+    assert HTML.count('data-branding="app-version"') == 3
+    assert 'Ver. 0.2.7' in HTML
+    assert '.topbar-brand-text {' in CSS
+    assert '.topbar-version {' in CSS
+    assert "app-version" in AUTH_JS
+    assert "c.app_version" in AUTH_JS
+
+
 def test_html_head_includes_workspace_favicon():
-    assert '<link rel="icon" type="image/svg+xml" href="/favicon.svg">' in HTML
+    assert 'id="favicon-link"' in HTML
+    assert '/favicon.svg' in HTML
     favicon = ROOT / 'src/static/favicon.svg'
     assert favicon.exists()
     svg = favicon.read_text(encoding='utf-8')
@@ -37,6 +51,15 @@ def test_login_page_contains_deployment_notice_banner():
     assert 'border: 1px solid var(--blue-2);' in CSS
     assert 'background: linear-gradient(135deg, var(--blue-1) 0%, rgba(46, 124, 192, 0.18) 100%);' in CSS
     assert 'box-shadow:' in CSS
+
+
+def test_login_notice_can_be_overridden_by_branding_config():
+    login_block = HTML.split('<div id="login-form-block">', 1)[1].split('<h2 class="auth-card-title">欢迎回来</h2>', 1)[0]
+    assert 'data-branding="login-notice"' in login_block
+    assert "c.login_notice" in AUTH_JS
+    assert "renderLoginNotice" in AUTH_JS
+    assert "document.createElement('p')" in AUTH_JS
+    assert "textContent" in AUTH_JS
 
 
 def test_login_notice_has_low_height_responsive_fallback():
