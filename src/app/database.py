@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import get_settings
 from app.models.user import Base
 from app.models.user import ContextItem, SkillConfig  # noqa: F401 — ensure tables are registered
+from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource, ProjectSourceRef  # noqa: F401 — ensure workspace tables are registered
 from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
@@ -70,6 +71,9 @@ async def init_db():
 
     # 清理僵尸任务：服务重启后遗留的 running/pending 状态
     await _cleanup_zombie_tasks()
+
+    # 默认 workspace（兼容旧数据）
+    await _ensure_default_workspace()
 
 
 async def _ensure_review_schema(conn):
@@ -145,6 +149,26 @@ async def _ensure_review_schema(conn):
     if "thinking_payload" not in mc_columns:
         await conn.execute(text(
             "ALTER TABLE model_configs ADD COLUMN thinking_payload TEXT"
+        ))
+
+    # ReviewProject: add workspace_id column for team workspace
+    rp_result = await conn.execute(text("PRAGMA table_info(review_projects)"))
+    rp_columns = {row[1] for row in rp_result.fetchall()}
+    if "workspace_id" not in rp_columns:
+        await conn.execute(text(
+            "ALTER TABLE review_projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
+        ))
+
+    # KnowledgeSource: add file_id and extracted_text columns
+    ks_result = await conn.execute(text("PRAGMA table_info(knowledge_sources)"))
+    ks_columns = {row[1] for row in ks_result.fetchall()}
+    if "file_id" not in ks_columns:
+        await conn.execute(text(
+            "ALTER TABLE knowledge_sources ADD COLUMN file_id VARCHAR(12)"
+        ))
+    if "extracted_text" not in ks_columns:
+        await conn.execute(text(
+            "ALTER TABLE knowledge_sources ADD COLUMN extracted_text TEXT"
         ))
 
 
@@ -390,3 +414,55 @@ def _mark_zombie_task_failed(task) -> dict:
     task.completed_at = now_cn()
     task.step_statuses = json.dumps(step_statuses, ensure_ascii=False)
     return step_statuses
+
+
+async def _ensure_default_workspace():
+    """确保默认 workspace 存在，并将 admin 加入为 owner；将旧项目归入默认空间。"""
+    from app.models.user import User
+    from app.models.workspace import Workspace, WorkspaceMember
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(Workspace).where(Workspace.name == "默认空间")
+        )
+        ws = result.scalar_one_or_none()
+        if ws is None:
+            # 找 admin 用户作为默认空间 owner
+            admin_result = await session.execute(select(User).where(User.role == "admin"))
+            admin = admin_result.scalar_one_or_none()
+            ws = Workspace(
+                name="默认空间",
+                description="系统默认团队空间，旧项目自动归入此处",
+                created_by=admin.id if admin else None,
+                status="active",
+            )
+            session.add(ws)
+            await session.flush()
+            if admin:
+                session.add(WorkspaceMember(
+                    workspace_id=ws.id,
+                    user_id=admin.id,
+                    role="owner",
+                    status="active",
+                ))
+            await session.commit()
+            logger.info("[INIT] 默认 workspace 已创建")
+
+        # 将所有无 workspace_id 的旧项目归入默认空间
+        await _migrate_projects_to_default_workspace(ws.id)
+
+
+async def _migrate_projects_to_default_workspace(default_workspace_id: int):
+    """为所有现有 ReviewProject 自动归入默认 workspace。"""
+    from app.models.review import ReviewProject
+
+    async with async_session() as session:
+        result = await session.execute(
+            select(ReviewProject).where(ReviewProject.workspace_id.is_(None))
+        )
+        unassigned = result.scalars().all()
+        if unassigned:
+            for p in unassigned:
+                p.workspace_id = default_workspace_id
+            await session.commit()
+            logger.info(f"[INIT] {len(unassigned)} 个旧项目已归入默认 workspace")

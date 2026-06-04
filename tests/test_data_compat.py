@@ -522,6 +522,13 @@ async def test_init_db_preserves_existing_data():
         if "extracted_text" not in ctx_columns:
             await conn.execute(sa_text("ALTER TABLE chat_context_items ADD COLUMN extracted_text TEXT"))
 
+        rp_result = await conn.execute(sa_text("PRAGMA table_info(review_projects)"))
+        rp_columns = {row[1] for row in rp_result.fetchall()}
+        if "workspace_id" not in rp_columns:
+            await conn.execute(sa_text(
+                "ALTER TABLE review_projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
+            ))
+
     # Verify old data still intact after migration
     async with session_maker() as session:
         # Users preserved

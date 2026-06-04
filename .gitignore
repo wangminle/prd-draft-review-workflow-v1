@@ -7,6 +7,8 @@ runtime/*
 # Re-ignore runtime config files that should never be committed
 runtime/config/ui-branding.yaml
 runtime/config/ui-branding.scan-report.md
+# Runtime backups (runtime.bak.* directories created during migration)
+runtime.bak.*/
 
 # Python bytecode & cache
 **/__pycache__/

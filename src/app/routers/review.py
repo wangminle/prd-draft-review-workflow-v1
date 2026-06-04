@@ -233,6 +233,7 @@ async def _get_model_config(model_id: str | None, db: AsyncSession) -> dict:
 def _project_to_info(p: ReviewProject, doc_count: int = 0, report_count: int = 0, ctx_ver: int | None = None) -> ProjectInfo:
     return ProjectInfo(
         id=p.id, name=p.name, description=p.description,
+        workspace_id=p.workspace_id,
         doc_count=doc_count, report_count=report_count,
         context_version=ctx_ver, created_at=p.created_at, updated_at=p.updated_at,
     )
@@ -335,8 +336,14 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
 
 @router.post("/projects", response_model=ProjectInfo)
 async def create_project(req: ProjectCreate, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    from app.repositories.workspace_repository import WorkspaceRepository
+    ws_repo = WorkspaceRepository(db)
+    # 单团队部署：取用户所属的第一个 workspace 作为项目归属
+    user_workspaces = await ws_repo.get_user_workspaces(user.id)
+    workspace_id = user_workspaces[0].id if user_workspaces else None
+
     repo = ReviewProjectRepository(db)
-    p = await repo.create_project(name=req.name, description=req.description, created_by=user.id)
+    p = await repo.create_project(name=req.name, description=req.description, created_by=user.id, workspace_id=workspace_id)
     await db.commit()
     _audit_log_writer.write(
         "project.create",
@@ -416,6 +423,103 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
         detail={"project_id": project_id, "name": project_name},
     )
     return {"message": "已删除"}
+
+
+# ── Project Source Refs (P0.C.1) ──
+
+@router.post("/project/{project_id}/sources")
+async def add_project_source_ref(
+    project_id: int,
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    p = await _verify_project_owner(db, project_id, user.id)
+
+    source_id = body.get("source_id")
+    if not source_id or not isinstance(source_id, int):
+        raise HTTPException(status_code=422, detail="source_id 必填且为整数")
+
+    ref_type = body.get("ref_type", "context")
+    if ref_type not in ("context", "reference", "background"):
+        raise HTTPException(status_code=422, detail="ref_type 必须为 context/reference/background")
+
+    snapshot_version = body.get("snapshot_version")
+
+    from app.repositories.knowledge_source_repository import ProjectSourceRefRepository, KnowledgeSourceRepository
+    from app.repositories.workspace_repository import WorkspaceRepository
+    ks_repo = KnowledgeSourceRepository(db)
+    source = await ks_repo.get_by_id(source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="资料不存在")
+
+    # P0 验收补：source 必须属于项目所在 workspace 且状态 active
+    if source.status != "active":
+        raise HTTPException(status_code=400, detail="资料已归档，不能引用")
+
+    if p.workspace_id and source.workspace_id != p.workspace_id:
+        raise HTTPException(status_code=403, detail="资料不属于该项目所在团队空间")
+
+    ws_repo = WorkspaceRepository(db)
+    member = await ws_repo.get_member(source.workspace_id, user.id)
+    if member is None or member.role not in ("owner", "admin", "member", "viewer"):
+        raise HTTPException(status_code=403, detail="你没有该资料的查看权限")
+
+    ref_repo = ProjectSourceRefRepository(db)
+    ref = await ref_repo.add_ref(
+        project_id=project_id,
+        source_id=source_id,
+        ref_type=ref_type,
+        snapshot_version=snapshot_version,
+    )
+    await db.commit()
+
+    _audit_log_writer.write(
+        "project.add_source_ref",
+        actor=user,
+        request=request,
+        target_type="project",
+        target_id=project_id,
+        detail={
+            "project_id": project_id,
+            "source_id": source_id,
+            "ref_type": ref_type,
+            "snapshot_version": snapshot_version,
+        },
+    )
+    return {
+        "id": ref.id,
+        "project_id": ref.project_id,
+        "source_id": ref.source_id,
+        "ref_type": ref.ref_type,
+        "snapshot_version": ref.snapshot_version,
+        "created_at": ref.created_at.isoformat() if ref.created_at else None,
+    }
+
+
+@router.get("/project/{project_id}/sources")
+async def list_project_source_refs(
+    project_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _verify_project_owner(db, project_id, user.id)
+
+    from app.repositories.knowledge_source_repository import ProjectSourceRefRepository
+    ref_repo = ProjectSourceRefRepository(db)
+    refs = await ref_repo.list_by_project(project_id)
+    return [
+        {
+            "id": r.id,
+            "project_id": r.project_id,
+            "source_id": r.source_id,
+            "ref_type": r.ref_type,
+            "snapshot_version": r.snapshot_version,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+        }
+        for r in refs
+    ]
 
 
 # ── Documents ──
@@ -991,6 +1095,12 @@ async def _run_pipeline(
             step_max_retries=pipeline_cfg.get("step_max_retries", 3),
             step_retry_delay=pipeline_cfg.get("step_retry_delay", 5),
         )
+
+        # P0.C.3: Freeze snapshot versions for project source refs
+        from app.repositories.knowledge_source_repository import ProjectSourceRefRepository
+        ref_repo = ProjectSourceRefRepository(db)
+        await ref_repo.freeze_snapshot(project_id)
+        await db.flush()
 
         task.status = "running"
         step_statuses = json.loads(task.step_statuses) if task.step_statuses else {}

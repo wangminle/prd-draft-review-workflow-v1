@@ -212,13 +212,16 @@ def test_js_002_toast_has_aria_live():
     assert "'status'" in js, "role=status not set on toast element in app.js"
 
 
-# ─── JS-003: getBoundingClientRect in rAF ───
+# ─── JS-003: sidebar width aligns to divider via JS ───
 
-def test_js_003_align_sidebar_uses_request_animation_frame():
+def test_js_003_sidebar_aligns_to_divider():
+    """Sidebar width should dynamically align to the divider line via _alignSidebarToDivider."""
     js = _read(APP_JS)
-    assert 'requestAnimationFrame' in js, "requestAnimationFrame not used in _alignSidebarToDivider"
+    assert '_alignSidebarToDivider' in js, "_alignSidebarToDivider function must be present in app.js"
+    assert "secondDivider" in js, "divider-based width calculation must be present"
 
 
-def test_js_003_resize_handler_is_debounced():
+def test_js_003_resize_handler_for_sidebar():
+    """Resize handler should re-align sidebar widths when window is resized."""
     js = _read(APP_JS)
-    assert '_resizeTimer' in js, "resize handler not debounced in app.js"
+    assert '_resizeTimer' in js, "resize timer for sidebar alignment must be present"

@@ -122,7 +122,8 @@ WHITELIST = {
     },
     "review.py": {
         "db_add": 0,       # 已迁移到 ReviewTaskRepository + ReviewProjectRepository + ReviewContextRepository + ReviewPromptRepository — D.1 + E.1 完成
-        "db_commit": 31,   # router 控制事务边界 — D.1 + D.2
+        "db_commit": 32,   # router 控制事务边界 — D.1 + D.2 + workspace_id update
+        "db_flush": 1,     # freeze_snapshot flush — P0.C.3
         "builtin_open": 0,   # 已迁移到 ReviewFileStorage.read_markdown() — WBS C.1 + F 完成
         "os_makedirs": 0,    # 已迁移到 ReviewFileStorage — WBS C.1 完成
         "os_remove": 0,      # 已迁移到 ReviewFileStorage.delete_document_files() — WBS C.1 + F 完成
@@ -133,6 +134,16 @@ WHITELIST = {
         "db_add": 0,       # 已迁移到 User/PromptTemplate/ModelConfig/SkillConfig repositories — E.2 完成
         "db_commit": 16,   # router 控制事务边界 — E.2 完成
         "builtin_open": 0,  # audit reading 已迁到 AuditLogReader — WBS B 完成
+        "os_makedirs": 0,
+        "os_remove": 0,
+        "os_unlink": 0,
+        "shutil_rmtree": 0,
+    },
+    "workspace.py": {
+        "db_add": 0,
+        "db_commit": 3,   # delete source + update tags + upload source
+        "db_flush": 0,
+        "builtin_open": 0,
         "os_makedirs": 0,
         "os_remove": 0,
         "os_unlink": 0,
@@ -218,13 +229,16 @@ class TestRouterPersistenceScan:
                 )
 
     def test_no_unexpected_db_flush_calls(self):
-        """Current codebase doesn't use db.flush() — any new ones need review."""
+        """db.flush() calls must be whitelisted — any new ones need review."""
         results = self._get_scan_results()
         for filename, hits in results.items():
             if "db_flush" in hits:
-                assert len(hits["db_flush"]) == 0, (
-                    f"{filename}: unexpected db.flush() found at lines "
-                    f"{[ln for ln, _ in hits['db_flush']]}"
+                expected = WHITELIST.get(filename, {}).get("db_flush", 0)
+                actual = len(hits["db_flush"])
+                assert actual == expected, (
+                    f"{filename}: db.flush() count mismatch — "
+                    f"expected {expected}, found {actual}. "
+                    f"Update WHITELIST or investigate new persistence call."
                 )
 
     def test_no_shutil_copy_or_move_in_routers(self):

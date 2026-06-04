@@ -14,11 +14,13 @@ class ReviewProject(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     created_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
 
     documents = relationship("ReviewDocument", back_populates="project", cascade="all, delete-orphan")
     contexts = relationship("ReviewContext", back_populates="project", cascade="all, delete-orphan")
+    source_refs = relationship("ProjectSourceRef", back_populates="project", cascade="all, delete-orphan")
 
 
 class ReviewDocument(Base):

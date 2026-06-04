@@ -97,6 +97,74 @@ def test_update_script_restores_root_and_src_env_separately():
     assert 'cp "$CURRENT_BACKUP_DIR/src.env" "$PROJECT_DIR/src/.env"' in script
 
 
+def test_update_script_syncs_yaml_version_after_code_replacement():
+    script = (ROOT / "update.sh").read_text(encoding="utf-8")
+
+    assert "sync_yaml_version" in script
+    # sync_yaml_version must be called AFTER copy_versioned_files
+    copy_idx = script.index("copy_versioned_files")
+    sync_idx = script.index("sync_yaml_version")
+    start_idx = script.index("启动新版本服务")
+    assert copy_idx < sync_idx < start_idx
+    assert "app_version" in script
+    assert "NEW_VERSION" in script
+
+
+def _sync_app_version(yaml_text: str, new_version: str) -> tuple[str, str]:
+    """Extract the Python logic from update.sh sync_yaml_version for testing."""
+    lines = yaml_text.splitlines()
+    replaced = False
+    old_val = ""
+    for i, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        if ":" not in stripped:
+            continue
+        key, _sep, val = stripped.partition(":")
+        if key.strip() == "app_version":
+            indent = line[:len(line) - len(line.lstrip())]
+            old_val = val.strip().strip('"').strip("'")
+            lines[i] = f"{indent}app_version: \"{new_version}\""
+            replaced = True
+            break
+    if replaced:
+        return "\n".join(lines) + "\n", f"app_version updated from '{old_val}' to '{new_version}'"
+    else:
+        lines.insert(0, f"app_version: \"{new_version}\"")
+        return "\n".join(lines) + "\n", f"app_version inserted as '{new_version}'"
+
+
+def test_sync_yaml_version_updates_existing_app_version():
+    yaml_in = 'app_title: "AI产品需求初审"\napp_version: "0.2.8"\nlogin_title: "AI产品需求初审"\n'
+    result, msg = _sync_app_version(yaml_in, "0.2.9")
+    assert "app_version: \"0.2.9\"" in result
+    assert "app_title" in result
+    assert "updated from '0.2.8'" in msg
+
+
+def test_sync_yaml_version_inserts_when_missing():
+    yaml_in = 'app_title: "AI产品需求初审"\nlogin_title: "AI产品需求初审"\n'
+    result, msg = _sync_app_version(yaml_in, "0.2.9")
+    assert result.startswith("app_version: \"0.2.9\"")
+    assert "inserted" in msg
+
+
+def test_sync_yaml_version_skips_commented_app_version():
+    yaml_in = '# app_version: "0.2.7"\napp_title: "AI产品需求初审"\n'
+    result, msg = _sync_app_version(yaml_in, "0.2.9")
+    assert "app_version: \"0.2.9\"" in result
+    assert "# app_version: \"0.2.7\"" in result
+    assert "inserted" in msg
+
+
+def test_sync_yaml_version_handles_unquoted_version():
+    yaml_in = 'app_version: 0.2.8\napp_title: "AI产品需求初审"\n'
+    result, msg = _sync_app_version(yaml_in, "0.2.9")
+    assert "app_version: \"0.2.9\"" in result
+    assert "updated from '0.2.8'" in msg
+
+
 def test_runtime_root_defaults_to_project_runtime():
     assert get_runtime_root() == RUNTIME_ROOT.resolve()
     assert runtime_path("logs") == (RUNTIME_ROOT / "logs").resolve()

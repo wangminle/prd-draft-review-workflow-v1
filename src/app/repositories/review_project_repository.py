@@ -33,8 +33,8 @@ class ReviewProjectRepository:
     def __init__(self, db: AsyncSession):
         self._db = db
 
-    async def create_project(self, *, name: str, description: str | None, created_by: int) -> ReviewProject:
-        p = ReviewProject(name=name, description=description, created_by=created_by)
+    async def create_project(self, *, name: str, description: str | None, created_by: int, workspace_id: int | None = None) -> ReviewProject:
+        p = ReviewProject(name=name, description=description, created_by=created_by, workspace_id=workspace_id)
         self._db.add(p)
         await self._db.flush()
         await self._db.refresh(p)

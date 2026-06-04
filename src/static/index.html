@@ -74,7 +74,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.8</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.9</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -92,6 +92,7 @@
                 </div>
                 <div class="topbar-right">
                     <button id="go-review" class="topbar-link" style="color:var(--green-6);font-weight:600" data-branding="review-workspace-label">需求审查工作台</button>
+                    <button id="go-workspace" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <button id="go-admin" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
                     <div class="topbar-user-wrap">
                         <span class="topbar-user" id="user-display"></span>
@@ -296,7 +297,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.8</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.9</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -314,6 +315,7 @@
                 </div>
                 <div class="topbar-right">
                     <button id="back-to-chat-from-review" class="topbar-link">智能对话</button>
+                    <button id="go-workspace-from-review" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <button id="go-admin-from-review" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
                     <span class="topbar-user" id="review-user-display"></span>
                     <button id="review-logout-btn" class="topbar-link topbar-logout">退出</button>
@@ -395,6 +397,10 @@
                                         <span class="context-value" id="context-version">默认</span>
                                     </span>
                                     <button class="context-edit" id="edit-context-btn">编辑</button>
+                                    <button class="btn btn-outline btn-sm" id="add-source-ref-btn" title="从团队资料库引用资料到当前项目">
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+                                        引用资料
+                                    </button>
                                 </div>
                             </div>
 
@@ -557,6 +563,83 @@
             </div>
         </div>
 
+        <!-- ===== 团队空间页 ===== -->
+        <div id="workspace-page" class="page">
+            <header class="topbar">
+                <div class="topbar-left">
+                    <div class="topbar-brand">
+                        <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
+                        <div class="topbar-brand-text">
+                            <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.9</span>
+                        </div>
+                    </div>
+                    <div class="topbar-divider"></div>
+                    <span class="topbar-badge" style="background:var(--blue-4)" data-branding="workspace-badge">团队空间</span>
+                    <div class="topbar-divider"></div>
+                </div>
+                <div class="topbar-right">
+                    <button id="go-chat-from-workspace" class="topbar-link">智能对话</button>
+                    <button id="go-review-from-workspace" class="topbar-link" style="color:var(--green-6);font-weight:600" data-branding="review-workspace-label">审查模式</button>
+                    <button id="go-admin-from-workspace" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
+                    <span class="topbar-user" id="workspace-user-display"></span>
+                    <button id="workspace-logout-btn" class="topbar-link topbar-logout">退出</button>
+                </div>
+            </header>
+
+            <div class="app-layout">
+                <aside class="workspace-sidebar">
+                    <nav class="workspace-nav">
+                        <button class="workspace-nav-item active" data-ws-tab="sources">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                            资料库
+                        </button>
+                        <button class="workspace-nav-item" data-ws-tab="members">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                            团队成员
+                        </button>
+                    </nav>
+                    <div class="sidebar-toggle">
+                        <button class="sidebar-toggle-btn" data-sidebar="workspace-sidebar" aria-label="收起侧栏" title="收起侧栏">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="15 18 9 12 15 6"/></svg>
+                        </button>
+                    </div>
+                </aside>
+
+                <main class="workspace-content">
+                    <!-- 资料库 Tab -->
+                    <div id="ws-tab-sources" class="workspace-panel active">
+                        <div class="panel-head">
+                            <h3 class="panel-title">资料库</h3>
+                            <button id="ws-upload-btn" class="btn btn-primary btn-sm">+ 上传资料</button>
+                        </div>
+                        <div id="ws-source-detail" class="ws-source-detail" style="display:none"></div>
+                        <div id="ws-sources-list" class="workspace-sources-list">
+                            <div class="ws-empty">
+                                <div class="ws-empty-icon">
+                                    <svg width="64" height="64" viewBox="0 0 64 64" fill="none" aria-hidden="true">
+                                        <rect width="64" height="64" rx="16" fill="#E0EEFA"/>
+                                        <path d="M22 32h20M32 22v20" stroke="#5A9DD5" stroke-width="3" stroke-linecap="round"/>
+                                    </svg>
+                                </div>
+                                <h2 class="ws-empty-title">还没有共享资料</h2>
+                                <p class="ws-empty-desc">上传 DOCX/PDF/Markdown 文件，团队成员均可查看和引用</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 成员 Tab -->
+                    <div id="ws-tab-members" class="workspace-panel">
+                        <div class="panel-head">
+                            <h3 class="panel-title">团队成员</h3>
+                        </div>
+                        <div id="ws-members-list" class="workspace-members-list">
+                        </div>
+                    </div>
+                </main>
+            </div>
+        </div>
+
         <!-- ===== 管理后台页 ===== -->
         <div id="admin-page" class="page">
             <header class="topbar">
@@ -565,7 +648,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.8</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.9</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -574,6 +657,7 @@
                 </div>
                 <div class="topbar-right">
                     <button id="back-to-chat" class="topbar-link">返回</button>
+                    <button id="go-workspace-from-admin" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <span class="topbar-user" id="admin-user-display"></span>
                     <button id="admin-logout-btn" class="topbar-link topbar-logout">退出</button>
                 </div>
@@ -735,11 +819,30 @@
                 </main>
             </div>
         </div>
-    </div>
 
     <!-- 模态框 -->
     <div id="modal-overlay" class="modal-mask" style="display:none">
         <div class="modal-box" id="modal-content"></div>
+    </div>
+
+    <!-- 团队资料选择器模态框 (P0.C.4) -->
+    <div id="source-picker-overlay" class="modal-mask" style="display:none">
+        <div class="modal-box" style="max-width:680px;width:90vw;max-height:80vh;display:flex;flex-direction:column">
+            <div class="panel-head" style="flex-shrink:0;padding-bottom:8px">
+                <h3 class="panel-title">引用团队资料</h3>
+                <p style="margin:0;font-size:var(--fs-13);color:var(--color-text-muted)">选择资料并标注引用类型，引用后资料版本将被冻结</p>
+            </div>
+            <div id="source-picker-list" style="flex:1;overflow-y:auto;padding:8px 0">
+                <p style="text-align:center;color:var(--color-text-muted);padding:24px">加载中…</p>
+            </div>
+            <div style="flex-shrink:0;padding-top:12px;border-top:1px solid var(--color-border);display:flex;justify-content:space-between;align-items:center">
+                <span id="source-picker-selected-count" style="font-size:var(--fs-13);color:var(--color-text-muted)">已选 0 项</span>
+                <div style="display:flex;gap:8px">
+                    <button id="source-picker-cancel" class="btn btn-ghost">取消</button>
+                    <button id="source-picker-confirm" class="btn btn-primary" disabled>确认引用</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script src="/vendor/purify.min.js?v=20260602-6" onerror="console.error('DOMPurify load failed')"></script>
@@ -750,6 +853,7 @@
     <script src="/js/chat.js?v=20260602-6"></script>
     <script src="/js/admin.js?v=20260602-6"></script>
     <script src="/js/review.js?v=20260602-6"></script>
+    <script src="/js/workspace.js?v=20260602-6"></script>
     <script src="/js/app.js?v=20260602-6"></script>
 </body>
 </html>

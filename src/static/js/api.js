@@ -146,6 +146,58 @@ const API = {
     /* 管理 — 统计 */
     getStats() { return this.request('GET', '/api/admin/stats'); },
 
+    /* ── 团队空间 ── */
+
+    getWorkspaces() { return this.request('GET', '/api/workspace'); },
+    getWorkspaceMembers(wsId) { return this.request('GET', `/api/workspace/${wsId}/members`); },
+    getWorkspaceSources(wsId, params) {
+        let url = `/api/workspace/${wsId}/sources`;
+        if (params) {
+            const qs = new URLSearchParams(params).toString();
+            if (qs) url += '?' + qs;
+        }
+        return this.request('GET', url);
+    },
+    getWorkspaceSourceDetail(wsId, sourceId) { return this.request('GET', `/api/workspace/${wsId}/sources/${sourceId}`); },
+    deleteWorkspaceSource(wsId, sourceId) { return this.request('DELETE', `/api/workspace/${wsId}/sources/${sourceId}`); },
+    updateSourceTags(wsId, sourceId, tags) { return this.request('PUT', `/api/workspace/${wsId}/sources/${sourceId}/tags`, { tags }); },
+
+    async downloadWorkspaceSource(wsId, sourceId) {
+        const headers = {};
+        if (this.getToken()) {
+            headers['Authorization'] = `Bearer ${this.getToken()}`;
+        }
+        const resp = await fetch(`/api/workspace/${wsId}/sources/${sourceId}/download`, { method: 'GET', headers });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+        }
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="([^"]+)"/);
+        return {
+            blob: await resp.blob(),
+            filename: match ? match[1] : `source-${sourceId}`,
+        };
+    },
+
+    async uploadWorkspaceSource(wsId, formData) {
+        const headers = {};
+        if (this.getToken()) {
+            headers['Authorization'] = `Bearer ${this.getToken()}`;
+        }
+        const resp = await fetch(`/api/workspace/${wsId}/sources`, { method: 'POST', headers, body: formData });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+        }
+        return resp.json();
+    },
+
+    /* ── 项目引用资料 ── */
+
+    addProjectSourceRef(projectId, data) { return this.request('POST', `/api/review/project/${projectId}/sources`, data); },
+    listProjectSourceRefs(projectId) { return this.request('GET', `/api/review/project/${projectId}/sources`); },
+
     /* ── 需求审查 ── */
 
     getReviewProjects() { return this.request('GET', '/api/review/projects'); },

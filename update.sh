@@ -17,7 +17,7 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 BACKUP_DIR="$RUNTIME_DIR/update_backups"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-15}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-5}"
-NEW_VERSION="0.2.8"
+NEW_VERSION="0.2.9"
 
 SKIP_MIGRATE=false
 SKIP_BACKUP=false
@@ -313,6 +313,54 @@ copy_versioned_files() {
   fi
 }
 
+sync_yaml_version() {
+  # 确保 ui-branding.yaml 中的 app_version 与新代码版本一致，
+  # 避免"旧 yaml 版本号覆盖新代码版本号"导致前端显示版本滞后。
+  local yaml_path="$RUNTIME_DIR/config/ui-branding.yaml"
+  if [ ! -f "$yaml_path" ]; then
+    log "ui-branding.yaml 不存在，版本号将由代码默认值提供"
+    return
+  fi
+
+  # 用 python3 做 YAML 行级替换（保留注释、格式和其他字段）
+  local result
+  result=$(python3 - "$yaml_path" "$NEW_VERSION" <<'PY'
+import sys
+from pathlib import Path
+
+yaml_path = Path(sys.argv[1])
+new_version = sys.argv[2]
+text = yaml_path.read_text(encoding="utf-8")
+
+lines = text.splitlines()
+replaced = False
+old_val = ""
+for i, line in enumerate(lines):
+    stripped = line.strip()
+    if stripped.startswith("#"):
+        continue
+    if ":" not in stripped:
+        continue
+    key, _sep, val = stripped.partition(":")
+    if key.strip() == "app_version":
+        indent = line[:len(line) - len(line.lstrip())]
+        old_val = val.strip().strip('"').strip("'")
+        lines[i] = f"{indent}app_version: \"{new_version}\""
+        replaced = True
+        break
+
+if replaced:
+    yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"app_version updated from '{old_val}' to '{new_version}'")
+else:
+    lines.insert(0, f"app_version: \"{new_version}\"")
+    yaml_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"app_version inserted as '{new_version}'")
+PY
+)
+  log "版本号同步: $result"
+}
+
 run_migration_plan() {
   if [ "$SKIP_MIGRATE" = true ] || [ ! -f "$PROJECT_DIR/tools/migrate_branding.py" ]; then
     log "跳过迁移工具检查"
@@ -429,6 +477,9 @@ run_migration_plan
 
 # 迁移完成后，替换代码文件
 copy_versioned_files "$EXTRACTED_DIR"
+
+# 同步 ui-branding.yaml 中的 app_version 与代码版本号
+sync_yaml_version
 
 if ! python3 -c "import fastapi, uvicorn, sqlalchemy, aiosqlite" 2>/dev/null; then
   warn "当前 Python 环境缺少依赖，请手动执行: python3 -m pip install -r requirements.txt"

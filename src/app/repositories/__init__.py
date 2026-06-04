@@ -35,6 +35,9 @@ from app.repositories.review_prompt_repository import (
     ReviewPromptPatch,
 )
 
+from app.repositories.workspace_repository import WorkspaceRepository
+from app.repositories.knowledge_source_repository import KnowledgeSourceRepository, ProjectSourceRefRepository
+
 __all__ = [
     "ConversationRepository",
     "ContextItemRepository",
@@ -44,6 +47,9 @@ __all__ = [
     "ModelConfigRepository",
     "PromptTemplateRepository",
     "SkillConfigRepository",
+    "WorkspaceRepository",
+    "KnowledgeSourceRepository",
+    "ProjectSourceRefRepository",
     "ReviewTaskRepository",
     "NewReviewTask",
     "TaskProgressPatch",

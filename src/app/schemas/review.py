@@ -28,6 +28,7 @@ class ProjectInfo(BaseModel):
     id: int
     name: str
     description: str | None
+    workspace_id: int | None = None
     doc_count: int = 0
     report_count: int = 0
     context_version: int | None = None

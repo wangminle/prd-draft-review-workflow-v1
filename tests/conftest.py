@@ -41,7 +41,7 @@ def make_test_app(db_path: str):
 
     from fastapi import FastAPI
 
-    from app.routers import admin, auth, chat, history, review, upload
+    from app.routers import admin, auth, chat, history, review, upload, workspace
 
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{db_path}",
@@ -66,10 +66,11 @@ def make_test_app(db_path: str):
     app.include_router(history.router, prefix="/api/history", tags=["历史记录"])
     app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
     app.include_router(review.router, prefix="/api/review", tags=["需求审查"])
+    app.include_router(workspace.router, prefix="/api", tags=["团队空间"])
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.2.8"}
+        return {"status": "ok", "version": "0.2.9"}
 
     return app, engine, TestSessionLocal
 
@@ -145,6 +146,19 @@ async def init_test_db(engine, session_maker):
             )
             session.add(mc)
 
+        await session.commit()
+
+    # Seed default workspace + admin as owner (mirrors _ensure_default_workspace in database.py)
+    from app.models.workspace import Workspace, WorkspaceMember
+    result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+    if result.scalar_one_or_none() is None:
+        admin_result = await session.execute(select(User).where(User.role == "admin"))
+        admin = admin_result.scalar_one_or_none()
+        ws = Workspace(name="默认空间", description="系统默认团队空间", created_by=admin.id if admin else None, status="active")
+        session.add(ws)
+        await session.flush()
+        if admin:
+            session.add(WorkspaceMember(workspace_id=ws.id, user_id=admin.id, role="owner", status="active"))
         await session.commit()
 
     await engine.dispose()

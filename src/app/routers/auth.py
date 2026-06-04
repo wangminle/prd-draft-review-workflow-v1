@@ -9,6 +9,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.repositories.user_repository import UserRepository
+from app.repositories.workspace_repository import WorkspaceRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -91,6 +92,15 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
         password_hash=hash_password(req.password),
         role="user",
     )
+
+    # P0.A.7: 注册后自动加入默认 workspace，默认角色 member
+    ws_repo = WorkspaceRepository(db)
+    default_ws = await ws_repo.get_default()
+    if default_ws is not None:
+        existing = await ws_repo.get_member(default_ws.id, user.id)
+        if existing is None:
+            await ws_repo.add_member(default_ws.id, user.id, role="member")
+
     await db.commit()
 
     token = create_access_token(user.id, user.role)

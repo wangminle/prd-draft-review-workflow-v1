@@ -38,7 +38,7 @@ const App = {
     /* ── 页面切换 ── */
 
     _navigateTo(page) {
-        const map = { chat: '_showUserPage', admin: '_showAdminPage', review: '_showReviewPage' };
+        const map = { chat: '_showUserPage', admin: '_showAdminPage', review: '_showReviewPage', workspace: '_showWorkspacePage' };
         const method = map[page] || map.review;
         this[method]();
     },
@@ -119,6 +119,24 @@ const App = {
         this._alignSidebarToDivider();
     },
 
+    _showWorkspacePage() {
+        this._hideLoading();
+        document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+        document.getElementById('workspace-page').classList.add('active');
+        sessionStorage.setItem('lastPage', 'workspace');
+
+        const user = Auth.getUser();
+        document.getElementById('workspace-user-display').textContent = user?.username || '';
+        const wsAdminLink = document.getElementById('go-admin-from-workspace');
+        if (wsAdminLink) {
+            wsAdminLink.style.display = Auth.isAdmin() ? '' : 'none';
+        }
+
+        Workspace.init();
+        Workspace.load();
+        this._alignSidebarToDivider();
+    },
+
     /* ── 侧栏折叠 + 对齐竖线 ── */
 
     _alignSidebarToDivider() {
@@ -128,7 +146,7 @@ const App = {
                 if (dividers.length >= 2) {
                     const secondDivider = dividers[1];
                     const x = secondDivider.getBoundingClientRect().right;
-                    const sidebar = page.querySelector('.sidebar, .review-sidebar, .admin-sidebar');
+                    const sidebar = page.querySelector('.sidebar, .review-sidebar, .admin-sidebar, .workspace-sidebar');
                     if (sidebar && !sidebar.classList.contains('collapsed')) {
                         sidebar.style.width = x + 'px';
                     }
@@ -141,15 +159,13 @@ const App = {
         document.querySelectorAll('.sidebar-toggle-btn').forEach(btn => {
             btn.addEventListener('click', () => {
                 const sidebar = btn.closest('aside');
-                const page = sidebar.closest('.page');
 
                 if (sidebar.classList.contains('collapsed')) {
                     sidebar.classList.remove('collapsed');
-                    // Re-measure divider position to restore width
                     setTimeout(() => this._alignSidebarToDivider(), 300);
                 } else {
                     sidebar.classList.add('collapsed');
-                    sidebar.style.width = '';  // Let CSS .collapsed width take over
+                    sidebar.style.width = '';
                 }
             });
         });
@@ -273,6 +289,15 @@ const App = {
             this._showLoginPage();
         });
 
+        document.getElementById('workspace-logout-btn').addEventListener('click', (e) => {
+            e.preventDefault();
+            API.log('info', 'auth.logout', { source: 'workspace' }, '用户退出(workspace)');
+            this._resetSessionState();
+            Auth.logout();
+            sessionStorage.removeItem('lastPage');
+            this._showLoginPage();
+        });
+
         // User dropdown menu
         this._bindUserMenu('user-display', 'user-menu-dropdown');
         this._bindUserMenu('review-user-display', null);
@@ -332,6 +357,72 @@ const App = {
             });
         }
 
+        // Go to workspace (from chat page)
+        const goWorkspaceBtn = document.getElementById('go-workspace');
+        if (goWorkspaceBtn) {
+            goWorkspaceBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                API.log('info', 'frontend.navigation', { from: 'chat', to: 'workspace' }, '进入团队空间');
+                Chat.destroy();
+                this._showWorkspacePage();
+            });
+        }
+
+        // Go to workspace (from review page)
+        const goWorkspaceFromReviewBtn = document.getElementById('go-workspace-from-review');
+        if (goWorkspaceFromReviewBtn) {
+            goWorkspaceFromReviewBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                API.log('info', 'frontend.navigation', { from: 'review', to: 'workspace' }, '进入团队空间');
+                Review.destroy();
+                this._showWorkspacePage();
+            });
+        }
+
+        // Go to workspace (from admin page)
+        const goWorkspaceFromAdminBtn = document.getElementById('go-workspace-from-admin');
+        if (goWorkspaceFromAdminBtn) {
+            goWorkspaceFromAdminBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                API.log('info', 'frontend.navigation', { from: 'admin', to: 'workspace' }, '进入团队空间');
+                this._showWorkspacePage();
+            });
+        }
+
+        // Go to chat from workspace
+        const goChatFromWorkspaceBtn = document.getElementById('go-chat-from-workspace');
+        if (goChatFromWorkspaceBtn) {
+            goChatFromWorkspaceBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                API.log('info', 'frontend.navigation', { from: 'workspace', to: 'chat' }, '进入智能对话');
+                Workspace.destroy();
+                this._showUserPage();
+            });
+        }
+
+        // Go to review from workspace
+        const goReviewFromWorkspaceBtn = document.getElementById('go-review-from-workspace');
+        if (goReviewFromWorkspaceBtn) {
+            goReviewFromWorkspaceBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                API.log('info', 'frontend.navigation', { from: 'workspace', to: 'review' }, '进入审查工作台');
+                Workspace.destroy();
+                this._showReviewPage();
+            });
+        }
+
+        // Go to admin from workspace
+        const goAdminFromWorkspaceBtn = document.getElementById('go-admin-from-workspace');
+        if (goAdminFromWorkspaceBtn) {
+            goAdminFromWorkspaceBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                this._adminFromPage = 'workspace';
+                Workspace.destroy();
+                API.log('info', 'frontend.navigation', { from: 'workspace', to: 'admin' }, '进入管理后台');
+                this._showAdminPage();
+            });
+        }
+
         // Add user button
         document.getElementById('add-user-btn')?.addEventListener('click', () => {
             Admin.showAddUserForm();
@@ -357,17 +448,17 @@ const App = {
 // Boot
 document.addEventListener('DOMContentLoaded', () => App.init());
 
-// Re-align sidebar when window resizes (debounced)
-let _resizeTimer;
-window.addEventListener('resize', () => {
-    clearTimeout(_resizeTimer);
-    _resizeTimer = setTimeout(() => App._alignSidebarToDivider(), 150);
-});
-
 // Global: close user dropdown on outside click
 document.addEventListener('click', (e) => {
     const dd = document.getElementById('user-menu-dropdown');
     if (dd && !dd.contains(e.target) && e.target.id !== 'user-display') {
         dd.style.display = 'none';
     }
+});
+
+// Global: re-align sidebar widths on window resize
+let _resizeTimer;
+window.addEventListener('resize', () => {
+    clearTimeout(_resizeTimer);
+    _resizeTimer = setTimeout(() => App._alignSidebarToDivider(), 150);
 });

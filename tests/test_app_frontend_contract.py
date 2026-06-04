@@ -17,9 +17,9 @@ def test_chat_page_has_distinct_page_badge():
 
 def test_all_topbars_use_same_product_title_and_show_version():
     assert 'data-branding="review-title"' not in HTML
-    assert HTML.count('data-branding="topbar-title"') == 3
-    assert HTML.count('data-branding="app-version"') == 3
-    assert 'Ver. 0.2.8' in HTML
+    assert HTML.count('data-branding="topbar-title"') == 4  # chat + review + workspace + admin
+    assert HTML.count('data-branding="app-version"') == 4
+    assert 'Ver. 0.2.9' in HTML
     assert '.topbar-brand-text {' in CSS
     assert '.topbar-version {' in CSS
     assert "app-version" in AUTH_JS

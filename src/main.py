@@ -36,7 +36,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import init_db
 from app.middleware.auth import get_optional_user
 from app.models.user import User
-from app.routers import admin, auth, chat, history, review, upload
+from app.routers import admin, auth, chat, history, review, upload, workspace
 from app.services.branding_config import (
     get_branding_config,
     resolve_branding_asset,
@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.2.8",
+    version="0.2.9",
     lifespan=lifespan,
 )
 
@@ -80,11 +80,12 @@ app.include_router(upload.router, prefix="/api/upload", tags=["上传"])
 app.include_router(history.router, prefix="/api/history", tags=["历史记录"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
 app.include_router(review.router, prefix="/api/review", tags=["需求审查"])
+app.include_router(workspace.router, prefix="/api", tags=["团队空间"])
 
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.2.8"}
+    return {"status": "ok", "version": "0.2.9"}
 
 
 @app.get("/api/app/branding")

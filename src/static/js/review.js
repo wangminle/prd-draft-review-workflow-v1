@@ -73,6 +73,7 @@ const Review = {
             this._bindActionCards();
             this._bindProgressActions();
             this._bindResultActions();
+            this._bindSourcePicker();
             this._bound = true;
         }
         this._showWorkspaceShell();
@@ -2862,6 +2863,153 @@ const Review = {
         const d = document.createElement('div');
         d.textContent = String(s);
         return d.innerHTML;
+    },
+
+    /* ── P0.C.4 团队资料选择器 ── */
+
+    _sourcePickerSelected: [],
+
+    _bindSourcePicker() {
+        const addBtn = document.getElementById('add-source-ref-btn');
+        if (addBtn) {
+            addBtn.addEventListener('click', () => this._openSourcePicker());
+        }
+        const cancelBtn = document.getElementById('source-picker-cancel');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => this._closeSourcePicker());
+        }
+        const confirmBtn = document.getElementById('source-picker-confirm');
+        if (confirmBtn) {
+            confirmBtn.addEventListener('click', () => this._confirmSourcePicker());
+        }
+        const overlay = document.getElementById('source-picker-overlay');
+        if (overlay) {
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) this._closeSourcePicker();
+            });
+        }
+    },
+
+    async _openSourcePicker() {
+        if (!this.currentProjectId) {
+            App._showToast('请先选择一个审查项目');
+            return;
+        }
+        this._sourcePickerSelected = [];
+        const overlay = document.getElementById('source-picker-overlay');
+        const listEl = document.getElementById('source-picker-list');
+        const countEl = document.getElementById('source-picker-selected-count');
+        const confirmBtn = document.getElementById('source-picker-confirm');
+        if (!overlay || !listEl) return;
+
+        listEl.innerHTML = '<p style="text-align:center;color:var(--color-text-muted);padding:24px">加载中…</p>';
+        overlay.style.display = 'flex';
+        if (countEl) countEl.textContent = '已选 0 项';
+        if (confirmBtn) confirmBtn.disabled = true;
+
+        try {
+            const workspaces = await API.getWorkspaces();
+            if (!workspaces || workspaces.length === 0) {
+                listEl.innerHTML = '<p style="text-align:center;color:var(--color-text-muted);padding:24px">没有可用的团队空间</p>';
+                return;
+            }
+            const wsId = workspaces[0].id;
+            const sources = await API.getWorkspaceSources(wsId);
+            if (!sources || sources.length === 0) {
+                listEl.innerHTML = '<p style="text-align:center;color:var(--color-text-muted);padding:24px">团队资料库暂无资料，请先在团队空间上传资料</p>';
+                return;
+            }
+            const existingRefs = await API.listProjectSourceRefs(this.currentProjectId).catch(() => []);
+            const existingSourceIds = new Set((existingRefs || []).map(r => r.source_id));
+
+            listEl.innerHTML = sources
+                .filter(s => s.status === 'active')
+                .map(s => {
+                    const alreadyLinked = existingSourceIds.has(s.id);
+                    const typeLabels = { upload: '文件上传', lark_url: '飞书链接', api: 'API 导入' };
+                    return `<div class="source-picker-row${alreadyLinked ? ' source-picker-linked' : ''}" data-source-id="${s.id}" data-source-title="${this._esc(s.title)}">
+                        <label style="display:flex;align-items:center;gap:8px;flex:1;cursor:${alreadyLinked ? 'default' : 'pointer'}">
+                            ${alreadyLinked ? '<span style="color:var(--green-6);font-size:var(--fs-12)">✓ 已引用</span>' : '<input type="checkbox" class="source-picker-checkbox" data-source-id="${s.id}" />'}
+                            <strong>${this._esc(s.title)}</strong>
+                            <span style="color:var(--color-text-muted);font-size:var(--fs-12)">${this._esc(s.filename || '')}</span>
+                            <span style="color:var(--color-text-muted);font-size:var(--fs-12)">v${s.version}</span>
+                            <span style="color:var(--color-text-muted);font-size:var(--fs-12)">${typeLabels[s.source_type] || s.source_type}</span>
+                        </label>
+                        <select class="source-picker-reftype" data-source-id="${s.id}" style="font-size:var(--fs-12);padding:2px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);background:var(--color-bg-white)"${alreadyLinked ? ' disabled' : ''}>
+                            <option value="context">上下文</option>
+                            <option value="reference">参考资料</option>
+                            <option value="background">背景资料</option>
+                        </select>
+                    </div>`;
+                }).join('');
+
+            listEl.querySelectorAll('.source-picker-checkbox').forEach(cb => {
+                cb.addEventListener('change', () => this._updateSourcePickerSelection());
+            });
+        } catch (err) {
+            listEl.innerHTML = `<p style="text-align:center;color:var(--red-6);padding:24px">加载失败: ${this._esc(err.message)}</p>`;
+        }
+    },
+
+    _updateSourcePickerSelection() {
+        const checkboxes = document.querySelectorAll('.source-picker-checkbox');
+        this._sourcePickerSelected = [];
+        checkboxes.forEach(cb => {
+            if (cb.checked) {
+                const sourceId = parseInt(cb.dataset.sourceId, 10);
+                const row = cb.closest('.source-picker-row');
+                const refType = row ? row.querySelector('.source-picker-reftype').value : 'context';
+                const title = row ? row.dataset.sourceTitle : '';
+                this._sourcePickerSelected.push({ source_id: sourceId, ref_type: refType, title });
+            }
+        });
+        const countEl = document.getElementById('source-picker-selected-count');
+        const confirmBtn = document.getElementById('source-picker-confirm');
+        if (countEl) countEl.textContent = `已选 ${this._sourcePickerSelected.length} 项`;
+        if (confirmBtn) confirmBtn.disabled = this._sourcePickerSelected.length === 0;
+    },
+
+    _closeSourcePicker() {
+        const overlay = document.getElementById('source-picker-overlay');
+        if (overlay) overlay.style.display = 'none';
+        this._sourcePickerSelected = [];
+    },
+
+    async _confirmSourcePicker() {
+        if (!this.currentProjectId || this._sourcePickerSelected.length === 0) return;
+
+        const confirmBtn = document.getElementById('source-picker-confirm');
+        if (confirmBtn) {
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = '引用中…';
+        }
+
+        let success = 0;
+        let failed = 0;
+        for (const item of this._sourcePickerSelected) {
+            try {
+                await API.addProjectSourceRef(this.currentProjectId, {
+                    source_id: item.source_id,
+                    ref_type: item.ref_type,
+                });
+                success++;
+            } catch (err) {
+                console.error('引用资料失败:', item.title, err);
+                failed++;
+            }
+        }
+
+        this._closeSourcePicker();
+        if (confirmBtn) {
+            confirmBtn.textContent = '确认引用';
+            confirmBtn.disabled = true;
+        }
+
+        if (success > 0) {
+            App._showToast(`成功引用 ${success} 份资料${failed > 0 ? `，${failed} 份失败` : ''}`);
+        } else {
+            App._showToast('引用资料失败');
+        }
     },
 };
 
