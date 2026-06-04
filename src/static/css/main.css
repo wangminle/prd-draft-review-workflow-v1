@@ -236,6 +236,21 @@ input::placeholder, textarea::placeholder {
     object-fit: contain;
 }
 
+.branding-logo {
+    display: block;
+    object-fit: contain;
+}
+
+.branding-logo-login {
+    width: 72px;
+    height: 72px;
+}
+
+.branding-logo-topbar {
+    width: 28px;
+    height: 28px;
+}
+
 .brand-title {
     font-size: var(--fs-32);
     font-weight: var(--fw-bold);
@@ -575,6 +590,11 @@ input::placeholder, textarea::placeholder {
 
 .brand-dot svg {
     display: block;
+}
+
+.brand-dot .branding-logo-topbar {
+    width: 28px;
+    height: 28px;
 }
 
 .topbar-title {

@@ -15,11 +15,19 @@ from tools.migrate_branding import (
     build_scan_report,
     copy_assets,
     migrate,
+    scan,
+    plan,
+    apply,
     _validate_asset_path_safe,
     _discover_static_dir,
+    _check_write_path_allowed,
+    classify_field,
     CONF_HIGH,
     CONF_MEDIUM,
     CONF_LOW,
+    CAT_AUTO,
+    CAT_CONFIRM,
+    CAT_OUT_OF_SCOPE,
 )
 
 
@@ -103,6 +111,7 @@ def legacy_project(tmp_path):
     (runtime_dir / "assets" / "branding").mkdir(parents=True)
 
     return {
+        "project_dir": tmp_path / "legacy",
         "static_dir": static_dir,
         "runtime_dir": runtime_dir,
         "tmp_path": tmp_path,
@@ -216,6 +225,19 @@ class TestScanRuntime:
         assert findings["app_title"][1] == CONF_HIGH
         assert findings["theme_primary"][0] == "#FF0000"
 
+    def test_legacy_login_notice_text_maps_to_login_notice(self, tmp_path):
+        runtime = tmp_path / "runtime"
+        config_dir = runtime / "config"
+        config_dir.mkdir(parents=True)
+        (config_dir / "ui-branding.yaml").write_text(
+            yaml.dump({"login_notice_text": "旧版登录提示"}, allow_unicode=True),
+            encoding="utf-8",
+        )
+
+        findings = scan_runtime(runtime)
+
+        assert findings["login_notice"] == ("旧版登录提示", CONF_HIGH)
+
     def test_existing_branding_assets(self, tmp_path):
         runtime = tmp_path / "runtime"
         branding_dir = runtime / "assets" / "branding"
@@ -225,6 +247,55 @@ class TestScanRuntime:
         findings = scan_runtime(runtime)
         assert "favicon_file" in findings
         assert findings["favicon_file"][0] == "favicon.ico"
+
+    def test_generic_logo_maps_to_login_not_topbar(self, tmp_path):
+        """BUG-032 regression: 通用 logo 应映射到 login_logo_file，而非 topbar_logo_file。"""
+        runtime = tmp_path / "runtime"
+        branding_dir = runtime / "assets" / "branding"
+        branding_dir.mkdir(parents=True)
+        (branding_dir / "logo.png").write_bytes(b'\x89PNG' + b'\x00' * 50)
+        findings = scan_runtime(runtime)
+        assert "login_logo_file" in findings
+        assert findings["login_logo_file"][0] == "logo.png"
+        # 通用 logo 作为 topbar 回退，置信度应为 LOW
+        assert "topbar_logo_file" in findings
+        assert findings["topbar_logo_file"][0] == "logo.png"
+        assert findings["topbar_logo_file"][1] == CONF_LOW
+
+    def test_topbar_explicit_name_maps_to_topbar_only(self, tmp_path):
+        """显式 topbar 命名只映射到 topbar_logo_file。"""
+        runtime = tmp_path / "runtime"
+        branding_dir = runtime / "assets" / "branding"
+        branding_dir.mkdir(parents=True)
+        (branding_dir / "topbar-logo.svg").write_bytes(b"<svg/>")
+        findings = scan_runtime(runtime)
+        assert "topbar_logo_file" in findings
+        assert findings["topbar_logo_file"][0] == "topbar-logo.svg"
+        # 不应映射到 login_logo_file
+        assert "login_logo_file" not in findings
+
+    def test_login_brand_explicit_name_maps_to_login_only(self, tmp_path):
+        """显式 login/brand 命名只映射到 login_logo_file。"""
+        runtime = tmp_path / "runtime"
+        branding_dir = runtime / "assets" / "branding"
+        branding_dir.mkdir(parents=True)
+        (branding_dir / "brand-logo.png").write_bytes(b'\x89PNG' + b'\x00' * 50)
+        findings = scan_runtime(runtime)
+        assert "login_logo_file" in findings
+        assert findings["login_logo_file"][0] == "brand-logo.png"
+        # 不应映射到 topbar_logo_file
+        assert "topbar_logo_file" not in findings
+
+    def test_mixed_logos_mapped_correctly(self, tmp_path):
+        """login logo 和 topbar logo 同时存在时，各自映射到对应字段。"""
+        runtime = tmp_path / "runtime"
+        branding_dir = runtime / "assets" / "branding"
+        branding_dir.mkdir(parents=True)
+        (branding_dir / "brand-logo.png").write_bytes(b'\x89PNG' + b'\x00' * 50)
+        (branding_dir / "topbar-logo.svg").write_bytes(b"<svg/>")
+        findings = scan_runtime(runtime)
+        assert findings["login_logo_file"][0] == "brand-logo.png"
+        assert findings["topbar_logo_file"][0] == "topbar-logo.svg"
 
 
 # ── 合并测试 ──
@@ -268,7 +339,8 @@ class TestBuildBrandingYaml:
     def test_empty_findings_generates_defaults(self):
         config = build_branding_yaml({})
         assert "theme" in config
-        assert config["theme"]["accent"] == "#23C343"
+        # 新版 build_branding_yaml 默认值为空字符串，accent 不再硬编码
+        assert config["theme"]["accent"] == ""
 
 
 # ── 报告生成测试 ──
@@ -369,8 +441,9 @@ class TestMigrateFlow:
             target_runtime_dir=target,
         )
         data = yaml.safe_load(Path(result["yaml_path"]).read_text(encoding="utf-8"))
-        # discover_assets finds logo.png → should be in login_logo and topbar_logo
-        assert data.get("login_logo") == "logo.png" or data.get("topbar_logo") == "logo.png"
+        # discover_assets finds generic logo.png → default to login_logo only
+        assert data.get("login_logo") == "logo.png"
+        assert not data.get("topbar_logo")
 
     def test_runtime_yaml_takes_priority(self, legacy_project_with_runtime_config):
         target = legacy_project_with_runtime_config["tmp_path"] / "target_runtime"
@@ -493,6 +566,7 @@ class TestCopyAssetsPathSafety:
         merged = {"favicon_file": ("https://example.com/favicon.svg", CONF_HIGH)}
         target = legacy_project["tmp_path"] / "target"
         copied = copy_assets(
+            legacy_project["project_dir"],
             legacy_project["static_dir"],
             legacy_project["runtime_dir"],
             target,
@@ -507,6 +581,7 @@ class TestCopyAssetsPathSafety:
         merged = {"favicon_file": ("../../etc/passwd", CONF_HIGH)}
         target = legacy_project["tmp_path"] / "target"
         copied = copy_assets(
+            legacy_project["project_dir"],
             legacy_project["static_dir"],
             legacy_project["runtime_dir"],
             target,
@@ -595,7 +670,7 @@ class TestCopyAssetsNestedPath:
 
         target_dir = tmp_path / "target"
         merged = {"favicon_file": ("icons/favicon.svg", CONF_HIGH)}
-        copied = copy_assets(static_dir, runtime_dir, target_dir, merged, {})
+        copied = copy_assets(tmp_path, static_dir, runtime_dir, target_dir, merged, {})
 
         assert "icons/favicon.svg" in copied
         assert (target_dir / "assets" / "branding" / "icons" / "favicon.svg").exists()
@@ -611,9 +686,239 @@ class TestCopyAssetsNestedPath:
         runtime_dir.mkdir()
 
         target_dir = tmp_path / "target"
+        merged = {"login_logo_file": ("brand-logo.png", CONF_MEDIUM)}
         discovered = {"logo_file": (logos_dir / "brand-logo.png", CONF_MEDIUM)}
-        copied = copy_assets(static_dir, runtime_dir, target_dir, {}, discovered)
+        copied = copy_assets(tmp_path, static_dir, runtime_dir, target_dir, merged, discovered)
 
         assert "brand-logo.png" in copied
         # Logo goes to branding root (uses src_path.name, not nested path)
         assert (target_dir / "assets" / "branding" / "brand-logo.png").exists()
+
+
+# ── P3.6 三级分类 ──
+
+
+class TestFieldClassification:
+    def test_standard_fields_are_auto(self):
+        assert classify_field("app_title") == CAT_AUTO
+        assert classify_field("login_title") == CAT_AUTO
+        assert classify_field("topbar_title") == CAT_AUTO
+        assert classify_field("theme_primary") == CAT_AUTO
+        assert classify_field("favicon_file") == CAT_AUTO
+        assert classify_field("login_logo_file") == CAT_AUTO
+
+    def test_uncertain_fields_are_confirm(self):
+        assert classify_field("theme_primary_svg") == CAT_CONFIRM
+        assert classify_field("login_gradient_colors") == CAT_CONFIRM
+        assert classify_field("logo_file") == CAT_CONFIRM
+
+    def test_unknown_fields_are_out_of_scope(self):
+        assert classify_field("asset_candidate") == CAT_OUT_OF_SCOPE
+        assert classify_field("random_unknown_field") == CAT_OUT_OF_SCOPE
+
+    def test_build_branding_yaml_only_includes_auto_fields(self):
+        merged = {
+            "app_title": ("测试标题", CONF_HIGH),
+            "theme_primary_svg": ("#ABCDEF", CONF_MEDIUM),  # confirm — 不写入
+            "asset_candidate": ("random.png", CONF_LOW),  # out_of_scope — 不写入
+        }
+        config = build_branding_yaml(merged)
+        assert config["app_title"] == "测试标题"
+        # confirm 字段不能自动写入，必须留在报告中人工确认
+        assert config["theme"]["primary"] == ""
+        # out_of_scope 不映射到任何标准字段
+        assert config["login_logo"] == ""
+        assert config["topbar_logo"] == ""
+
+
+# ── P3.6 scan/plan/apply 模式 ──
+
+
+class TestScanMode:
+    def test_scan_does_not_write_files(self, legacy_project):
+        result = scan(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+        )
+        assert "merged_findings" in result
+        assert "classified" in result
+        # scan 不应创建任何文件
+        target_config = legacy_project["tmp_path"] / "target" / "config" / "ui-branding.yaml"
+        assert not target_config.exists()
+
+    def test_scan_classifies_all_fields(self, legacy_project):
+        result = scan(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+        )
+        classified = result["classified"]
+        for key, info in classified.items():
+            assert info["category"] in (CAT_AUTO, CAT_CONFIRM, CAT_OUT_OF_SCOPE)
+
+
+class TestPlanMode:
+    def test_plan_writes_report_but_not_yaml(self, legacy_project):
+        target_dir = legacy_project["tmp_path"] / "target"
+        result = plan(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+            target_dir,
+        )
+        # plan 只写扫描报告，不写 yaml
+        report_path = target_dir / "config" / "ui-branding.scan-report.md"
+        assert report_path.exists()
+        yaml_path = target_dir / "config" / "ui-branding.yaml"
+        assert not yaml_path.exists()
+
+    def test_plan_report_contains_classification(self, legacy_project):
+        target_dir = legacy_project["tmp_path"] / "target"
+        plan(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+            target_dir,
+        )
+        report = (target_dir / "config" / "ui-branding.scan-report.md").read_text(encoding="utf-8")
+        assert "auto" in report
+        assert "confirm" in report or "需人工确认" in report
+        assert "out_of_scope" in report or "超出范围" in report
+
+
+class TestApplyMode:
+    def test_apply_writes_yaml_and_assets(self, legacy_project):
+        target_dir = legacy_project["tmp_path"] / "target"
+        result = apply(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+            target_dir,
+        )
+        yaml_path = target_dir / "config" / "ui-branding.yaml"
+        assert yaml_path.exists()
+        report_path = target_dir / "config" / "ui-branding.scan-report.md"
+        assert report_path.exists()
+
+    def test_apply_skip_existing_yaml_without_force(self, legacy_project):
+        target_dir = legacy_project["tmp_path"] / "target"
+        # 先手动创建 yaml
+        config_dir = target_dir / "config"
+        config_dir.mkdir(parents=True)
+        yaml_file = config_dir / "ui-branding.yaml"
+        yaml_file.write_text("app_title: existing\n", encoding="utf-8")
+
+        result = apply(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+            target_dir,
+        )
+        # yaml 应保持原样
+        content = yaml_file.read_text(encoding="utf-8")
+        assert "existing" in content
+
+    def test_apply_force_overwrites_existing_yaml(self, legacy_project):
+        target_dir = legacy_project["tmp_path"] / "target"
+        config_dir = target_dir / "config"
+        config_dir.mkdir(parents=True)
+        yaml_file = config_dir / "ui-branding.yaml"
+        yaml_file.write_text("app_title: old\n", encoding="utf-8")
+
+        result = apply(
+            legacy_project["project_dir"],
+            legacy_project["runtime_dir"],
+            target_dir,
+            force=True,
+        )
+        content = yaml_file.read_text(encoding="utf-8")
+        assert "old" not in content
+
+    def test_apply_does_not_write_low_confidence_project_root_logo(self, tmp_path):
+        """assets/dist/public 扩展扫描结果为低置信，只进报告，不直接进入 apply。"""
+        legacy_dir = tmp_path / "legacy"
+        static_dir = legacy_dir / "src" / "static"
+        static_dir.mkdir(parents=True)
+        (static_dir / "index.html").write_text("<html><title>旧项目</title></html>", encoding="utf-8")
+
+        assets_dir = legacy_dir / "assets"
+        assets_dir.mkdir()
+        (assets_dir / "ProjectLogo.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+        runtime_dir = tmp_path / "old_runtime"
+        runtime_dir.mkdir()
+        target_dir = tmp_path / "target"
+
+        result = apply(legacy_dir, runtime_dir, target_dir)
+        data = yaml.safe_load((target_dir / "config" / "ui-branding.yaml").read_text(encoding="utf-8"))
+
+        assert "login_logo" not in data
+        assert "topbar_logo" not in data
+        assert "ProjectLogo.png" not in result["copied_assets"]
+        assert not (target_dir / "assets" / "branding" / "ProjectLogo.png").exists()
+
+
+# ── P3.6 写入路径白名单 ──
+
+
+class TestWritePathWhitelist:
+    def test_config_dir_allowed(self, tmp_path):
+        target = tmp_path / "runtime"
+        write_path = target / "config" / "ui-branding.yaml"
+        assert _check_write_path_allowed(target, write_path) is True
+
+    def test_branding_assets_dir_allowed(self, tmp_path):
+        target = tmp_path / "runtime"
+        write_path = target / "assets" / "branding" / "logo.png"
+        assert _check_write_path_allowed(target, write_path) is True
+
+    def test_data_dir_not_allowed(self, tmp_path):
+        target = tmp_path / "runtime"
+        write_path = target / "data" / "app.db"
+        assert _check_write_path_allowed(target, write_path) is False
+
+    def test_logs_dir_not_allowed(self, tmp_path):
+        target = tmp_path / "runtime"
+        write_path = target / "logs" / "app.log"
+        assert _check_write_path_allowed(target, write_path) is False
+
+    def test_uploads_dir_not_allowed(self, tmp_path):
+        target = tmp_path / "runtime"
+        write_path = target / "uploads" / "review_uploads" / "doc.docx"
+        assert _check_write_path_allowed(target, write_path) is False
+
+
+# ── P3.6 资产发现范围扩展 ──
+
+
+class TestDiscoverAssetsExpanded:
+    def test_logo_found_in_project_assets_dir(self, tmp_path):
+        """BUG from deployment experiment: logo in project root assets/ dir should be discovered."""
+        static_dir = tmp_path / "src" / "static"
+        static_dir.mkdir(parents=True)
+        (static_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        assets_dir = tmp_path / "assets"
+        assets_dir.mkdir()
+        (assets_dir / "ProjectLogo.png").write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 50)
+
+        result = discover_assets(tmp_path, static_dir)
+        assert "logo_file" in result
+        assert result["logo_file"][0].name == "ProjectLogo.png"
+
+    def test_logo_found_in_dist_dir(self, tmp_path):
+        static_dir = tmp_path / "src" / "static"
+        static_dir.mkdir(parents=True)
+        (static_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        dist_dir = tmp_path / "dist"
+        dist_dir.mkdir()
+        (dist_dir / "MyBrand.logo.png").write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 50)
+
+        result = discover_assets(tmp_path, static_dir)
+        assert "logo_file" in result
+
+    def test_no_duplicate_discovery_from_static_equals_project(self, tmp_path):
+        """When static_dir parent has no assets/dist/public, discover_assets only searches static."""
+        static_dir = tmp_path / "static"
+        static_dir.mkdir()
+        (static_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+        result = discover_assets(tmp_path, static_dir)
+        # No extra dirs searched since project has no assets/dist/public
+        assert "logo_file" not in result

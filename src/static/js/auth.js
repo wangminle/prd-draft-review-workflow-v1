@@ -175,12 +175,24 @@ const Branding = {
         }
 
         // Logo assets (img replacement)
+        const logoClassMap = {
+            'login-logo': 'branding-logo branding-logo-login',
+            'topbar-logo': 'branding-logo branding-logo-topbar',
+        };
+
+        // 互作 fallback：若只配置了一个 logo，另一处用同一张图但保持各自尺寸
+        const logoUrlMap = {
+            'login-logo': c.login_logo || c.topbar_logo || '',
+            'topbar-logo': c.topbar_logo || c.login_logo || '',
+        };
+
         for (const key of ['login-logo', 'topbar-logo']) {
-            const url = c[key.replace('-', '_')] || '';
+            const url = logoUrlMap[key];
             if (!url) continue;
             const containers = document.querySelectorAll(`[data-branding="${key}"]`);
             for (const container of containers) {
-                container.innerHTML = `<img src="${url}" alt="logo" style="max-height:72px;max-width:72px;object-fit:contain;">`;
+                const classes = logoClassMap[key] || 'branding-logo';
+                container.innerHTML = `<img src="${url}" alt="logo" class="${classes}">`;
             }
         }
     },
