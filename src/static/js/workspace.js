@@ -1,4 +1,4 @@
-/* 团队空间页面 — P0.B.5 + P0.B.6 + P0.C.4 */
+/* 团队空间页面 — P0.B.5 + P0.B.6 + P0.C.4 + P1.A.3 */
 const Workspace = {
     _initialized: false,
     _currentTab: 'sources',
@@ -7,6 +7,7 @@ const Workspace = {
     _selectedSourceId: null,
     _uploading: false,
     _memberRole: null,
+    _canManage: false,
 
     init() {
         if (this._initialized) return;
@@ -21,6 +22,7 @@ const Workspace = {
         this._sourcesCache = [];
         this._selectedSourceId = null;
         this._memberRole = null;
+        this._canManage = false;
     },
 
     async load() {
@@ -75,13 +77,13 @@ const Workspace = {
     async _getDefaultWorkspace() {
         if (this._workspaceId) return this._workspaceId;
         try {
-            const workspaces = await API.getWorkspaces();
-            if (workspaces && workspaces.length > 0) {
-                this._workspaceId = workspaces[0].id;
+            const ws = await API.getDefaultWorkspace();
+            if (ws) {
+                this._workspaceId = ws.id;
                 return this._workspaceId;
             }
         } catch (err) {
-            console.error('获取团队空间失败:', err);
+            console.error('获取默认团队空间失败:', err);
         }
         return null;
     },
@@ -117,14 +119,16 @@ const Workspace = {
                 listEl.innerHTML = '<p style="color:var(--color-text-muted);text-align:center;padding:40px">团队空间尚未初始化</p>';
                 return;
             }
-            const members = await API.getWorkspaceMembers(wsId);
+            const members = await API.getDefaultWorkspaceMembers();
             const me = Auth.getUser();
-            this._memberRole = (members || []).find(m => m.user_id === me?.id)?.role || null;
+            const myMember = (members || []).find(m => m.user_id === me?.id);
+            this._memberRole = myMember?.role || null;
+            this._canManage = this._memberRole === 'owner' || this._memberRole === 'admin';
             if (!members || members.length === 0) {
                 listEl.innerHTML = '<p style="color:var(--color-text-muted);text-align:center;padding:40px">暂无团队成员</p>';
                 return;
             }
-            listEl.innerHTML = members.map(m => this._renderMemberRow(m)).join('');
+            listEl.innerHTML = this._renderMemberTable(members);
         } catch (err) {
             console.error('加载成员失败:', err);
             listEl.innerHTML = '<p style="color:var(--color-text-muted);text-align:center;padding:40px">加载失败</p>';
@@ -152,7 +156,7 @@ const Workspace = {
                 : s.status === 'archived' ? ' <span class="ws-status-chip ws-status-archived">已归档</span>'
                 : '';
             const tags = (s.tags || []).map(t => `<span class="ws-tag-chip">${DOMPurify.sanitize(t)}</span>`).join('');
-            const canManage = this._memberRole === 'owner' || this._memberRole === 'admin';
+            const canManage = this._canManage;
             return `<tr data-source-id="${s.id}">
                 <td>${typeIcons[s.source_type] || '📄'}</td>
                 <td class="ws-source-title-cell" data-action="view-source" data-source-id="${s.id}" style="cursor:pointer;color:var(--color-brand)">${DOMPurify.sanitize(s.title)}</td>
@@ -181,12 +185,155 @@ const Workspace = {
         </table></div>`;
     },
 
-    _renderMemberRow(member) {
+    _renderMemberTable(members) {
         const roleLabels = { owner: '负责人', admin: '管理员', member: '成员', viewer: '观察者' };
-        return `<div class="ws-member-row">
-            <span class="ws-member-username">${DOMPurify.sanitize(member.username || '')}</span>
-            <span class="ws-member-role ws-role-${member.role}">${roleLabels[member.role] || member.role}</span>
-        </div>`;
+        const me = Auth.getUser();
+        const rows = members.map(m => {
+            const isSelf = m.user_id === me?.id;
+            const statusLabel = m.status === 'active' ? '活跃' : '已停用';
+            const statusClass = m.status === 'active' ? 'ws-status-active' : 'ws-status-inactive';
+
+            let roleCell;
+            if (isSelf || !this._canManage) {
+                roleCell = `<span class="ws-member-role ws-role-${m.role}">${roleLabels[m.role] || m.role}</span>`;
+            } else {
+                const roles = ['owner', 'admin', 'member', 'viewer'];
+                const currentRole = m.role;
+                const options = roles.map(r =>
+                    `<option value="${r}" ${currentRole === r ? 'selected' : ''}>${roleLabels[r]}</option>`
+                ).join('');
+                roleCell = `<select class="ws-role-select" data-user-id="${m.user_id}" data-current-role="${currentRole}" data-action="change-role">${options}</select>`;
+            }
+
+            let actionCell = '';
+            if (this._canManage && !isSelf) {
+                if (m.status === 'active') {
+                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="deactivate-member" data-user-id="${m.user_id}" data-username="${DOMPurify.sanitize(m.username)}">停用</button>`;
+                } else {
+                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="reactivate-member" data-user-id="${m.user_id}" data-username="${DOMPurify.sanitize(m.username)}">恢复</button>`;
+                }
+            }
+
+            return `<tr>
+                <td>${DOMPurify.sanitize(m.username || '')}</td>
+                <td>${roleCell}</td>
+                <td><span class="ws-status-chip ${statusClass}">${statusLabel}</span></td>
+                <td>${actionCell}</td>
+            </tr>`;
+        }).join('');
+
+        return `<div class="table-wrap"><table class="table ws-members-table">
+            <thead><tr>
+                <th>用户名</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th style="width:80px">操作</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
+    },
+
+    async _changeMemberRole(userId, newRole, currentRole) {
+        const roleLabels = { owner: '负责人', admin: '管理员', member: '成员', viewer: '观察者' };
+        const isDowngrade = (currentRole === 'owner' && newRole !== 'owner');
+        const isUpgrade = (currentRole === 'viewer' && newRole === 'owner') || (currentRole === 'member' && newRole === 'owner');
+
+        if (isDowngrade) {
+            const confirmed = await this._confirmRoleChange(userId, currentRole, newRole, roleLabels);
+            if (!confirmed) {
+                await this._loadMembers();
+                return;
+            }
+        } else if (currentRole !== newRole) {
+            const confirmed = await this._confirmMemberAction(
+                await this._getMemberUsername(userId),
+                `将角色从 ${roleLabels[currentRole]} 改为 ${roleLabels[newRole]}`
+            );
+            if (!confirmed) {
+                await this._loadMembers();
+                return;
+            }
+        }
+
+        try {
+            await API.updateDefaultWorkspaceMember(userId, { role: newRole });
+            App._showToast('角色已更新');
+            await this._loadMembers();
+        } catch (err) {
+            App._showToast('更新角色失败: ' + (err.message || '未知错误'));
+            await this._loadMembers();
+        }
+    },
+
+    async _getMemberUsername(userId) {
+        try {
+            const members = await API.getDefaultWorkspaceMembers();
+            const m = members.find(m => m.user_id === userId);
+            return m ? m.username : `用户#${userId}`;
+        } catch { return `用户#${userId}`; }
+    },
+
+    _confirmRoleChange(userId, currentRole, newRole, roleLabels) {
+        return new Promise(resolve => {
+            const overlay = document.getElementById('modal-overlay');
+            const content = document.getElementById('modal-content');
+            if (!overlay || !content) { resolve(false); return; }
+
+            content.innerHTML = `
+                <div style="padding:24px">
+                    <h3 style="margin:0 0 12px;font-size:var(--fs-16);font-weight:var(--fw-semibold);color:var(--red-6)">⚠️ 确认降级角色</h3>
+                    <p style="margin:0 0 20px;color:var(--color-text-muted)">将用户角色从「${roleLabels[currentRole]}」降级为「${roleLabels[newRole]}」。<br>降级后该用户将失去团队管理权限，此操作需要再次确认。</p>
+                    <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <button id="ws-role-cancel" class="btn btn-ghost">取消</button>
+                        <button id="ws-role-confirm" class="btn btn-primary" style="background:var(--red-6)">确认降级</button>
+                    </div>
+                </div>`;
+            overlay.style.display = 'flex';
+
+            const cleanup = () => { overlay.style.display = 'none'; };
+            document.getElementById('ws-role-cancel').onclick = () => { cleanup(); resolve(false); };
+            document.getElementById('ws-role-confirm').onclick = () => { cleanup(); resolve(true); };
+            overlay.onclick = (e) => { if (e.target === overlay) { cleanup(); resolve(false); } };
+        });
+    },
+
+    async _toggleMemberStatus(userId, username, currentStatus) {
+        const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+        const action = newStatus === 'inactive' ? '停用' : '恢复';
+        const confirmed = await this._confirmMemberAction(username, action);
+        if (!confirmed) return;
+
+        try {
+            await API.updateDefaultWorkspaceMember(userId, { status: newStatus });
+            App._showToast(`已${action}用户 ${username}`);
+            await this._loadMembers();
+        } catch (err) {
+            App._showToast(`${action}失败: ` + (err.message || '未知错误'));
+        }
+    },
+
+    _confirmMemberAction(username, action) {
+        return new Promise(resolve => {
+            const overlay = document.getElementById('modal-overlay');
+            const content = document.getElementById('modal-content');
+            if (!overlay || !content) { resolve(false); return; }
+
+            content.innerHTML = `
+                <div style="padding:24px">
+                    <h3 style="margin:0 0 12px;font-size:var(--fs-16);font-weight:var(--fw-semibold)">确认${action}</h3>
+                    <p style="margin:0 0 20px;color:var(--color-text-muted)">确定要${action}用户「${DOMPurify.sanitize(username)}」吗？${action === '停用' ? '停用后该用户将无法访问团队空间和创建项目。' : '恢复后该用户将重新获得团队空间访问权限。'}</p>
+                    <div style="display:flex;gap:8px;justify-content:flex-end">
+                        <button id="ws-member-cancel" class="btn btn-ghost">取消</button>
+                        <button id="ws-member-confirm" class="btn btn-primary">${action}</button>
+                    </div>
+                </div>`;
+            overlay.style.display = 'flex';
+
+            const cleanup = () => { overlay.style.display = 'none'; };
+            document.getElementById('ws-member-cancel').onclick = () => { cleanup(); resolve(false); };
+            document.getElementById('ws-member-confirm').onclick = () => { cleanup(); resolve(true); };
+            overlay.onclick = (e) => { if (e.target === overlay) { cleanup(); resolve(false); } };
+        });
     },
 
     async _handleUpload(files) {
@@ -296,7 +443,7 @@ const Workspace = {
 
         const tags = (source.tags || []).join(', ') || '无';
         const typeLabels = { upload: '文件上传', lark_url: '飞书链接', api: 'API 导入' };
-        const canManage = this._memberRole === 'owner' || this._memberRole === 'admin';
+        const canManage = this._canManage;
 
         let refsHtml = '';
         if (source.project_refs && source.project_refs.length > 0) {
@@ -382,6 +529,33 @@ document.addEventListener('click', (e) => {
         const sourceId = parseInt(viewBtn.dataset.sourceId, 10);
         Workspace._showSourceDetail(sourceId);
         return;
+    }
+
+    const deactivateBtn = e.target.closest('[data-action="deactivate-member"]');
+    if (deactivateBtn) {
+        e.preventDefault();
+        const userId = parseInt(deactivateBtn.dataset.userId, 10);
+        const username = deactivateBtn.dataset.username;
+        Workspace._toggleMemberStatus(userId, username, 'active');
+        return;
+    }
+
+    const reactivateBtn = e.target.closest('[data-action="reactivate-member"]');
+    if (reactivateBtn) {
+        e.preventDefault();
+        const userId = parseInt(reactivateBtn.dataset.userId, 10);
+        const username = reactivateBtn.dataset.username;
+        Workspace._toggleMemberStatus(userId, username, 'inactive');
+        return;
+    }
+});
+
+document.addEventListener('change', (e) => {
+    const select = e.target.closest('[data-action="change-role"]');
+    if (select) {
+        const userId = parseInt(select.dataset.userId, 10);
+        const newRole = select.value;
+        Workspace._changeMemberRole(userId, newRole);
     }
 });
 

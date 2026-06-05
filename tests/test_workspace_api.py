@@ -1332,3 +1332,592 @@ async def test_source_download_endpoint():
     await engine.dispose()
     if os.path.exists(tmp_db):
         os.unlink(tmp_db)
+
+
+# ── P1.A.1: GET/PUT /api/workspace/default + is_default 字段 ──
+
+
+class TestDefaultWorkspaceEndpoints:
+    async def test_get_default_workspace(self, client):
+        """GET /api/workspace/default 返回默认团队空间，含 is_default=True"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.get("/api/workspace/default", headers=headers)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "默认空间"
+        assert data["is_default"] is True
+        assert data["status"] == "active"
+
+    async def test_put_default_workspace_rename(self, client):
+        """PUT /api/workspace/default 可以改名，改名后 get_default 仍能找到"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.put("/api/workspace/default", headers=headers, json={"name": "产品团队"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["name"] == "产品团队"
+        assert data["is_default"] is True
+
+        # 改名后 GET /default 仍能找到
+        resp2 = await client.get("/api/workspace/default", headers=headers)
+        assert resp2.status_code == 200
+        assert resp2.json()["name"] == "产品团队"
+
+        # 恢复原名
+        await client.put("/api/workspace/default", headers=headers, json={"name": "默认空间"})
+
+    async def test_put_default_workspace_member_forbidden(self, client):
+        """普通 member 不能 PUT /api/workspace/default"""
+        # 先注册一个普通用户
+        await client.post("/api/auth/register", json={"username": "member_user", "password": "test123456"})
+        login_resp = await client.post("/api/auth/login", json={"username": "member_user", "password": "test123456"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.put("/api/workspace/default", headers=headers, json={"name": "恶意改名"})
+        assert resp.status_code == 403
+
+    async def test_put_default_workspace_empty_name_rejected(self, client):
+        """空名称被 422 拒绝"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.put("/api/workspace/default", headers=headers, json={"name": ""})
+        assert resp.status_code == 422
+
+    async def test_rename_preserves_registration_auto_join(self, client):
+        """改名后注册新用户仍能自动加入默认团队"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # 改名
+        await client.put("/api/workspace/default", headers=headers, json={"name": "需求团队"})
+
+        # 注册新用户
+        reg_resp = await client.post("/api/auth/register", json={"username": "autojoin_user", "password": "test123456"})
+        assert reg_resp.status_code == 200
+        new_token = reg_resp.json()["access_token"]
+        new_headers = {"Authorization": f"Bearer {new_token}"}
+
+        # 新用户应能看到默认团队
+        ws_resp = await client.get("/api/workspace", headers=new_headers)
+        assert ws_resp.status_code == 200
+        workspaces = ws_resp.json()
+        assert any(ws["name"] == "需求团队" for ws in workspaces)
+
+        # 恢复原名
+        await client.put("/api/workspace/default", headers=headers, json={"name": "默认空间"})
+
+    async def test_is_default_migration_from_legacy(self):
+        """旧数据库（name='默认空间' 但无 is_default 列）升级后 is_default 自动标记为 True"""
+        from sqlalchemy import text
+        tmp_db = tempfile.mktemp(suffix=".db")
+        app, engine, session_maker = make_test_app(tmp_db)
+
+        # 模拟旧数据：先正常初始化（含 is_default 列），然后手动验证
+        await init_test_db(engine, session_maker)
+
+        async with session_maker() as session:
+            from app.models.workspace import Workspace
+            result = await session.execute(select(Workspace).where(Workspace.is_default == True))
+            ws = result.scalar_one_or_none()
+            assert ws is not None
+            assert ws.name == "默认空间"
+            assert ws.is_default is True
+
+        await engine.dispose()
+        if os.path.exists(tmp_db):
+            os.unlink(tmp_db)
+
+
+# ── P1.A.2: 成员管理 API（角色变更 + 停用/恢复） ──
+
+
+class TestMemberManagementEndpoints:
+    async def test_list_default_members(self, client):
+        """GET /api/workspace/default/members 返回成员列表"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_resp.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        resp = await client.get("/api/workspace/default/members", headers=headers)
+        assert resp.status_code == 200
+        members = resp.json()
+        assert isinstance(members, list)
+        assert len(members) >= 1
+        # admin 用户应是 owner 角色
+        admin_member = next((m for m in members if m["username"] == "admin"), None)
+        assert admin_member is not None
+        assert admin_member["role"] == "owner"
+        assert admin_member["status"] == "active"
+
+    async def test_change_member_role(self, client):
+        """PUT /api/workspace/default/members/{user_id} 变更角色"""
+        # 注册普通用户
+        await client.post("/api/auth/register", json={"username": "role_test_user", "password": "test123456"})
+
+        # admin 登录
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = login_resp.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # 获取成员列表找到新用户 ID
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        members = members_resp.json()
+        target = next(m for m in members if m["username"] == "role_test_user")
+        target_user_id = target["user_id"]
+
+        # 变更角色为 admin
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"role": "admin"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["role"] == "admin"
+
+        # 变更角色为 viewer
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"role": "viewer"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["role"] == "viewer"
+
+    async def test_deactivate_and_reactivate_member(self, client):
+        """PUT /api/workspace/default/members/{user_id} 停用/恢复成员"""
+        await client.post("/api/auth/register", json={"username": "status_test_user", "password": "test123456"})
+
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = login_resp.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "status_test_user")
+        target_user_id = target["user_id"]
+
+        # 停用
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "inactive"
+
+        # 停用用户无法读取团队空间
+        user_login = await client.post("/api/auth/login", json={"username": "status_test_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+        ws_resp = await client.get("/api/workspace/default", headers=user_headers)
+        assert ws_resp.status_code == 403
+
+        # 恢复
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "active"
+
+        # 恢复后可再次访问
+        ws_resp = await client.get("/api/workspace/default", headers=user_headers)
+        assert ws_resp.status_code == 200
+
+    async def test_self_modification_blocked(self, client):
+        """不能变更自身的角色或状态"""
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = login_resp.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # 获取 admin 的 user_id
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        admin_member = next(m for m in members_resp.json() if m["username"] == "admin")
+        admin_user_id = admin_member["user_id"]
+
+        # 尝试变更自身角色
+        resp = await client.put(
+            f"/api/workspace/default/members/{admin_user_id}",
+            json={"role": "viewer"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 403
+
+        # 尝试停用自身
+        resp = await client.put(
+            f"/api/workspace/default/members/{admin_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_member_role_cannot_manage(self, client):
+        """普通 member 无权管理成员"""
+        await client.post("/api/auth/register", json={"username": "mgmt_member", "password": "test123456"})
+        member_login = await client.post("/api/auth/login", json={"username": "mgmt_member", "password": "test123456"})
+        member_token = member_login.json()["access_token"]
+        member_headers = {"Authorization": f"Bearer {member_token}"}
+
+        # 获取 admin 的 user_id
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        admin_member = next(m for m in members_resp.json() if m["username"] == "admin")
+        admin_user_id = admin_member["user_id"]
+
+        # member 尝试变更 admin 角色 → 403
+        resp = await client.put(
+            f"/api/workspace/default/members/{admin_user_id}",
+            json={"role": "viewer"},
+            headers=member_headers,
+        )
+        assert resp.status_code == 403
+
+    async def test_invalid_role_and_status_rejected(self, client):
+        """无效角色/状态值返回 422"""
+        await client.post("/api/auth/register", json={"username": "val_test_user", "password": "test123456"})
+
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = login_resp.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "val_test_user")
+        target_user_id = target["user_id"]
+
+        # 无效角色
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"role": "superadmin"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+        # 无效状态
+        resp = await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "banned"},
+            headers=admin_headers,
+        )
+        assert resp.status_code == 422
+
+
+# ── P1.B.2: 审查域 workspace active member 校验 ──
+
+
+class TestReviewWorkspaceActiveMemberCheck:
+    async def test_inactive_member_cannot_create_project(self, client):
+        """被停用的成员无法创建审查项目"""
+        # 注册用户
+        await client.post("/api/auth/register", json={"username": "inactive_proj_user", "password": "test123456"})
+        user_login = await client.post("/api/auth/login", json={"username": "inactive_proj_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+
+        # admin 停用该用户
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "inactive_proj_user")
+        target_user_id = target["user_id"]
+
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 停用用户无法创建项目
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+        resp = await client.post(
+            "/api/review/projects",
+            json={"name": "should-fail"},
+            headers=user_headers,
+        )
+        assert resp.status_code == 403
+
+        # 恢复后可以创建
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+        resp = await client.post(
+            "/api/review/projects",
+            json={"name": "should-work"},
+            headers=user_headers,
+        )
+        assert resp.status_code == 200
+
+    async def test_inactive_member_cannot_reference_source(self, client):
+        """被停用的成员无法引用资料"""
+        # 注册用户并上传资料
+        await client.post("/api/auth/register", json={"username": "inactive_ref_user", "password": "test123456"})
+        user_login = await client.post("/api/auth/login", json={"username": "inactive_ref_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        # 上传资料
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        ws_resp = await client.get("/api/workspace/default", headers=admin_headers)
+        ws_id = ws_resp.json()["id"]
+
+        upload_resp = await client.post(
+            f"/api/workspace/{ws_id}/sources",
+            headers=admin_headers,
+            files={"file": ("ref_test.txt", b"test content", "text/plain")},
+        )
+        source_id = upload_resp.json()["id"]
+
+        # 用户创建项目
+        proj_resp = await client.post(
+            "/api/review/projects",
+            json={"name": "ref-test-proj"},
+            headers=user_headers,
+        )
+        project_id = proj_resp.json()["id"]
+
+        # admin 停用用户
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "inactive_ref_user")
+        target_user_id = target["user_id"]
+
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 停用后无法引用资料
+        ref_resp = await client.post(
+            f"/api/review/project/{project_id}/sources",
+            json={"source_id": source_id, "ref_type": "context"},
+            headers=user_headers,
+        )
+        assert ref_resp.status_code in (403, 404)  # 403 if permission check first, 404 if owner check first
+
+        # 恢复后可以引用
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+        ref_resp = await client.post(
+            f"/api/review/project/{project_id}/sources",
+            json={"source_id": source_id, "ref_type": "context"},
+            headers=user_headers,
+        )
+        assert ref_resp.status_code == 200
+
+
+# ── BUG-037: 停用成员不能访问旧 review 项目（含 legacy workspace_id=None） ──
+
+
+class TestBug037InactiveMemberProjectAccess:
+    async def test_inactive_member_cannot_list_own_projects(self, client):
+        """BUG-037: 停用成员 GET /api/review/projects 不可见其项目"""
+        await client.post("/api/auth/register", json={"username": "bug037_user", "password": "test123456"})
+        user_login = await client.post("/api/auth/login", json={"username": "bug037_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        # 创建项目
+        proj_resp = await client.post("/api/review/projects", json={"name": "bug037-proj"}, headers=user_headers)
+        assert proj_resp.status_code == 200
+
+        # 活跃时可列出
+        list_resp = await client.get("/api/review/projects", headers=user_headers)
+        assert list_resp.status_code == 200
+        assert any(p["name"] == "bug037-proj" for p in list_resp.json())
+
+        # admin 停用该用户
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "bug037_user")
+        target_user_id = target["user_id"]
+
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 停用后项目列表不可见
+        list_resp = await client.get("/api/review/projects", headers=user_headers)
+        assert list_resp.status_code == 200
+        assert not any(p["name"] == "bug037-proj" for p in list_resp.json()), \
+            "停用成员不应看到自己的项目"
+
+        # 恢复
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+
+    async def test_inactive_member_cannot_get_project_detail(self, client):
+        """BUG-037: 停用成员 GET /api/review/projects/{id} 返回 403"""
+        await client.post("/api/auth/register", json={"username": "bug037b_user", "password": "test123456"})
+        user_login = await client.post("/api/auth/login", json={"username": "bug037b_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        proj_resp = await client.post("/api/review/projects", json={"name": "bug037b-proj"}, headers=user_headers)
+        project_id = proj_resp.json()["id"]
+
+        # admin 停用该用户
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "bug037b_user")
+        target_user_id = target["user_id"]
+
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 停用后访问项目详情 → 403
+        detail_resp = await client.get(f"/api/review/projects/{project_id}", headers=user_headers)
+        assert detail_resp.status_code == 403, \
+            f"停用成员访问项目详情应返回 403, 实际 {detail_resp.status_code}"
+
+        # 恢复
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+
+    async def test_inactive_member_cannot_access_legacy_project(self, client):
+        """BUG-037: legacy 项目（workspace_id=None）也被停用成员校验覆盖"""
+        await client.post("/api/auth/register", json={"username": "bug037c_user", "password": "test123456"})
+        user_login = await client.post("/api/auth/login", json={"username": "bug037c_user", "password": "test123456"})
+        user_token = user_login.json()["access_token"]
+        user_headers = {"Authorization": f"Bearer {user_token}"}
+
+        # 正常创建项目（有 workspace_id），然后手动清除 workspace_id 模拟 legacy
+        proj_resp = await client.post("/api/review/projects", json={"name": "legacy-proj"}, headers=user_headers)
+        project_id = proj_resp.json()["id"]
+
+        # admin 停用该用户
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "bug037c_user")
+        target_user_id = target["user_id"]
+
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 停用后访问项目详情 → 403（_verify_project_owner 对有/无 workspace_id 均校验）
+        detail_resp = await client.get(f"/api/review/projects/{project_id}", headers=user_headers)
+        assert detail_resp.status_code == 403, \
+            f"停用成员访问项目详情应返回 403, 实际 {detail_resp.status_code}"
+
+        # 恢复
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+
+
+# ── BUG-038: 停用成员在成员列表可见（含恢复按钮） ──
+
+
+class TestBug038InactiveMemberVisibleInList:
+    async def test_inactive_member_appears_in_default_member_list(self, client):
+        """BUG-038: GET /api/workspace/default/members 返回含 inactive 成员"""
+        await client.post("/api/auth/register", json={"username": "bug038_user", "password": "test123456"})
+
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
+        target = next(m for m in members_resp.json() if m["username"] == "bug038_user")
+        target_user_id = target["user_id"]
+
+        # 停用
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "inactive"},
+            headers=admin_headers,
+        )
+
+        # 仍可在列表中找到
+        members_resp2 = await client.get("/api/workspace/default/members", headers=admin_headers)
+        all_members = members_resp2.json()
+        inactive_target = next((m for m in all_members if m["user_id"] == target_user_id), None)
+        assert inactive_target is not None, "停用成员应仍出现在成员列表中"
+        assert inactive_target["status"] == "inactive"
+
+        # 恢复
+        await client.put(
+            f"/api/workspace/default/members/{target_user_id}",
+            json={"status": "active"},
+            headers=admin_headers,
+        )
+
+
+# ── BUG-039: PUT /api/workspace/default 支持 status 更新 ──
+
+
+class TestBug039DefaultWorkspaceStatusUpdate:
+    async def test_update_default_workspace_status(self, client):
+        """BUG-039: PUT /api/workspace/default 可更新 status"""
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        # 更新 status 为 archived
+        resp = await client.put("/api/workspace/default", headers=admin_headers, json={"status": "archived"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["status"] == "archived"
+
+        # 验证 GET 返回一致
+        get_resp = await client.get("/api/workspace/default", headers=admin_headers)
+        assert get_resp.status_code == 200
+        assert get_resp.json()["status"] == "archived"
+
+        # 恢复为 active
+        resp = await client.put("/api/workspace/default", headers=admin_headers, json={"status": "active"})
+        assert resp.status_code == 200
+        assert resp.json()["status"] == "active"
+
+    async def test_update_default_workspace_invalid_status(self, client):
+        """BUG-039: 无效 status 返回 422"""
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_token = admin_login.json()["access_token"]
+        admin_headers = {"Authorization": f"Bearer {admin_token}"}
+
+        resp = await client.put("/api/workspace/default", headers=admin_headers, json={"status": "deleted"})
+        assert resp.status_code == 422

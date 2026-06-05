@@ -68,7 +68,7 @@ async def normal_user(db_session):
 @pytest_asyncio.fixture
 async def default_workspace(db_session, admin_user):
     ws_repo = WorkspaceRepository(db_session)
-    ws = await ws_repo.create("默认空间", description="系统默认团队空间", created_by=admin_user.id)
+    ws = await ws_repo.create("默认空间", description="系统默认团队空间", created_by=admin_user.id, is_default=True)
     await ws_repo.add_member(ws.id, admin_user.id, role="owner")
     return ws
 
@@ -127,10 +127,11 @@ class TestWorkspaceModel:
 
     async def test_get_default_workspace(self, db_session, admin_user):
         repo = WorkspaceRepository(db_session)
-        await repo.create("默认空间", created_by=admin_user.id)
+        await repo.create("默认空间", created_by=admin_user.id, is_default=True)
         default = await repo.get_default()
         assert default is not None
         assert default.name == "默认空间"
+        assert default.is_default is True
 
     async def test_get_default_not_exists(self, db_session):
         repo = WorkspaceRepository(db_session)
@@ -510,7 +511,7 @@ class TestProjectMigration:
             await session.flush()
 
             # 创建默认 workspace
-            ws = Workspace(name="默认空间", description="系统默认", created_by=admin.id, status="active")
+            ws = Workspace(name="默认空间", description="系统默认", is_default=True, created_by=admin.id, status="active")
             session.add(ws)
             await session.flush()
             session.add(WorkspaceMember(workspace_id=ws.id, user_id=admin.id, role="owner", status="active"))
@@ -587,7 +588,7 @@ class TestDefaultWorkspaceSeed:
             await session.commit()
 
         async with session_maker() as session:
-            result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+            result = await session.execute(select(Workspace).where(Workspace.is_default == True))
             ws = result.scalar_one_or_none()
             if ws is None:
                 admin_result = await session.execute(select(User).where(User.role == "admin"))
@@ -595,6 +596,7 @@ class TestDefaultWorkspaceSeed:
                 ws = Workspace(
                     name="默认空间",
                     description="系统默认团队空间，旧项目自动归入此处",
+                    is_default=True,
                     created_by=admin.id if admin else None,
                     status="active",
                 )
@@ -610,10 +612,11 @@ class TestDefaultWorkspaceSeed:
                 await session.commit()
 
         async with session_maker() as session:
-            result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+            result = await session.execute(select(Workspace).where(Workspace.is_default == True))
             ws = result.scalar_one_or_none()
             assert ws is not None
             assert ws.status == "active"
+            assert ws.is_default is True
 
             result = await session.execute(
                 select(WorkspaceMember).where(WorkspaceMember.workspace_id == ws.id)
@@ -631,7 +634,7 @@ class TestDefaultWorkspaceSeed:
 
         async def run_seed():
             async with session_maker() as session:
-                result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+                result = await session.execute(select(Workspace).where(Workspace.is_default == True))
                 ws = result.scalar_one_or_none()
                 if ws is None:
                     admin_result = await session.execute(select(User).where(User.role == "admin"))
@@ -639,6 +642,7 @@ class TestDefaultWorkspaceSeed:
                     ws = Workspace(
                         name="默认空间",
                         description="系统默认团队空间",
+                        is_default=True,
                         created_by=admin.id if admin else None,
                         status="active",
                     )
@@ -657,6 +661,6 @@ class TestDefaultWorkspaceSeed:
         await run_seed()
 
         async with session_maker() as session:
-            result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+            result = await session.execute(select(Workspace).where(Workspace.is_default == True))
             workspaces = list(result.scalars().all())
             assert len(workspaces) == 1

@@ -149,6 +149,10 @@ const API = {
     /* ── 团队空间 ── */
 
     getWorkspaces() { return this.request('GET', '/api/workspace'); },
+    getDefaultWorkspace() { return this.request('GET', '/api/workspace/default'); },
+    updateDefaultWorkspace(data) { return this.request('PUT', '/api/workspace/default', data); },
+    getDefaultWorkspaceMembers() { return this.request('GET', '/api/workspace/default/members'); },
+    updateDefaultWorkspaceMember(userId, data) { return this.request('PUT', `/api/workspace/default/members/${userId}`, data); },
     getWorkspaceMembers(wsId) { return this.request('GET', `/api/workspace/${wsId}/members`); },
     getWorkspaceSources(wsId, params) {
         let url = `/api/workspace/${wsId}/sources`;

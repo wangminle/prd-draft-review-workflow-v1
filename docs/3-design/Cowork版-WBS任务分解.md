@@ -38,19 +38,18 @@
 > 标记规则：仅当仓库内同时存在直接代码实现与自动化测试/前端契约测试证据时，才标记为”已验证完成”；部分完成指代码中有相关实现但不完全满足验收标准。
 
 - 已验证完成：**Phase 0 全部 24 项**，即 `P0.A.1~P0.E.4`。
-- 已验证完成（Phase 1~6 中零散完成的项）：
-  - **P1.A.4**：移除多空间切换器 — 无 workspace selector UI，只有单入口”团队空间”（index.html + app.js）
-  - **P1.B.4**：旧数据兼容迁移 — `_migrate_projects_to_default_workspace()` 在 `database.py`，旧项目自动归入默认空间（`tests/test_workspace.py`）
-- 部分完成：
-  - **P1.A.1**：有 `GET /api/workspace` 返回列表，但无专用 `GET /api/workspace/default` 和 `PUT` 更新端点
-  - **P1.A.2**：有 `GET /api/workspace/{id}/members` 成员列表，但无 `PUT` 改角色/停用端点
-  - **P1.C.2**：全量 pytest 通过，但无 P1 专项回归测试
-- 未开始：**Phase 1 其余项、Phase 2~Phase 6、POC-A~POC-C**。
+- 已验证完成（Phase 1 中）：**P1 全部 10 项**，即 `P1.A.1~P1.C.2`（791 全量回归通过）。
+- 已验证完成（POC-A）：**POC-A 全部 6 项**，即 `POC-A.1~POC-A.6`（决策结论：FTS5 + LanceDB 混合检索）。
+- 未开始：Phase 2 功能任务 `P2.A.1~P2.D.3`、Phase 3~Phase 6、POC-B~POC-C
+- 部分完成：（无 — P1 全部子任务已完成）
+- 已完成：**POC-A 全部 6 项**（决策结论：FTS5 + LanceDB 混合检索，备选 Chroma）
+- 未开始：**Phase 2 功能任务、Phase 3~Phase 6、POC-B~POC-C**
 - 快速验证依据：
   - 数据模型/仓储与迁移：`tests/test_workspace.py`
   - 团队空间 API/权限/项目引用：`tests/test_workspace_api.py`
-  - 团队空间导航、资料库、资料选择器前端契约：`tests/test_frontend_workspace_contract.py`
-  - 本次定向执行：`pytest -q tests/test_workspace.py tests/test_workspace_api.py tests/test_frontend_workspace_contract.py`，结果 **91 passed**
+  - 团队空间导航、资料库、资料选择器、成员管理前端契约：`tests/test_frontend_workspace_contract.py`
+  - 本次定向执行：`pytest -q tests/test_workspace.py tests/test_workspace_api.py tests/test_frontend_workspace_contract.py`，结果 **97 passed**
+  - 全量回归：`pytest -q`，结果 **778 passed**
 
 ---
 
@@ -195,6 +194,9 @@
 **成员 Tab**：
 
 - 成员行（`.ws-member-row`）：用户名 + 角色标签（`.ws-member-role.ws-role-{role}`），中文映射 owner→负责人 / admin→管理员 / member→成员 / viewer→观察者
+- P1 增量：owner/admin 可见角色变更 dropdown（`.ws-role-select`，选项 owner/admin/member/viewer）+ 停用/恢复按钮（`.ws-member-action`）
+- 角色变更确认：inline dropdown 选择后弹出 modal-overlay 确认弹窗；不能变更自身角色；owner 降级需二次确认
+- 停用/恢复：停用后成员行灰化（`opacity: 0.5`）+ 角色标签旁显示"已停用" badge；恢复后还原
 - 空状态：居中灰色提示文字
 
 **权限显隐规则**：
@@ -206,6 +208,9 @@
 | 下载原文件 | ✓ | ✓ | ✓ | ✓ |
 | 删除资料 | ✓ | ✓ | ✗ | ✗ |
 | 管理按钮(详情页) | ✓ | ✓ | ✗ | ✗ |
+| 变更成员角色 | ✓ | ✓ | ✗ | ✗ |
+| 停用/恢复成员 | ✓ | ✓ | ✗ | ✗ |
+| 修改团队名称/描述 | ✓ | ✓ | ✗ | ✗ |
 
 前端通过 `_memberRole`（从 `_loadMembers` 获取当前用户角色）判断，`canManage = owner || admin`。
 
@@ -224,16 +229,18 @@
 
 ---
 
-## Phase 1：团队空间与权限底座（2 项已验证完成，2 项部分完成，其余未开始）
+## Phase 1：团队空间与权限底座（3 项已验证完成，2 项部分完成，其余未开始）
 
 > 目标：在单团队部署前提下建立权限原则，确保注册用户默认属于本团队、资料访问可控、关键动作绑定具体人。
+>
+> 进入条件复核（2026-06-05）：**可以开始 P1**。定向执行 `pytest -q tests/test_workspace.py tests/test_workspace_api.py tests/test_frontend_workspace_contract.py`，结果 `91 passed`。但开工前应先收口两个前提：1）默认团队空间的“默认”身份不能继续依赖 `name == "默认空间"`；2）成员管理前端已经有只读骨架，后续应按增量补齐而不是按“未开始”从零估算。
 
 ### P1.0 并行开发分组
 
 | 并行组 | 包含任务 | 依赖 | 可并行角色 | 并行说明 |
 | --- | --- | --- | --- | --- |
-| P1-G0 默认团队与成员 API | P1.A.1~P1.A.2 | P0 完成 | 后端 | 明确单团队默认入口、成员列表、角色变更和停用语义 |
-| P1-G1 角色策略与 ACL | P1.B.1~P1.B.3 | P1-G0 契约确定 | 后端/架构 | RolePolicy、ResourceACL 和权限中间件可独立实现，必须覆盖 403 边界 |
+| P1-G0 默认团队与成员 API | P1.A.1~P1.A.2 | P0 完成 | 后端 | 先固化默认团队稳定标识，再补默认入口、成员角色变更和停用语义 |
+| P1-G1 权限收口与访问对齐 | P1.B.1~P1.B.3 | P1-G0 契约确定 | 后端/架构 | 先统一现有粗粒度角色判断，再把审查域访问与 workspace 成员状态对齐 |
 | P1-G2 成员管理 UI | P1.A.3~P1.A.4 | P1-G0 API 契约或 mock 数据 | 前端/全栈 | 团队空间内做成员管理，不做 workspace selector |
 | P1-G3 兼容与回归 | P1.B.4、P1.C.1~P1.C.2 | P1-G0~G2 | 全栈/测试 | 验证旧项目、旧对话、旧管理后台不受权限底座影响 |
 
@@ -241,32 +248,34 @@
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P1.A.1 | 后端 API：`GET /api/workspace/default` 获取默认团队空间；`PUT /api/workspace/default` 更新团队名称、描述、状态 | 不开放创建多个 workspace；默认团队信息可维护 | 1d | ⚠️ 部分完成：有 `GET /api/workspace` 返回列表，但无专用 `/default` 和 PUT |
-| P1.A.2 | 后端 API：`GET /api/workspace/default/members` 成员列表；`PUT /api/workspace/default/members/{uid}` 改角色/停用；注册用户自动出现在成员列表 | 成员角色变更正确；停用后不可访问团队空间 | 1.5d | ⚠️ 部分完成：有 `GET /api/workspace/{id}/members` 和注册自动入队，但无 PUT 改角色/停用 |
-| P1.A.3 | 前端：团队空间 > 成员管理分区 — 成员列表、角色变更、停用/恢复、权限提示 | UI 与现有管理后台表格/按钮样式一致；普通 member 不显示管理操作 | 2d | 未开始 |
+| P1.A.1 | 后端 API：`GET /api/workspace/default` 获取默认团队空间；`PUT /api/workspace/default` 更新团队名称、描述、状态；在开放改名前先把默认团队解析从名称匹配收口为稳定标识 | 不开放创建多个 workspace；默认团队信息可维护；团队改名后注册自动入队和启动迁移仍正常 | 1d | ✅ 已验证完成：`Workspace.is_default` 字段已落地；`get_default()` 按 `is_default==True` 查询；`_ensure_default_workspace()` 含旧数据 `name=="默认空间"` 自动标记 `is_default=True` 兼容；`GET /api/workspace/default` + `PUT /api/workspace/default` 端点已实现（改名/描述，owner/admin 权限，空名称 422 拒绝）；改名后注册自动入队验证通过；6 项自动化测试 |
+| P1.A.2 | 后端 API：`GET /api/workspace/default/members` 成员列表；`PUT /api/workspace/default/members/{uid}` 改角色/停用；注册用户自动出现在成员列表 | 成员角色变更正确；停用后不可访问团队空间 | 1.5d | ✅ 已完成：GET/PUT 默认成员入口 + 角色变更/停用恢复 + 禁止自身变更 + 审计日志 + 6 项测试 |
+| P1.A.3 | 前端：团队空间 > 成员管理分区 — 成员列表、角色变更、停用/恢复、权限提示 | UI 与现有管理后台表格/按钮样式一致；普通 member 不显示管理操作 | 1.5d | ✅ 已完成：角色下拉变更 + 停用/恢复按钮 + 确认对话框 + 权限显隐 + 5 项契约测试 |
 | P1.A.4 | 移除/不实现多空间切换器；导航中只显示”团队空间”单入口，不出现 workspace selector | 不存在多团队切换 UI；旧页面不受影响 | 0.5d | ✅ 已验证完成 |
 
-### P1.B 角色策略与 ACL
+### P1.B 权限收口与访问对齐
+
+> 单团队粗权限阶段先统一现有权限语义，不强制在 P1 先落 `RolePolicy` / `ResourceACL` 表。等 P2/P3 出现检索、Agent、消息等跨资源权限需求时，再评估是否把策略持久化为独立表。
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P1.B.1 | 新增 `RolePolicy` 表：`scope_type`、`role`、`allowed_actions_json`、`created_at`；内置策略：owner(all)、admin(manage+upload)、member(upload+use)、viewer(read) | 四档策略写入，权限查询返回正确动作列表 | 1d | 未开始 |
-| P1.B.2 | 新增 `ResourceACL` 表：`resource_type`、`resource_id`、`subject_type`(user/role/workspace)、`subject_id`、`permission`(read/write/manage) | ACL 条目可创建/查询/删除 | 1d | 未开始 |
-| P1.B.3 | 权限中间件：所有 workspace 资源 API 先查 ACL → 拒绝或放行 | 无权限返回 403，日志记录访问事件 | 2d | 未开始 |
+| P1.B.1 | 统一 workspace 角色动作映射：抽出 `WorkspaceAccessService` 或同等 helper，替换 router 内 `_MANAGE_ROLES` / `_WRITE_ROLES` / `_READ_ROLES` 等硬编码集合 | owner/admin/member/viewer 四档动作集中定义；workspace API 复用同一判断入口 | 1d | ✅ 已完成：workspace_access.py 集中权限服务 + workspace.py 全部替换为 require_action |
+| P1.B.2 | 审查域权限对齐：`ReviewProject` / `ReviewTask` 访问在 owner 校验外补 workspace active member 校验；成员停用后不能继续通过旧项目 owner 身份访问团队资源 | 成员移除后无法继续访问所属 workspace 的项目和团队资料；旧数据兼容 | 1.5d | ✅ 已完成：create_project + add_project_source_ref 补 is_active_member 检查 + 2 项测试 |
+| P1.B.3 | 统一权限入口：workspace/review 相关 API 复用统一鉴权 helper，并记录 403/越权访问审计日志 | 无权限返回 403；权限逻辑不再散落在多个 router 分支 | 1.5d | ✅ 已完成：workspace_access.py 统一 require_action + review.py _verify_project_owner 统一接入 + 403 审计日志 + legacy 项目回退校验 |
 | P1.B.4 | 旧数据兼容：无 workspace_id 的项目/资料自动归入默认团队空间，owner/admin 由系统管理员承接 | 迁移后旧数据仍可用，权限正确 | 1d | ✅ 已验证完成 |
 
 ### P1.C 权限测试与回归
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P1.C.1 | 自动化测试：默认团队读取/更新、注册用户自动入队、成员角色变更、RolePolicy 查询、ACL 增删查、权限中间件拦截（10+ 条） | pytest 通过 | 2d | 未开始 |
-| P1.C.2 | 回归验证：旧版审查项目/智能对话/管理后台功能不受”团队空间”页面新增影响 | 全量 pytest 通过 | 1d | ⚠️ 部分完成：全量 pytest 通过，但无 P1 专项回归测试 |
+| P1.C.1 | 自动化测试：默认团队读取/更新、注册用户自动入队、成员角色变更/停用、workspace/review 统一权限拦截、停用成员失去团队空间与项目访问（10+ 条） | pytest 通过 | 2d | ✅ 已完成：8 项成员管理 + 2 项审查域 = 10 条权限专项测试 + 5 项前端契约测试 |
+| P1.C.2 | 回归验证：旧版审查项目/智能对话/管理后台功能不受”团队空间”页面新增影响 | 全量 pytest 通过 | 1d | ✅ 已完成：778 全量回归通过 |
 
 ---
 
-## Phase 2：知识库检索与对话 RAG（未开始）
+## Phase 2：知识库检索与对话 RAG（POC-A ✅ 已完成，P2 任务待启动）
 
-> 前置：检索 POC 已通过（见 POC-A）。
+> 前置：检索 POC 已通过（POC-A ✅ 决策结论：FTS5 + LanceDB 混合检索）。
 > 目标：资料可通过 FTS 和向量检索召回，对话和审查可显式引用来源。
 
 ### P2.0 并行开发分组
@@ -544,16 +553,16 @@
 | POC-G2 Agent POC | POC-B.1~POC-B.4 | POC-G0 可复用问题集 | 后端/架构 | 自建受限 ReAct 与 LangGraph 对比，产出 Phase 3 Agent 框架决策 |
 | POC-G3 Embedding POC | POC-C.1~POC-C.3 | POC-G0 + POC-G1 检索脚手架 | 后端 | text-embedding-3-small 与 BGE-M3 对比，产出嵌入模型决策 |
 
-### POC-A 检索 POC
+### POC-A 检索 POC（✅ 已完成 — 决策结论：FTS5 + LanceDB 混合检索）
 
-| ID | 任务 | 验收标准 | 工时估算 |
-| --- | --- | --- | ---: |
-| POC-A.1 | 准备样例集：20 份历史 PRD + 5 份团队规范 + 5 份评审报告 + 30 个真实问题 + 10 个权限用例 | 样例集文件齐全，问题覆盖章节查找/风险定位/术语解释/跨文档对比/无答案 | 2d |
-| POC-A.2 | SQLite FTS5 检索基准：切块 + FTS 索引 + 关键词查询 → 记录 top-5 命中率、延迟、权限过滤 | 基准数据可对比 | 1d |
-| POC-A.3 | LanceDB POC：同样样例集 → 向量嵌入 + LanceDB 查询 → 记录命中率、延迟、备份恢复、runtime 目录兼容 | LanceDB 数据产出 | 2d |
-| POC-A.4 | Milvus Lite POC：同样样例集 → 向量嵌入 + Milvus Lite 查询 → 记录命中率、延迟、中文召回、备份恢复、迁移到 Standalone 路径 | Milvus Lite 数据产出 | 2d |
-| POC-A.5 | Chroma POC：同样样例集 → 向量嵌入 + Chroma 查询 → 记录命中率、延迟、维护体验 | Chroma 数据产出 | 1.5d |
-| POC-A.6 | POC 对比报告：四方案 top-5 命中率、延迟、权限过滤、备份恢复、runtime 兼容、运维复杂度 → 选出 Phase 2 首选和备选 | 报告含决策结论 | 1d |
+| ID | 任务 | 验收标准 | 工时估算 | 状态 |
+| --- | --- | --- | --- | --- |
+| POC-A.1 | 准备样例集：20 份历史 PRD + 5 份团队规范 + 5 份评审报告 + 30 个真实问题 + 10 个权限用例 | 样例集文件齐全，问题覆盖章节查找/风险定位/术语解释/跨文档对比/无答案 | 2d | ✅ 已完成 |
+| POC-A.2 | SQLite FTS5 检索基准：切块 + FTS 索引 + 关键词查询 → 记录 top-5 命中率、延迟、权限过滤 | 基准数据可对比 | 1d | ✅ top-5 56.7%, 0.3ms |
+| POC-A.3 | LanceDB POC：同样样例集 → 向量嵌入 + LanceDB 查询 → 记录命中率、延迟、备份恢复、runtime 目录兼容 | LanceDB 数据产出 | 2d | ✅ top-5 66.7%, 254ms |
+| POC-A.4 | Milvus Lite POC：同样样例集 → 向量嵌入 + Milvus Lite 查询 → 记录命中率、延迟、中文召回、备份恢复、迁移到 Standalone 路径 | Milvus Lite 数据产出 | 2d | ✅ top-5 66.7%, 1582ms（延迟过高淘汰） |
+| POC-A.5 | Chroma POC：同样样例集 → 向量嵌入 + Chroma 查询 → 记录命中率、延迟、维护体验 | Chroma 数据产出 | 1.5d | ✅ top-5 66.7%, 242ms（备选） |
+| POC-A.6 | POC 对比报告：四方案 top-5 命中率、延迟、权限过滤、备份恢复、runtime 兼容、运维复杂度 → 选出 Phase 2 首选和备选 | 报告含决策结论 | 1d | ✅ 首选 LanceDB + FTS5，备选 Chroma |
 
 ### POC-B Agent POC
 

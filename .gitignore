@@ -37,5 +37,5 @@ dist/
 *.egg
 *.whl
 
-# Frontend dependencies (if ever added)
-node_modules/
+# POC-A experiment directory (data/code separation — experimental data not for git)
+poc-a/

@@ -7,7 +7,7 @@
 # 不允许绝对路径、.. 穿越或外部 URL。
 
 app_title: "AI产品需求初审"
-app_version: "0.2.9"
+app_version: "0.2.10"
 login_title: "AI产品需求初审"
 login_subtitle: "AI 驱动的需求审查工作流平台"
 # 登录页提示，留空则使用代码默认提示；需要多行时使用 YAML block string。

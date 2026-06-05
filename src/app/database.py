@@ -159,6 +159,17 @@ async def _ensure_review_schema(conn):
             "ALTER TABLE review_projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
         ))
 
+    # Workspace: add is_default column for stable default workspace identification
+    ws_result = await conn.execute(text("PRAGMA table_info(workspaces)"))
+    ws_columns = {row[1] for row in ws_result.fetchall()}
+    if "is_default" not in ws_columns:
+        await conn.execute(text(
+            "ALTER TABLE workspaces ADD COLUMN is_default BOOLEAN NOT NULL DEFAULT 0"
+        ))
+        await conn.execute(text(
+            "UPDATE workspaces SET is_default = 1 WHERE name = '默认空间'"
+        ))
+
     # KnowledgeSource: add file_id and extracted_text columns
     ks_result = await conn.execute(text("PRAGMA table_info(knowledge_sources)"))
     ks_columns = {row[1] for row in ks_result.fetchall()}
@@ -423,16 +434,28 @@ async def _ensure_default_workspace():
 
     async with async_session() as session:
         result = await session.execute(
-            select(Workspace).where(Workspace.name == "默认空间")
+            select(Workspace).where(Workspace.is_default == True)
         )
         ws = result.scalar_one_or_none()
+
+        # 兼容旧数据：如果按 is_default 找不到，尝试按旧名称查找并标记
         if ws is None:
-            # 找 admin 用户作为默认空间 owner
+            legacy_result = await session.execute(
+                select(Workspace).where(Workspace.name == "默认空间")
+            )
+            ws = legacy_result.scalar_one_or_none()
+            if ws is not None:
+                ws.is_default = True
+                await session.flush()
+                logger.info("[INIT] 旧默认 workspace 已标记 is_default=True")
+
+        if ws is None:
             admin_result = await session.execute(select(User).where(User.role == "admin"))
             admin = admin_result.scalar_one_or_none()
             ws = Workspace(
                 name="默认空间",
                 description="系统默认团队空间，旧项目自动归入此处",
+                is_default=True,
                 created_by=admin.id if admin else None,
                 status="active",
             )

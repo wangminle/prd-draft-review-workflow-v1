@@ -2,6 +2,7 @@
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.models.workspace import Workspace, WorkspaceMember
 
@@ -15,7 +16,7 @@ class WorkspaceRepository:
         return result.scalar_one_or_none()
 
     async def get_default(self) -> Workspace | None:
-        result = await self._db.execute(select(Workspace).where(Workspace.name == "默认空间"))
+        result = await self._db.execute(select(Workspace).where(Workspace.is_default == True))
         return result.scalar_one_or_none()
 
     async def list_all(self) -> list[Workspace]:
@@ -24,8 +25,8 @@ class WorkspaceRepository:
         )
         return list(result.scalars().all())
 
-    async def create(self, name: str, description: str | None = None, created_by: int | None = None) -> Workspace:
-        ws = Workspace(name=name, description=description, created_by=created_by, status="active")
+    async def create(self, name: str, description: str | None = None, created_by: int | None = None, is_default: bool = False) -> Workspace:
+        ws = Workspace(name=name, description=description, is_default=is_default, created_by=created_by, status="active")
         self._db.add(ws)
         await self._db.flush()
         await self._db.refresh(ws)
@@ -56,17 +57,39 @@ class WorkspaceRepository:
         )
         return result.scalar_one_or_none()
 
-    async def list_members(self, workspace_id: int) -> list[WorkspaceMember]:
+    async def get_member_any_status(self, workspace_id: int, user_id: int) -> WorkspaceMember | None:
         result = await self._db.execute(
             select(WorkspaceMember).where(
                 WorkspaceMember.workspace_id == workspace_id,
+                WorkspaceMember.user_id == user_id,
+            ).limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def list_members(self, workspace_id: int) -> list[WorkspaceMember]:
+        result = await self._db.execute(
+            select(WorkspaceMember)
+            .where(
+                WorkspaceMember.workspace_id == workspace_id,
                 WorkspaceMember.status == "active",
-            ).order_by(WorkspaceMember.id)
+            )
+            .options(selectinload(WorkspaceMember.user))
+            .order_by(WorkspaceMember.id)
+        )
+        return list(result.scalars().all())
+
+    async def list_members_all(self, workspace_id: int) -> list[WorkspaceMember]:
+        """返回所有状态的成员（含 inactive），用于成员管理页面。"""
+        result = await self._db.execute(
+            select(WorkspaceMember)
+            .where(WorkspaceMember.workspace_id == workspace_id)
+            .options(selectinload(WorkspaceMember.user))
+            .order_by(WorkspaceMember.id)
         )
         return list(result.scalars().all())
 
     async def update_member_role(self, workspace_id: int, user_id: int, role: str) -> WorkspaceMember | None:
-        member = await self.get_member(workspace_id, user_id)
+        member = await self.get_member_any_status(workspace_id, user_id)
         if member is None:
             return None
         member.role = role

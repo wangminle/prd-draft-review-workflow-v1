@@ -298,6 +298,22 @@ async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int)
     project = await repo.get_project_with_owner_check(project_id, user_id)
     if project is None:
         raise HTTPException(status_code=404, detail="项目不存在或无权访问")
+
+    # P1.B.2: workspace active member 校验 — 停用成员不可访问项目资源
+    # legacy 项目（workspace_id=None）回退到默认 workspace 校验
+    from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.workspace_access import require_action
+    ws_repo = WorkspaceRepository(db)
+    workspace_id = project.workspace_id
+    if workspace_id is None:
+        default_ws = await ws_repo.get_default()
+        if default_ws is None:
+            raise HTTPException(status_code=403, detail="项目未关联团队空间，无法校验权限")
+        workspace_id = default_ws.id
+
+    member = await ws_repo.get_member(workspace_id, user_id)
+    require_action(member, "read", "访问项目")
+
     return project
 
 
@@ -315,10 +331,26 @@ async def _verify_review_task_owner(db: AsyncSession, project_id: int, review_id
 
 @router.get("/projects", response_model=list[ProjectInfo])
 async def list_projects(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    # P1.B.2: 构建用户活跃 workspace ID 集合，过滤项目可见性
+    from app.repositories.workspace_repository import WorkspaceRepository
+    ws_repo = WorkspaceRepository(db)
+    user_workspaces = await ws_repo.get_user_workspaces(user.id)
+    active_ws_ids = {ws.id for ws in user_workspaces}
+
+    # legacy 项目（workspace_id=None）归入默认 workspace 可见性
+    default_ws = await ws_repo.get_default()
+    legacy_visible = default_ws is not None and default_ws.id in active_ws_ids
+
     result = await db.execute(select(ReviewProject).where(ReviewProject.created_by == user.id).order_by(ReviewProject.updated_at.desc()))
     projects = result.scalars().all()
     out = []
     for p in projects:
+        # workspace_id 非空且用户不在活跃集合中 → 跳过
+        if p.workspace_id is not None and p.workspace_id not in active_ws_ids:
+            continue
+        # workspace_id 为空（legacy）且用户不在默认 workspace → 跳过
+        if p.workspace_id is None and not legacy_visible:
+            continue
         dc = await db.execute(select(func.count()).where(ReviewDocument.project_id == p.id))
         doc_count = dc.scalar() or 0
         rc = await db.execute(
@@ -337,10 +369,18 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
 @router.post("/projects", response_model=ProjectInfo)
 async def create_project(req: ProjectCreate, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.workspace_access import is_active_member
     ws_repo = WorkspaceRepository(db)
     # 单团队部署：取用户所属的第一个 workspace 作为项目归属
     user_workspaces = await ws_repo.get_user_workspaces(user.id)
-    workspace_id = user_workspaces[0].id if user_workspaces else None
+    if not user_workspaces:
+        raise HTTPException(status_code=403, detail="你不是任何团队空间的活跃成员，无法创建项目")
+    workspace_id = user_workspaces[0].id
+
+    # P1.B.2: 校验用户是 workspace 的活跃成员
+    member = await ws_repo.get_member(workspace_id, user.id)
+    if not is_active_member(member):
+        raise HTTPException(status_code=403, detail="你的成员状态不允许创建项目")
 
     repo = ReviewProjectRepository(db)
     p = await repo.create_project(name=req.name, description=req.description, created_by=user.id, workspace_id=workspace_id)
@@ -463,8 +503,9 @@ async def add_project_source_ref(
 
     ws_repo = WorkspaceRepository(db)
     member = await ws_repo.get_member(source.workspace_id, user.id)
-    if member is None or member.role not in ("owner", "admin", "member", "viewer"):
-        raise HTTPException(status_code=403, detail="你没有该资料的查看权限")
+    from app.services.workspace_access import is_active_member
+    if not is_active_member(member):
+        raise HTTPException(status_code=403, detail="你没有该资料的查看权限或成员状态不活跃")
 
     ref_repo = ProjectSourceRefRepository(db)
     ref = await ref_repo.add_ref(

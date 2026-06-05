@@ -141,8 +141,8 @@ WHITELIST = {
     },
     "workspace.py": {
         "db_add": 0,
-        "db_commit": 3,   # delete source + update tags + upload source
-        "db_flush": 0,
+        "db_commit": 5,   # delete source + update tags + upload source + update default workspace + update member
+        "db_flush": 1,   # update member status
         "builtin_open": 0,
         "os_makedirs": 0,
         "os_remove": 0,

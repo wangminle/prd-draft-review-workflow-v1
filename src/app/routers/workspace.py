@@ -4,6 +4,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -11,6 +12,7 @@ from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.repositories.knowledge_source_repository import KnowledgeSourceRepository
 from app.repositories.workspace_repository import WorkspaceRepository
+from app.services.workspace_access import require_action
 from app.storage.knowledge_file_storage import KnowledgeFileStorage
 from app.log_writers.audit_log_writer import AuditLogWriter
 
@@ -19,18 +21,6 @@ _audit_log_writer = AuditLogWriter()
 _knowledge_storage = KnowledgeFileStorage()
 
 logger = logging.getLogger(__name__)
-
-_MANAGE_ROLES = {"owner", "admin"}
-_WRITE_ROLES = {"owner", "admin", "member"}
-_READ_ROLES = {"owner", "admin", "member", "viewer"}
-
-
-def _require_role(member, allowed_roles: set[str], action: str):
-    """检查成员角色是否在允许范围内，否则抛出 403。"""
-    if member is None:
-        raise HTTPException(403, "你不是该空间的成员")
-    if member.role not in allowed_roles:
-        raise HTTPException(403, f"你的角色({member.role})不允许执行{action}操作")
 
 
 def _source_to_info(source):
@@ -70,11 +60,173 @@ async def list_workspaces(
             "id": ws.id,
             "name": ws.name,
             "description": ws.description,
+            "is_default": ws.is_default,
             "status": ws.status,
             "created_at": ws.created_at.isoformat() if ws.created_at else None,
         }
         for ws in workspaces
     ]
+
+
+@router.get("/workspace/default")
+async def get_default_workspace(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    repo = WorkspaceRepository(db)
+    ws = await repo.get_default()
+    if ws is None:
+        raise HTTPException(404, "默认团队空间不存在")
+    member = await repo.get_member(ws.id, user.id)
+    require_action(member, "read", "查看团队空间")
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "description": ws.description,
+        "is_default": ws.is_default,
+        "status": ws.status,
+        "created_at": ws.created_at.isoformat() if ws.created_at else None,
+    }
+
+
+@router.put("/workspace/default")
+async def update_default_workspace(
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    repo = WorkspaceRepository(db)
+    ws = await repo.get_default()
+    if ws is None:
+        raise HTTPException(404, "默认团队空间不存在")
+    member = await repo.get_member(ws.id, user.id)
+    require_action(member, "manage", "更新团队空间")
+
+    new_name = body.get("name")
+    new_description = body.get("description")
+    new_status = body.get("status")
+    if new_name is not None:
+        if not isinstance(new_name, str) or not new_name.strip():
+            raise HTTPException(422, "团队名称不能为空")
+        ws.name = new_name.strip()
+    if new_description is not None:
+        ws.description = new_description
+    if new_status is not None:
+        valid_statuses = ("active", "archived")
+        if new_status not in valid_statuses:
+            raise HTTPException(422, f"无效状态，允许值: {', '.join(valid_statuses)}")
+        ws.status = new_status
+
+    await db.commit()
+
+    _audit_log_writer.write(
+        "workspace.update",
+        actor=user,
+        request=request,
+        target_type="workspace",
+        target_id=ws.id,
+        detail={"name": ws.name, "description": ws.description, "status": ws.status},
+    )
+    return {
+        "id": ws.id,
+        "name": ws.name,
+        "description": ws.description,
+        "is_default": ws.is_default,
+        "status": ws.status,
+    }
+
+
+@router.get("/workspace/default/members")
+async def list_default_members(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """P1.A.2: 获取默认团队空间成员列表（含 inactive，管理员可恢复）"""
+    repo = WorkspaceRepository(db)
+    ws = await repo.get_default()
+    if ws is None:
+        raise HTTPException(404, "默认团队空间不存在")
+
+    member = await repo.get_member(ws.id, user.id)
+    require_action(member, "read", "查看成员")
+
+    members = await repo.list_members_all(ws.id)
+    return [
+        {
+            "id": m.id,
+            "user_id": m.user_id,
+            "username": m.user.username if m.user else "",
+            "role": m.role,
+            "status": m.status,
+        }
+        for m in members
+    ]
+
+
+@router.put("/workspace/default/members/{user_id}")
+async def update_default_member(
+    user_id: int,
+    body: dict,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P1.A.2: 变更成员角色或停用/恢复成员"""
+    repo = WorkspaceRepository(db)
+    ws = await repo.get_default()
+    if ws is None:
+        raise HTTPException(404, "默认团队空间不存在")
+
+    caller = await repo.get_member(ws.id, user.id)
+    require_action(caller, "manage", "管理成员")
+
+    # 禁止变更自身角色/状态
+    if user_id == user.id:
+        raise HTTPException(403, "不能变更自身的角色或状态")
+
+    target = await repo.get_member_any_status(ws.id, user_id)
+    if target is None:
+        raise HTTPException(404, "该用户不是团队成员")
+
+    new_role = body.get("role")
+    new_status = body.get("status")
+
+    if new_role is not None:
+        valid_roles = ("owner", "admin", "member", "viewer")
+        if new_role not in valid_roles:
+            raise HTTPException(422, f"无效角色，允许值: {', '.join(valid_roles)}")
+        target = await repo.update_member_role(ws.id, user_id, new_role)
+
+    if new_status is not None:
+        valid_statuses = ("active", "inactive")
+        if new_status not in valid_statuses:
+            raise HTTPException(422, f"无效状态，允许值: {', '.join(valid_statuses)}")
+        target.status = new_status
+        await db.flush()
+
+    await db.commit()
+
+    # Refresh target to get latest state; fetch user separately for username
+    await db.refresh(target)
+    target_user = await db.execute(select(User).where(User.id == target.user_id))
+    target_user_obj = target_user.scalar_one_or_none()
+
+    _audit_log_writer.write(
+        "workspace.update_member",
+        actor=user,
+        request=request,
+        target_type="workspace_member",
+        target_id=user_id,
+        detail={"role": target.role, "status": target.status, "user_id": user_id},
+    )
+    return {
+        "id": target.id,
+        "user_id": target.user_id,
+        "username": target_user_obj.username if target_user_obj else "",
+        "role": target.role,
+        "status": target.status,
+    }
 
 
 @router.get("/workspace/{workspace_id}/members")
@@ -89,7 +241,7 @@ async def list_members(
         raise HTTPException(404, "空间不存在")
 
     member = await repo.get_member(workspace_id, user.id)
-    _require_role(member, _READ_ROLES, "查看成员")
+    require_action(member, "read", "查看成员")
 
     members = await repo.list_members(workspace_id)
     result = []
@@ -122,7 +274,7 @@ async def list_sources(
         raise HTTPException(404, "空间不存在")
 
     member = await repo.get_member(workspace_id, user.id)
-    _require_role(member, _READ_ROLES, "查看资料")
+    require_action(member, "read", "查看资料")
 
     ks_repo = KnowledgeSourceRepository(db)
     sources = await ks_repo.list_by_workspace(workspace_id, source_type=source_type, status=status, tag=tag, offset=offset, limit=limit)
@@ -143,7 +295,7 @@ async def delete_source(
         raise HTTPException(404, "空间不存在")
 
     member = await ws_repo.get_member(workspace_id, user.id)
-    _require_role(member, _MANAGE_ROLES, "删除资料")
+    require_action(member, "manage", "删除资料")
 
     ks_repo = KnowledgeSourceRepository(db)
     source = await ks_repo.get_by_id(source_id)
@@ -181,7 +333,7 @@ async def update_source_tags(
         raise HTTPException(404, "空间不存在")
 
     member = await ws_repo.get_member(workspace_id, user.id)
-    _require_role(member, _MANAGE_ROLES, "修改标签")
+    require_action(member, "manage", "修改标签")
 
     ks_repo = KnowledgeSourceRepository(db)
     source = await ks_repo.get_by_id(source_id)
@@ -229,7 +381,7 @@ async def upload_source(
         raise HTTPException(404, "空间不存在")
 
     member = await ws_repo.get_member(workspace_id, user.id)
-    _require_role(member, _WRITE_ROLES, "上传资料")
+    require_action(member, "write", "上传资料")
 
     content = await file.read()
     max_size = 20 * 1024 * 1024
@@ -279,7 +431,7 @@ async def get_source_detail(
         raise HTTPException(404, "空间不存在")
 
     member = await ws_repo.get_member(workspace_id, user.id)
-    _require_role(member, _READ_ROLES, "查看资料详情")
+    require_action(member, "read", "查看资料详情")
 
     ks_repo = KnowledgeSourceRepository(db)
     source = await ks_repo.get_by_id(source_id)
@@ -313,7 +465,7 @@ async def download_source_file(
         raise HTTPException(404, "空间不存在")
 
     member = await ws_repo.get_member(workspace_id, user.id)
-    _require_role(member, _READ_ROLES, "下载资料")
+    require_action(member, "read", "下载资料")
 
     ks_repo = KnowledgeSourceRepository(db)
     source = await ks_repo.get_by_id(source_id)

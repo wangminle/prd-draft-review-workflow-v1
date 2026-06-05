@@ -4859,10 +4859,37 @@ input::placeholder, textarea::placeholder {
     font-size: var(--fs-14);
 }
 
+.ws-members-table {
+    font-size: var(--fs-14);
+}
+
+.ws-role-select {
+    padding: var(--sp-05) var(--sp-2);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: var(--fs-12);
+    background: var(--color-bg);
+    cursor: pointer;
+}
+
+.ws-role-select:focus {
+    outline: 2px solid var(--color-brand);
+    outline-offset: -1px;
+}
+
+.ws-status-active {
+    background: var(--green-1);
+    color: var(--green-6);
+}
+
+.ws-status-inactive {
+    background: var(--gray-1);
+    color: var(--gray-5);
+}
+
 .ws-member-username {
     font-weight: var(--fw-medium);
     color: var(--color-text);
-    flex: 1;
 }
 
 .ws-member-role {

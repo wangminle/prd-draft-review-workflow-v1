@@ -70,7 +70,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.2.9"}
+        return {"status": "ok", "version": "0.2.10"}
 
     return app, engine, TestSessionLocal
 
@@ -150,15 +150,22 @@ async def init_test_db(engine, session_maker):
 
     # Seed default workspace + admin as owner (mirrors _ensure_default_workspace in database.py)
     from app.models.workspace import Workspace, WorkspaceMember
-    result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
-    if result.scalar_one_or_none() is None:
-        admin_result = await session.execute(select(User).where(User.role == "admin"))
-        admin = admin_result.scalar_one_or_none()
-        ws = Workspace(name="默认空间", description="系统默认团队空间", created_by=admin.id if admin else None, status="active")
-        session.add(ws)
-        await session.flush()
-        if admin:
-            session.add(WorkspaceMember(workspace_id=ws.id, user_id=admin.id, role="owner", status="active"))
+    result = await session.execute(select(Workspace).where(Workspace.is_default == True))
+    ws = result.scalar_one_or_none()
+    if ws is None:
+        # Fallback: check legacy name-based default
+        legacy_result = await session.execute(select(Workspace).where(Workspace.name == "默认空间"))
+        ws = legacy_result.scalar_one_or_none()
+        if ws is not None:
+            ws.is_default = True
+        else:
+            admin_result = await session.execute(select(User).where(User.role == "admin"))
+            admin = admin_result.scalar_one_or_none()
+            ws = Workspace(name="默认空间", description="系统默认团队空间", is_default=True, created_by=admin.id if admin else None, status="active")
+            session.add(ws)
+            await session.flush()
+            if admin:
+                session.add(WorkspaceMember(workspace_id=ws.id, user_id=admin.id, role="owner", status="active"))
         await session.commit()
 
     await engine.dispose()

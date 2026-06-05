@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.2.9。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.2.10。
 
 ### 架构设计
 
@@ -61,7 +61,7 @@ flowchart LR
 ### 功能要点
 
 - 项目化评审：按项目管理需求文档、上下文版本、评审任务和报告输出。
-- 团队空间与资料库：支持团队共享资料上传、列表、详情、下载和软删除；项目可引用团队资料并自动冻结版本快照；四级角色权限（owner/admin/member/viewer）控制资料管理、上传和查看。
+- 团队空间与资料库：支持团队共享资料上传、列表、详情、下载和软删除；项目可引用团队资料并自动冻结版本快照；四级角色权限（owner/admin/member/viewer）控制资料管理、上传和查看；停用成员自动阻断项目访问和资料引用；统一权限入口（require_action + is_active_member）覆盖全部 workspace 和 review 域操作。
 - OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
 - 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。版本号通过 `app_version` 字段配置。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
@@ -134,7 +134,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.2.9.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.2.10.
 
 ### Architecture
 
@@ -185,7 +185,7 @@ Supported review modes:
 ### Feature Highlights
 
 - Project-centric review management for documents, context versions, tasks, and reports.
-- Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access.
+- Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access; inactive members automatically blocked from project access and source referencing; unified permission entry point (require_action + is_active_member) covering all workspace and review-domain operations.
 - OpenAI-compatible multi-model integration with encrypted API key storage and configurable thinking settings.
 - Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
