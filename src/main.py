@@ -67,7 +67,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.2.10",
+    version="0.2.11",
     lifespan=lifespan,
 )
 
@@ -85,7 +85,7 @@ app.include_router(workspace.router, prefix="/api", tags=["团队空间"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.2.10"}
+    return {"status": "ok", "version": "0.2.11"}
 
 
 @app.get("/api/app/branding")

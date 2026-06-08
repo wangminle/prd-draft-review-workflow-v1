@@ -14,10 +14,14 @@ const Chat = {
     _contextRules: [],   // 手动规则文本列表
     _contextBound: false,
     _mentionState: null,
+    _knowledgeEnabled: false,     // P2.C.1: 知识库引用是否开启
+    _knowledgeWorkspaceId: null,  // P2.C.1: 当前 workspace ID（缓存）
+    _pendingCitations: [],        // P2.C.3: 当前消息的引用结果列表
 
     async init() {
         await this.loadModels();
         await this.loadPrompts();
+        await this._loadKnowledgeWorkspace();
         await this.loadConversations();
         if (!this._bound) {
             if (this._abortCtrl) this._abortCtrl.abort();
@@ -87,6 +91,33 @@ const Chat = {
         const thinkingSel = document.getElementById('thinking-level-select');
         if (!thinkingSel || thinkingSel.style.display === 'none') return undefined;
         return thinkingSel.value;
+    },
+
+    async _loadKnowledgeWorkspace() {
+        try {
+            const ws = await API.getDefaultWorkspace();
+            if (ws && ws.id) {
+                this._knowledgeWorkspaceId = ws.id;
+            }
+        } catch (e) {
+            console.warn('加载知识库 workspace 失败:', e);
+        }
+    },
+
+    _toggleKnowledge() {
+        if (!this._knowledgeWorkspaceId) {
+            App._showToast('团队空间尚未初始化，无法使用引用资料');
+            return;
+        }
+        this._knowledgeEnabled = !this._knowledgeEnabled;
+        const btn = document.getElementById('knowledge-btn');
+        btn.dataset.active = String(this._knowledgeEnabled);
+        const statusEl = document.getElementById('input-status');
+        const attachCount = this._files.length + this._urls.length;
+        const parts = [];
+        if (attachCount) parts.push(`${attachCount} 个附件`);
+        if (this._knowledgeEnabled) parts.push('引用资料: 开');
+        statusEl.textContent = parts.join(' · ');
     },
 
     async loadPrompts() {
@@ -235,6 +266,20 @@ const Chat = {
         const contentEl = assistantEl.querySelector('.msg-text');
         contentEl.innerHTML = '<span class="typing-dots">思考中...</span>';
 
+        // P2.C.1: 知识库检索 — 流开始前获取引用列表
+        this._pendingCitations = [];
+        if (this._knowledgeEnabled && this._knowledgeWorkspaceId) {
+            try {
+                const retrieveResult = await API.retrieveKnowledge(
+                    this._knowledgeWorkspaceId, text, 5
+                );
+                this._pendingCitations = (retrieveResult.results || [])
+                    .filter(r => !r.rejected);
+            } catch (e) {
+                console.warn('知识库检索失败:', e);
+            }
+        }
+
         try {
             if (this._streamCtrl) this._streamCtrl.abort();
             this._streamCtrl = new AbortController();
@@ -249,22 +294,27 @@ const Chat = {
                 context_rules: contextRules.length ? contextRules : undefined,
                 mention_context_item_ids: mentionContextItemIds.length ? mentionContextItemIds : undefined,
                 thinking_level: this._getThinkingLevel(),
+                enable_knowledge: this._knowledgeEnabled,
+                knowledge_workspace_id: this._knowledgeEnabled ? this._knowledgeWorkspaceId : undefined,
             });
 
             let fullText = '';
             let reasoningText = '';
             let hadError = false;
             const decoder = new TextDecoder();
+            let sseBuffer = '';
             const signal = this._streamCtrl.signal;
 
             while (!signal.aborted) {
                 const { done, value } = await reader.read();
                 if (done) break;
 
-                const chunk = decoder.decode(value, { stream: true });
-                const lines = chunk.split('\n');
+                sseBuffer += decoder.decode(value, { stream: true });
+                const lines = sseBuffer.split('\n');
+                sseBuffer = lines.pop() || '';
 
-                for (const line of lines) {
+                for (const rawLine of lines) {
+                    const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
                     if (!line.startsWith('data: ')) continue;
                     const dataStr = line.slice(6);
                     if (dataStr === '[DONE]') continue;
@@ -329,6 +379,20 @@ const Chat = {
                 contentEl.appendChild(rEl);
             } else if (fullText) {
                 this._renderMermaidOnStreamEnd(contentEl);
+                // P2.C.3/P2.C.4: 流结束后附加引用卡片和知识标签
+                if (this._knowledgeEnabled) {
+                    const bubbleEl = contentEl.closest('.msg-bubble');
+                    if (bubbleEl) {
+                        const tag = document.createElement('div');
+                        tag.className = 'msg-knowledge-tag';
+                        tag.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>引用资料辅助回答';
+                        bubbleEl.insertBefore(tag, contentEl);
+                    }
+                }
+                if (this._pendingCitations.length) {
+                    this._appendCitationCard(contentEl, this._pendingCitations);
+                    this._pendingCitations = [];
+                }
             }
 
         } catch (e) {
@@ -387,6 +451,9 @@ const Chat = {
     },
 
     _renderMarkdownWithLibraries(text) {
+        // P2.C.4: 标注知识库引用段落（仅在有 pending citations 时生效）
+        text = this._annotateKnowledgeParagraphs(text);
+
         const renderer = new window.marked.Renderer();
         renderer.code = (code, infostring) => {
             const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
@@ -567,6 +634,73 @@ const Chat = {
             .replace(/'/g, '&#39;')
             .replace(/</g, '&lt;')
             .replace(/>/g, '&gt;');
+    },
+
+    /* ── P2.C.4: 知识库引用段落标注 ── */
+
+    _annotateKnowledgeParagraphs(text) {
+        if (!text) return text;
+        if (!this._pendingCitations.length) return text;
+
+        // 替换内联引用标记 [来源ID:x] → 可点击 span
+        text = text.replace(/\[来源ID:\s*(\d+)\]/g, (match, sourceId) => {
+            return `<span class="chat-citation-inline" data-source-id="${sourceId}">[来源 #${sourceId}]</span>`;
+        });
+
+        // 将包含引用标记的段落标注为 knowledge-based，不含的标注为 model-inference
+        const paragraphs = text.split(/\n\n+/);
+        const annotated = paragraphs.map(p => {
+            if (p.includes('chat-citation-inline') || p.includes('知识库检索结果')) {
+                return `<div class="chat-knowledge-based">${p}</div>`;
+            }
+            return `<div class="chat-model-inference">${p}</div>`;
+        });
+        return annotated.join('\n\n');
+    },
+
+    /* ── P2.C.3: 引用卡片 ── */
+
+    _appendCitationCard(contentEl, citations) {
+        const cardEl = document.createElement('div');
+        cardEl.className = 'chat-citation-card';
+        cardEl.innerHTML = `<div class="chat-citation-header">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+            <span>引用资料 (${citations.length})</span>
+        </div><div class="chat-citation-list">
+            ${citations.map(c => `<div class="chat-citation-item" data-source-id="${c.source_id}">
+                <span class="chat-citation-source">来源 #${c.source_id}</span>
+                ${c.section ? `<span class="chat-citation-section">章节: ${this._esc(c.section)}</span>` : ''}
+                <span class="chat-citation-confidence chat-citation-confidence-${c.confidence}">${c.confidence === 'high' ? '高置信' : c.confidence === 'medium' ? '中置信' : '低置信'}</span>
+            </div>`).join('')}
+        </div>`;
+        contentEl.appendChild(cardEl);
+
+        // 异步补充 source title
+        this._fillCitationTitles(cardEl, citations);
+    },
+
+    async _fillCitationTitles(cardEl, citations) {
+        const wsId = this._knowledgeWorkspaceId;
+        if (!wsId) return;
+        try {
+            const sources = await API.getWorkspaceSources(wsId);
+            const sourceMap = {};
+            (sources || []).forEach(s => { sourceMap[s.id] = s; });
+            cardEl.querySelectorAll('.chat-citation-item').forEach(item => {
+                const sourceId = parseInt(item.dataset.sourceId, 10);
+                const source = sourceMap[sourceId];
+                if (source) {
+                    const sourceEl = item.querySelector('.chat-citation-source');
+                    sourceEl.textContent = this._esc(source.title || source.filename || `来源 #${sourceId}`);
+                    sourceEl.title = this._esc(source.filename || '');
+                    sourceEl.classList.add('chat-citation-link');
+                    sourceEl.dataset.sourceId = String(sourceId);
+                    sourceEl.dataset.workspaceId = String(wsId);
+                }
+            });
+        } catch (e) {
+            console.warn('获取 source title 失败:', e);
+        }
     },
 
     _updateSendBtn() {
@@ -834,9 +968,25 @@ const Chat = {
             this.showUrlInputModal();
         }, { signal });
 
+        // P2.C.1: Knowledge toggle button
+        document.getElementById('knowledge-btn').addEventListener('click', () => this._toggleKnowledge(), { signal });
+
         // Search
         document.getElementById('conv-search').addEventListener('input', (e) => {
             this._searchConversations(e.target.value);
+        }, { signal });
+
+        // P2.C.3: Citation link click — delegate from chat-messages
+        document.getElementById('chat-messages').addEventListener('click', (e) => {
+            const link = e.target.closest('.chat-citation-link');
+            if (link) {
+                const wsId = link.dataset.workspaceId;
+                const sourceId = link.dataset.sourceId;
+                if (typeof App !== 'undefined') {
+                    App._pendingSourceDetail = { wsId, sourceId };
+                    App._navigateTo('workspace');
+                }
+            }
         }, { signal });
     },
 

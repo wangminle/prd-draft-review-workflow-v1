@@ -65,6 +65,7 @@ class KnowledgeSource(Base):
     workspace = relationship("Workspace", back_populates="sources")
     owner = relationship("User")
     project_refs = relationship("ProjectSourceRef", back_populates="source", cascade="all, delete-orphan")
+    documents = relationship("KnowledgeDocument", back_populates="source", cascade="all, delete-orphan")
 
 
 class ProjectSourceRef(Base):

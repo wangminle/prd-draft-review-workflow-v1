@@ -1,9 +1,10 @@
-"""Workspace 资料库 API — P0.B 资料上传与管理"""
+"""Workspace 资料库 API — P0.B 资料上传与管理 + P2.B 检索 API"""
 
 import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -306,6 +307,15 @@ async def delete_source(
     if result is None:
         raise HTTPException(404, "资料不存在")
 
+    # 归档资料后必须同步移除检索索引，避免已删除资料继续被 RAG 召回。
+    try:
+        from app.services.knowledge_vector_service import get_knowledge_vector_service
+        from app.services.knowledge_ingestion import KnowledgeIngestionService
+        await get_knowledge_vector_service().delete_by_source(source_id)
+        await KnowledgeIngestionService(db)._cleanup_fts_entries(source_id)
+    except Exception as e:
+        logger.warning(f"[SOURCE] 清理资料检索索引失败 source_id={source_id}: {e}")
+
     await db.commit()
     _audit_log_writer.write(
         "source.delete",
@@ -343,6 +353,11 @@ async def update_source_tags(
     tags = body.get("tags", [])
     if not isinstance(tags, list):
         raise HTTPException(status_code=422, detail="tags 必须是字符串数组")
+    if len(tags) > 20:
+        raise HTTPException(status_code=422, detail="标签数量不能超过 20 个")
+    for tag in tags:
+        if not isinstance(tag, str):
+            raise HTTPException(status_code=422, detail="每个标签必须是字符串")
 
     meta = {}
     if source.metadata_json:
@@ -402,6 +417,18 @@ async def upload_source(
         extracted_text=stored.extracted_text,
         owner_id=user.id,
     )
+
+    # P2.A.3: 上传后同步完成解析正文的切块与 FTS5 索引；向量索引可由后续 embedding 流程补齐。
+    if stored.extracted_text and stored.extracted_text.strip():
+        try:
+            from app.services.knowledge_ingestion import KnowledgeIngestionService
+            await KnowledgeIngestionService(db).ingest_source(source.id)
+        except Exception as e:
+            logger.error(f"[INGEST] 上传后自动入库失败 source_id={source.id}: {e}")
+            source.status = "failed"
+            await db.commit()
+            raise HTTPException(500, "资料上传成功但入库失败，请稍后重试")
+
     await db.commit()
 
     _audit_log_writer.write(
@@ -480,8 +507,139 @@ async def download_source_file(
         raise HTTPException(404, "文件不存在或已被删除")
 
     from fastapi.responses import Response
+    # RFC 6266 安全编码文件名，防止 HTTP header 注入
+    safe_filename = (source.filename or source.file_id).replace('"', '_').replace('\r', '').replace('\n', '')
     return Response(
         content=content,
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f"attachment; filename={source.filename or source.file_id}"},
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
     )
+
+
+# ---------- P2: 检索 API ----------
+
+
+class RetrieveRequest(BaseModel):
+    """P2.B.4 检索请求。"""
+    query: str = Field(..., min_length=1, max_length=1000, description="检索查询文本")
+    top_k: int = Field(default=5, ge=1, le=20, description="返回条数")
+    filters: dict | None = Field(default=None, description="附加过滤条件")
+
+
+@router.post("/workspace/{workspace_id}/retrieve")
+async def retrieve_knowledge(
+    workspace_id: int,
+    body: RetrieveRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P2.B.4: 检索知识库 — 向量检索 + FTS5 降级 + 拒答策略"""
+    ws_repo = WorkspaceRepository(db)
+    ws = await ws_repo.get_by_id(workspace_id)
+    if ws is None:
+        raise HTTPException(404, "空间不存在")
+
+    member = await ws_repo.get_member(workspace_id, user.id)
+    require_action(member, "read", "检索知识库")
+
+    from app.services.retrieval_service import RetrievalService
+    try:
+        retrieval = RetrievalService()
+        response = await retrieval.retrieve(
+            query=body.query,
+            workspace_id=workspace_id,
+            filters=body.filters,
+            top_k=body.top_k,
+        )
+    except Exception as e:
+        logger.error(f"[RETRIEVE] 检索失败: {e}")
+        raise HTTPException(500, "检索服务暂时不可用")
+
+    # 写入检索日志
+    from app.models.knowledge import RetrievalLog
+    log = RetrievalLog(
+        query=body.query,
+        workspace_id=workspace_id,
+        filters_json=json.dumps(body.filters, ensure_ascii=False) if body.filters else None,
+        hit_count=response.total,
+        selected_chunks=json.dumps(
+            [r.chunk_id for r in response.results], ensure_ascii=False
+        ) if response.results else None,
+        latency_ms=response.latency_ms,
+        fallback_reason=response.fallback_reason,
+        user_id=user.id,
+    )
+    db.add(log)
+    await db.commit()
+
+    return {
+        "query": response.query,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "source_id": r.source_id,
+                "section": r.section,
+                "text_snippet": r.text_snippet,
+                "distance": r._distance,
+                "confidence": r.confidence,
+                "rejected": r.rejected,
+            }
+            for r in response.results
+        ],
+        "total": response.total,
+        "latency_ms": response.latency_ms,
+        "fallback_reason": response.fallback_reason,
+    }
+
+
+@router.post("/workspace/{workspace_id}/sources/{source_id}/ingest")
+async def ingest_source(
+    workspace_id: int,
+    source_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P2.A.3: 触发资料入库流程 — 解析→切块→FTS 索引→标记 pending embedding"""
+    ws_repo = WorkspaceRepository(db)
+    ws = await ws_repo.get_by_id(workspace_id)
+    if ws is None:
+        raise HTTPException(404, "空间不存在")
+
+    member = await ws_repo.get_member(workspace_id, user.id)
+    require_action(member, "write", "触发资料入库")
+
+    ks_repo = KnowledgeSourceRepository(db)
+    source = await ks_repo.get_by_id(source_id)
+    if source is None or source.workspace_id != workspace_id:
+        raise HTTPException(404, "资料不存在")
+
+    from app.services.knowledge_ingestion import KnowledgeIngestionService
+    try:
+        ingestion = KnowledgeIngestionService(db)
+        doc = await ingestion.ingest_source(source_id)
+    except Exception as e:
+        logger.error(f"[INGEST] 入库失败 source_id={source_id}: {e}")
+        raise HTTPException(500, "资料入库失败，请稍后重试")
+
+    if doc is None:
+        raise HTTPException(422, "资料无正文或入库失败")
+
+    await db.commit()
+
+    _audit_log_writer.write(
+        "source.ingest",
+        actor=user,
+        request=request,
+        target_type="knowledge_source",
+        target_id=source_id,
+        detail={"source_id": source_id, "doc_id": doc.id, "content_hash": doc.content_hash},
+    )
+
+    return {
+        "message": "入库完成，FTS 索引已建立，embedding 待处理",
+        "doc_id": doc.id,
+        "content_hash": doc.content_hash,
+        "version": doc.version,
+    }

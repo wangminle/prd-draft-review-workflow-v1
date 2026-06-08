@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HTML = (ROOT / "src/static/index.html").read_text(encoding="utf-8")
 CHAT_JS = (ROOT / "src/static/js/chat.js").read_text(encoding="utf-8")
 CSS = (ROOT / "src/static/css/main.css").read_text(encoding="utf-8")
+API_JS = (ROOT / "src/static/js/api.js").read_text(encoding="utf-8")
 
 
 def test_chat_events_are_bound_once():
@@ -79,6 +80,16 @@ def test_chat_sse_error_is_not_overwritten_by_empty_reply_fallback():
     assert "if (!fullText && !reasoningText && !hadError)" in send_message_block
     assert "contentEl.innerHTML = '<span class=\"msg-error\">未收到回复</span>';" in send_message_block
     assert "if (!fullText && reasoningText)" in send_message_block
+
+
+def test_chat_sse_parser_buffers_partial_lines():
+    """SSE JSON 跨网络 chunk 分片时不能丢弃半行。"""
+    send_message_block = CHAT_JS.split("async sendMessage()", 1)[1].split("_normalizeHistoryMessages(messages)", 1)[0]
+    assert "let sseBuffer = '';" in send_message_block
+    assert "sseBuffer += decoder.decode(value, { stream: true });" in send_message_block
+    assert "const lines = sseBuffer.split('\\n');" in send_message_block
+    assert "sseBuffer = lines.pop() || '';" in send_message_block
+    assert "for (const rawLine of lines)" in send_message_block
 
 
 def test_chat_css_class_names_match_rendered_message_dom():
@@ -209,3 +220,75 @@ def test_send_message_passes_mention_selected_context_doc_ids():
     assert "const mentionedContextItems = this._collectMentionedContextItems(rawText);" in send_message_block
     assert "mention_context_item_ids: mentionContextItemIds.length ? mentionContextItemIds : undefined" in send_message_block
     assert "file_ids: [...fileIds, ...contextFileIds].length ? [...fileIds, ...contextFileIds] : undefined" in send_message_block
+
+
+# ── P2.C.1/P2.C.3/P2.C.4: 知识库引用前端契约测试 ──
+
+
+def test_knowledge_btn_in_html():
+    """P2.C.1: 对话页存在引用资料 toggle 按钮"""
+    assert 'id="knowledge-btn"' in HTML
+    assert 'data-active="false"' in HTML
+
+
+def test_knowledge_btn_toggle_logic_in_chat_js():
+    """P2.C.1: Chat 对象有 _toggleKnowledge 方法"""
+    assert "_toggleKnowledge()" in CHAT_JS
+    assert "_knowledgeEnabled" in CHAT_JS
+    assert "_knowledgeWorkspaceId" in CHAT_JS
+    assert "knowledge-btn" in CHAT_JS
+
+
+def test_chat_stream_payload_includes_knowledge_fields():
+    """P2.C.1: sendMessage 的 chatStream payload 包含 enable_knowledge 和 knowledge_workspace_id"""
+    send_block = CHAT_JS.split("async sendMessage()", 1)[1].split("_normalizeHistoryMessages(messages)", 1)[0]
+    assert "enable_knowledge: this._knowledgeEnabled" in send_block
+    assert "knowledge_workspace_id: this._knowledgeEnabled ? this._knowledgeWorkspaceId" in send_block
+
+
+def test_retrieve_api_method_in_api_js():
+    """P2.C.1: API 有 retrieveKnowledge 方法"""
+    assert "retrieveKnowledge(wsId, query" in API_JS
+
+
+def test_citation_card_class_in_css():
+    """P2.C.3: CSS 包含对话引用卡片样式"""
+    assert ".chat-citation-card" in CSS
+    assert ".chat-citation-header" in CSS
+    assert ".chat-citation-item" in CSS
+    assert ".chat-citation-source" in CSS
+    assert ".chat-citation-link" in CSS
+
+
+def test_citation_confidence_styles_in_css():
+    """P2.C.3: CSS 包含引用置信度样式"""
+    assert ".chat-citation-confidence-high" in CSS
+    assert ".chat-citation-confidence-medium" in CSS
+    assert ".chat-citation-confidence-low" in CSS
+
+
+def test_knowledge_based_class_in_css():
+    """P2.C.4: CSS 包含引用资料/模型推断区分样式"""
+    assert ".chat-knowledge-based" in CSS
+    assert ".chat-model-inference" in CSS
+    assert ".chat-citation-inline" in CSS
+    assert ".msg-knowledge-tag" in CSS
+
+
+def test_knowledge_paragraph_annotation_in_chat_js():
+    """P2.C.4: Chat 有 _annotateKnowledgeParagraphs 方法，能匹配 [来源ID:x]"""
+    assert "_annotateKnowledgeParagraphs(text)" in CHAT_JS
+    assert "[来源ID:" in CHAT_JS
+    assert "chat-knowledge-based" in CHAT_JS
+    assert "chat-model-inference" in CHAT_JS
+
+
+def test_citation_card_methods_in_chat_js():
+    """P2.C.3: Chat 有 _appendCitationCard 和 _fillCitationTitles 方法"""
+    assert "_appendCitationCard(contentEl, citations)" in CHAT_JS
+    assert "_fillCitationTitles(cardEl, citations)" in CHAT_JS
+
+
+def test_knowledge_status_style_in_css():
+    """P2.C.1: knowledge-btn active 状态有视觉样式"""
+    assert "#knowledge-btn[data-active=\"true\"]" in CSS

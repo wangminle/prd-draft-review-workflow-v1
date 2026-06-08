@@ -2255,8 +2255,19 @@ const Review = {
             }
         });
 
-        // Delegated handler for code block copy buttons
+        // Delegated handler for code block copy buttons and citation links
         document.getElementById('result-content').addEventListener('click', (e) => {
+            // P2.C.3: Citation link click — jump to workspace source detail
+            const citation = e.target.closest('.review-citation-resolved');
+            if (citation) {
+                const wsId = citation.dataset.workspaceId;
+                const sourceId = citation.dataset.sourceId;
+                if (typeof App !== 'undefined') {
+                    App._pendingSourceDetail = { wsId, sourceId };
+                    App._navigateTo('workspace');
+                }
+                return;
+            }
             const btn = e.target.closest('.code-copy-btn');
             if (!btn) return;
             const code = btn.dataset.code;
@@ -2363,6 +2374,8 @@ const Review = {
         else if (activeTab === 'insight') contentEl.innerHTML = this._renderInsight(report);
         else if (activeTab === 'draft') contentEl.innerHTML = this._renderDraft(report);
         this._renderMermaidCharts();
+        // P2.C.3: 补充引用来源的 title
+        this._fillCitationTitlesInReport(contentEl);
     },
 
     _renderInsight(report) {
@@ -2778,6 +2791,9 @@ const Review = {
     },
 
     _renderMarkdownWithLibraries(text) {
+        // P2.C.3/P2.C.4: 替换 [来源ID:x] 引用标记为可点击链接 + 段落标注
+        text = this._replaceCitationMarkers(text);
+
         const renderer = new window.marked.Renderer();
         renderer.code = (code, infostring) => {
             const rawCode = typeof code === 'object' && code !== null ? (code.text || '') : (code || '');
@@ -2863,6 +2879,71 @@ const Review = {
         const d = document.createElement('div');
         d.textContent = String(s);
         return d.innerHTML;
+    },
+
+    /* ── P2.C.3/P2.C.4: 引用标记替换与段落标注 ── */
+
+    _replaceCitationMarkers(text) {
+        if (!text) return text;
+
+        // 替换 [来源ID:x] 为可点击引用链接
+        text = text.replace(/\[来源ID:\s*(\d+)\]/g, (match, sourceId) => {
+            return `<span class="review-citation" data-source-id="${sourceId}" data-project-id="${this.currentProjectId || ''}">[来源 #${sourceId}]</span>`;
+        });
+
+        // P2.C.4: 标注包含引用的段落（仅在当前项目有引用资料时）
+        if (this.currentProjectId) {
+            const paragraphs = text.split(/\n\n+/);
+            const annotated = paragraphs.map(p => {
+                if (p.includes('review-citation')) {
+                    return `<div class="review-knowledge-based">${p}</div>`;
+                }
+                return p;  // 审查报告不标注 model-inference，避免过度干扰
+            });
+            text = annotated.join('\n\n');
+        }
+
+        return text;
+    },
+
+    async _fillCitationTitlesInReport(contentEl) {
+        const citations = contentEl.querySelectorAll('.review-citation');
+        if (!citations.length) return;
+
+        const projectId = this.currentProjectId;
+        if (!projectId) return;
+
+        try {
+            // 获取项目引用的 source 列表
+            const refs = await API.listProjectSourceRefs(projectId);
+            const sourceIds = (refs || []).map(r => r.source_id);
+
+            if (!sourceIds.length) return;
+
+            // 获取 workspace source 详情以拿到 title
+            const ws = await API.getDefaultWorkspace();
+            const wsId = ws?.id;
+            if (!wsId) return;
+
+            const sources = await API.getWorkspaceSources(wsId);
+            const sourceMap = {};
+            (sources || []).forEach(s => { sourceMap[s.id] = s; });
+
+            citations.forEach(el => {
+                const sourceId = parseInt(el.dataset.sourceId, 10);
+                const source = sourceMap[sourceId];
+                if (source) {
+                    const title = source.title || source.filename || `来源 #${sourceId}`;
+                    el.textContent = `[${title}]`;
+                    el.title = source.filename || '';
+                    el.classList.add('review-citation-resolved');
+                    el.dataset.workspaceId = String(wsId);
+                    el.dataset.sourceId = String(sourceId);
+                }
+            });
+        } catch (e) {
+            console.warn('获取引用来源详情失败:', e);
+        }
     },
 
     /* ── P0.C.4 团队资料选择器 ── */

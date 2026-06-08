@@ -204,6 +204,8 @@ class ChatApplicationService:
         mention_context_item_ids: list[int] | None = None,
         context_rules: list[str] | None = None,
         thinking_level: str | None = None,
+        enable_knowledge: bool = False,
+        knowledge_workspace_id: int | None = None,
     ) -> ChatSession | None:
         model_cfg = await self.get_model_config(model_id)
         if not model_cfg:
@@ -237,6 +239,16 @@ class ChatApplicationService:
             for rule in context_rules:
                 context_parts.append(f"[规则] {rule}")
 
+        # P2.C.1: 知识库检索上下文注入
+        if enable_knowledge and knowledge_workspace_id:
+            knowledge_context = await self.build_knowledge_context(
+                query=message,
+                workspace_id=knowledge_workspace_id,
+                user_id=user_id,
+            )
+            if knowledge_context:
+                context_parts.append(knowledge_context)
+
         context = "\n\n".join(context_parts) if context_parts else None
         llm_messages = build_messages(template, history, message, context)
 
@@ -255,3 +267,65 @@ class ChatApplicationService:
             model_cfg=model_cfg,
             llm_messages=llm_messages,
         )
+
+    async def build_knowledge_context(
+        self,
+        query: str,
+        workspace_id: int,
+        user_id: int | None = None,
+        top_k: int = 5,
+    ) -> str | None:
+        """P2.C.1: 知识库检索上下文构建。
+
+        调用 RetrievalService 检索知识库，将结果格式化为上下文注入对话。
+
+        Args:
+            query: 查询文本
+            workspace_id: 工作空间 ID
+            user_id: 用户 ID（用于权限校验和日志）
+            top_k: 返回条数
+
+        Returns:
+            格式化的知识上下文字符串，如果没有结果则返回 None
+        """
+        # 权限校验：用户必须是 workspace 成员
+        from app.repositories.workspace_repository import WorkspaceRepository
+        from app.services.workspace_access import is_active_member
+
+        ws_repo = WorkspaceRepository(self._db)
+        if user_id:
+            member = await ws_repo.get_member(workspace_id, user_id)
+            if not is_active_member(member):
+                logger.warning(f"[KNOWLEDGE] 用户 {user_id} 不是 workspace {workspace_id} 的活跃成员")
+                return None
+
+        # 检索知识库
+        from app.services.retrieval_service import RetrievalService
+        try:
+            retrieval = RetrievalService(db_session=self._db)
+            response = await retrieval.retrieve(
+                query=query,
+                workspace_id=workspace_id,
+                top_k=top_k,
+            )
+        except Exception as e:
+            logger.error(f"[KNOWLEDGE] 知识检索失败: {e}")
+            return None
+
+        if not response.results or all(r.rejected for r in response.results):
+            return None
+
+        # 格式化为上下文（编号连续，跳过 rejected 的条目）
+        parts = ["[知识库检索结果]"]
+        seq = 0
+        for r in response.results:
+            if r.rejected:
+                continue
+            seq += 1
+            section_info = f"（章节: {r.section}）" if r.section else ""
+            parts.append(f"{seq}. [来源ID: {r.source_id}]{section_info} {r.text_snippet}")
+
+        if response.fallback_reason:
+            parts.append(f"[检索降级: {response.fallback_reason}]")
+
+        return "\n".join(parts)

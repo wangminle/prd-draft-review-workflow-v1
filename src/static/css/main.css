@@ -1526,6 +1526,165 @@ input::placeholder, textarea::placeholder {
     font-size: var(--fs-14);
 }
 
+/* ─── P2.C.1: 知识库引用 toggle ─── */
+#knowledge-btn[data-active="true"] {
+    background: var(--blue-1);
+    color: var(--color-brand);
+    box-shadow: inset 0 0 0 1px var(--color-brand);
+}
+
+/* ─── P2.C.4: 引用资料 vs 模型推断 ─── */
+.chat-knowledge-based {
+    position: relative;
+    padding: 4px 0 4px 12px;
+    border-left: 3px solid var(--blue-4);
+    margin: 8px 0;
+}
+.chat-knowledge-based::before {
+    content: '引用资料';
+    position: absolute;
+    top: 0;
+    left: 12px;
+    font-size: var(--fs-11);
+    color: var(--blue-6);
+    font-weight: var(--fw-medium);
+    opacity: 0.7;
+}
+.chat-model-inference {
+    position: relative;
+    padding: 4px 0 4px 12px;
+    border-left: 3px solid var(--gray-4);
+    margin: 8px 0;
+}
+.chat-model-inference::before {
+    content: '模型推断';
+    position: absolute;
+    top: 0;
+    left: 12px;
+    font-size: var(--fs-11);
+    color: var(--color-text-muted);
+    font-weight: var(--fw-medium);
+    opacity: 0.7;
+}
+.chat-citation-inline {
+    color: var(--blue-6);
+    font-weight: var(--fw-medium);
+    background: var(--blue-1);
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+}
+.msg-knowledge-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: var(--fs-11);
+    color: var(--blue-6);
+    background: var(--blue-1);
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    margin-bottom: 6px;
+}
+
+/* ─── P2.C.3: 对话引用卡片 ─── */
+.chat-citation-card {
+    margin-top: 12px;
+    padding: 8px 12px;
+    background: var(--blue-1);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--blue-3);
+}
+.chat-citation-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--fs-13);
+    font-weight: var(--fw-medium);
+    color: var(--blue-6);
+    margin-bottom: 6px;
+}
+.chat-citation-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+.chat-citation-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: var(--fs-12);
+    color: var(--color-text-secondary);
+}
+.chat-citation-source {
+    color: var(--blue-6);
+    font-weight: var(--fw-medium);
+}
+.chat-citation-link {
+    cursor: pointer;
+    border-bottom: 1px dashed var(--blue-4);
+}
+.chat-citation-link:hover {
+    border-bottom-style: solid;
+}
+.chat-citation-section {
+    color: var(--color-text-muted);
+}
+.chat-citation-confidence {
+    font-size: var(--fs-11);
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+}
+.chat-citation-confidence-high {
+    background: var(--green-1);
+    color: var(--green-6);
+}
+.chat-citation-confidence-medium {
+    background: var(--yellow-1);
+    color: var(--yellow-6);
+}
+.chat-citation-confidence-low {
+    background: var(--red-1);
+    color: var(--red-6);
+}
+
+/* ─── P2.C.3: 审查引用来源 ─── */
+.review-citation {
+    color: var(--blue-6);
+    font-weight: var(--fw-medium);
+    cursor: pointer;
+    border-bottom: 1px dashed var(--blue-4);
+    transition: border-bottom-color 0.2s;
+}
+.review-citation:hover {
+    border-bottom-style: solid;
+}
+.review-citation-resolved {
+    background: var(--blue-1);
+    padding: 1px 4px;
+    border-radius: var(--radius-sm);
+    border-bottom: none;
+}
+.review-citation-resolved:hover {
+    background: var(--blue-2);
+}
+.review-knowledge-based {
+    position: relative;
+    padding: 4px 0 4px 12px;
+    border-left: 3px solid var(--blue-4);
+    margin: 8px 0;
+    background: var(--blue-1);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.review-knowledge-based::before {
+    content: '引用资料';
+    position: absolute;
+    top: 4px;
+    left: 16px;
+    font-size: var(--fs-11);
+    color: var(--blue-6);
+    font-weight: var(--fw-medium);
+}
+
 /* ═══════════════════════════════════════════
    输入面板 — Input Panel
    ═══════════════════════════════════════════ */

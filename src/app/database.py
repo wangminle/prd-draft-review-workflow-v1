@@ -12,6 +12,7 @@ from app.config import get_settings
 from app.models.user import Base
 from app.models.user import ContextItem, SkillConfig  # noqa: F401 — ensure tables are registered
 from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource, ProjectSourceRef  # noqa: F401 — ensure workspace tables are registered
+from app.models.knowledge import KnowledgeDocument, KnowledgeChunk, RetrievalLog, AnswerFeedback  # noqa: F401 — ensure knowledge tables are registered
 from app.utils import now_cn
 
 logger = logging.getLogger(__name__)

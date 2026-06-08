@@ -135,6 +135,17 @@ const App = {
         Workspace.init();
         Workspace.load();
         this._alignSidebarToDivider();
+
+        // P2.C.3: 如果有 pending source detail 跳转（从对话/审查引用链接来），自动打开详情
+        if (this._pendingSourceDetail) {
+            const { wsId, sourceId } = this._pendingSourceDetail;
+            this._pendingSourceDetail = null;
+            setTimeout(() => {
+                if (typeof Workspace !== 'undefined' && Workspace._showSourceDetail) {
+                    Workspace._showSourceDetail(parseInt(sourceId));
+                }
+            }, 500);
+        }
     },
 
     /* ── 侧栏折叠 + 对齐竖线 ── */

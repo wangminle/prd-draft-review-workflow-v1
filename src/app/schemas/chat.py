@@ -7,13 +7,15 @@ class ChatRequest(BaseModel):
     conversation_id: int | None = None
     model_id: str = Field(default="deepseek", max_length=30)
     prompt_template: str | None = "default"
-    message: str = Field(..., min_length=1)
+    message: str = Field(..., min_length=1, max_length=100000)
     file_ids: list[str] = Field(default_factory=list)
     urls: list[str] = Field(default_factory=list)
     url_texts: dict[str, str] = Field(default_factory=dict)
     context_rules: list[str] = Field(default_factory=list)
     mention_context_item_ids: list[int] = Field(default_factory=list)
     thinking_level: str | None = None
+    enable_knowledge: bool = False  # P2.C.1: 是否启用知识库检索
+    knowledge_workspace_id: int | None = None  # P2.C.1: 检索的工作空间 ID
     stream: bool = True
 
 

@@ -37,6 +37,7 @@ from app.repositories.review_prompt_repository import (
 
 from app.repositories.workspace_repository import WorkspaceRepository
 from app.repositories.knowledge_source_repository import KnowledgeSourceRepository, ProjectSourceRefRepository
+from app.repositories.knowledge_repository import KnowledgeDocumentRepository, KnowledgeChunkRepository
 
 __all__ = [
     "ConversationRepository",
@@ -50,6 +51,8 @@ __all__ = [
     "WorkspaceRepository",
     "KnowledgeSourceRepository",
     "ProjectSourceRefRepository",
+    "KnowledgeDocumentRepository",
+    "KnowledgeChunkRepository",
     "ReviewTaskRepository",
     "NewReviewTask",
     "TaskProgressPatch",

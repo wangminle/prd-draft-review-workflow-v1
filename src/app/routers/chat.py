@@ -54,6 +54,8 @@ async def chat(
         mention_context_item_ids=req.mention_context_item_ids,
         context_rules=req.context_rules,
         thinking_level=req.thinking_level,
+        enable_knowledge=req.enable_knowledge,
+        knowledge_workspace_id=req.knowledge_workspace_id,
     )
     if session is None:
         if req.conversation_id:

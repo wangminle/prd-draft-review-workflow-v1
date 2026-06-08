@@ -23,7 +23,7 @@
 | --- | --- | ---: | ---: | --- | --- |
 | P0 | 团队资料库 MVP + 团队空间页面壳 | 2-3 周 | 24 | 最高 | 无 |
 | P1 | 单团队权限底座与成员管理 | 2-3 周 | 10 | 高 | P0 完成 |
-| P2 | 知识库检索与对话 RAG | 4-6 周 | 15 | 高 | P1 完成 + 检索 POC 通过 |
+| P2 | 知识库检索与对话 RAG | 4-6 周 | 20 | 高 | P1 完成 + 检索 POC 通过 |
 | P3 | Agent 对话与工具注册 | 4-6 周 | 18 | 中 | P2 完成 + Agent POC 通过 |
 | P4 | 审查平台协作化 | 5-7 周 | 21 | 中 | P3 完成 |
 | P5 | 个人账号 Agent 与消息中心 | 4-6 周 | 11 | 中 | P3 完成 |
@@ -33,23 +33,21 @@
 - P3 启动前必须通过安全评审和 Agent POC。
 - P4-P6 需团队真实使用反馈后再定优先级。
 
-## 快速验证标记（2026-06-05）
+## 快速验证标记（2026-06-08 更新）
 
 > 标记规则：仅当仓库内同时存在直接代码实现与自动化测试/前端契约测试证据时，才标记为”已验证完成”；部分完成指代码中有相关实现但不完全满足验收标准。
 
 - 已验证完成：**Phase 0 全部 24 项**，即 `P0.A.1~P0.E.4`。
-- 已验证完成（Phase 1 中）：**P1 全部 10 项**，即 `P1.A.1~P1.C.2`（791 全量回归通过）。
-- 已验证完成（POC-A）：**POC-A 全部 6 项**，即 `POC-A.1~POC-A.6`（决策结论：FTS5 + LanceDB 混合检索）。
-- 未开始：Phase 2 功能任务 `P2.A.1~P2.D.3`、Phase 3~Phase 6、POC-B~POC-C
-- 部分完成：（无 — P1 全部子任务已完成）
-- 已完成：**POC-A 全部 6 项**（决策结论：FTS5 + LanceDB 混合检索，备选 Chroma）
-- 未开始：**Phase 2 功能任务、Phase 3~Phase 6、POC-B~POC-C**
+- 已验证完成：**P1 全部 10 项**，即 `P1.A.1~P1.C.2`（791 全量回归通过）。
+- 已验证完成：**POC-A 全部 6 项 + POC-B 深度验证 + POC-C 真实嵌入验证**（最终选型结论：LanceDB 单引擎首选，FTS5 降级回退，dist[0]+gap 拒答，OpenAI text-embedding-3-small；详见 `docs/3-design/检索引擎选型最终结论.md`）。
+- 已验证完成：**Phase 2 全部 20 项**，即 `P2.A.1~P2.E.3 + P2.D.1~D.3 + P2.C.1~C.4`（887 全量回归通过，58+ P2 专项测试通过，34 项 P2.D.1 评估测试通过，P2.D.1 验收通过：top-5 命中率 95.8% ≥ 92%，no_answer 拒答率 87.5% ≥ 50%，无越权召回；BUG-052 检索可用性缺口已修复，BUG-053 SSE 分片解析已修复）
+- 未开始：**Phase 3~Phase 6**
 - 快速验证依据：
   - 数据模型/仓储与迁移：`tests/test_workspace.py`
   - 团队空间 API/权限/项目引用：`tests/test_workspace_api.py`
   - 团队空间导航、资料库、资料选择器、成员管理前端契约：`tests/test_frontend_workspace_contract.py`
   - 本次定向执行：`pytest -q tests/test_workspace.py tests/test_workspace_api.py tests/test_frontend_workspace_contract.py`，结果 **97 passed**
-  - 全量回归：`pytest -q`，结果 **778 passed**
+  - 全量回归：`pytest -q`，结果 **887 passed**
 
 ---
 
@@ -273,55 +271,68 @@
 
 ---
 
-## Phase 2：知识库检索与对话 RAG（POC-A ✅ 已完成，P2 任务待启动）
+## Phase 2：知识库检索与对话 RAG（已验证完成，2026-06-08）
 
-> 前置：检索 POC 已通过（POC-A ✅ 决策结论：FTS5 + LanceDB 混合检索）。
+> 前置：检索 POC 已通过（POC-A ✅ + POC-B ✅ 最终选型结论：**LanceDB 单引擎首选**，FTS5 降级回退，分数差拒答，OpenAI embedding。详见 `docs/3-design/检索引擎选型最终结论.md`）。
 > 目标：资料可通过 FTS 和向量检索召回，对话和审查可显式引用来源。
 
 ### P2.0 并行开发分组
 
 | 并行组 | 包含任务 | 依赖 | 可并行角色 | 并行说明 |
 | --- | --- | --- | --- | --- |
-| P2-G0 文档解析与索引基座 | P2.A.1~P2.A.4 | P1 完成 + POC-A 决策 | 后端 | 先完成 document/chunk 模型、切块策略、FTS/向量索引入口 |
-| P2-G1 检索服务/API | P2.B.1~P2.B.4 | P2-G0 可写入 chunk | 后端 | RetrievalService、权限过滤、RetrievalLog、检索 API 可独立推进 |
+| P2-G0 文档解析与索引基座 | P2.A.1~P2.A.5 | P1 完成 + POC-A+B 决策 | 后端 | 先完成 document/chunk 模型、切块策略、FTS 索引入口和 EmbeddingService |
+| P2-G5 LanceDB 集成与降级 | P2.E.1~P2.E.3 | P2-G0 chunk 可用 + POC-A+B 决策 | 后端 | **必须先产出 KnowledgeVectorService API 契约**，G1 依赖此契约设计 RetrievalService |
+| P2-G1 检索服务/API | P2.B.1~P2.B.4 | **P2-G5 API 契约确定** + P2-G0 可写入 chunk | 后端 | RetrievalService 消费 KnowledgeVectorService API、权限过滤、拒答策略、检索 API |
 | P2-G2 引用展示前端 | P2.C.1、P2.C.3、P2.C.4 | P2-G1 API 契约或 mock 数据 | 前端/全栈 | 对话页引用按钮、来源标注、推断/引用差异样式可并行 |
 | P2-G3 审查 RAG 集成 | P2.C.2 | P2-G1 + 现有 SkillRunner 上下文 | 全栈 | 将项目引用资料注入 ReviewContext，保持审查流程兼容 |
-| P2-G4 评估与测试 | P2.D.1~P2.D.3 | 随 P2-G0~G3 增量执行 | 后端/测试 | 用 POC 样例集持续跑命中率、延迟和越权召回 |
+| P2-G4 评估与测试 | P2.D.1~P2.D.3 | 随 P2-G0~G3/G5 增量执行 | 后端/测试 | 用 POC 样例集持续跑命中率、延迟和越权召回 |
 
 ### P2.A 文档解析与切块
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P2.A.1 | 新增 `KnowledgeDocument` 表：`source_id`、`filename`、`content_hash`、`version`、`metadata_json`（含 section/page/paragraph 信息） | 表创建，关联 KnowledgeSource | 1d |
-| P2.A.2 | 新增 `KnowledgeChunk` 表：`document_id`、`chunk_no`、`text`、`section`、`source_ref`、`embedding_ref`(向量 ID 或路径)、`metadata_json` | 表创建，切块可 CRUD | 1d |
-| P2.A.3 | 后端服务 `KnowledgeIngestionService`：资料上传后触发解析→切块→FTS 索引→向量嵌入 | 单份常规 PRD 解析+切块+索引 < 30s | 3d |
-| P2.A.4 | 切块策略：保留标题、章节、页码、段落来源；最长 chunk 512 tokens，重叠 64 tokens | 切块后可追溯来源 section | 1.5d |
+| P2.A.1 | 新增 `KnowledgeDocument` 表：`source_id`、`filename`、`content_hash`、`version`、`metadata_json`（含 section/page/paragraph 信息） | 表创建，关联 KnowledgeSource | 1d | ✅ 已完成 |
+| P2.A.2 | 新增 `KnowledgeChunk` 表：`document_id`、`chunk_no`、`text`、`section`、`source_ref`、`embedding_status`(pending/done/failed)、`metadata_json` | 表创建，切块可 CRUD；`embedding_status` 追踪嵌入异步进度 | 1d | ✅ 已完成 |
+| P2.A.3 | 后端服务 `KnowledgeIngestionService`：资料上传后触发 解析→切块→FTS 索引（同步完成）→提交异步 embedding 任务（非阻塞）；upload endpoint 不等待 embedding 完成即返回 | 上传立即返回；chunk FTS 索引 < 5s；embedding 后台完成后 `embedding_status` 更新为 done | 2d | ✅ 已完成 |
+| P2.A.4 | 切块策略：保留标题、章节、页码、段落来源；最长 chunk 512 tokens，重叠 64 tokens（与 POC-A `MAX_CHUNK_CHARS=512, OVERLAP_CHARS=64` 一致） | 切块后可追溯来源 section；与 POC-A 切块结果可对比验证 | 1.5d | ✅ 已完成 |
+| P2.A.5 | `EmbeddingService`：封装 OpenAI text-embedding-3-small API（1536 维）；支持批处理（最大 100 chunks/批）；指数退避重试（最多 3 次）；模型名和 API key 从环境变量注入，不硬编码 | 批量调用 API 成功；重试有效；模型可通过配置切换（为 BGE-M3 预留接口） | 1.5d | ✅ 已完成 |
 
 ### P2.B 检索服务
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P2.B.1 | 后端 `RetrievalService`：`retrieve(query, workspace_id, filters, top_k)` → 返回带 `source_id` + `chunk_ref` + `section` 的片段列表 | 查询延迟 < 1s（FTS），混合检索可放宽到 3s | 2d |
-| P2.B.2 | 检索前权限过滤：只返回当前用户在 workspace 内有 read 权限的资料切块 | 无越权召回，跨空间检索返回空 | 1.5d |
-| P2.B.3 | 新增 `RetrievalLog` 表：`query`、`filters_json`、`hit_count`、`selected_chunks`、`latency_ms`、`user_id` | 日志可写入和查询 | 1d |
-| P2.B.4 | 检索 API：`POST /api/workspace/{id}/retrieve` 接受 query、filters、top_k | 返回结构化结果含引用来源 | 1d |
+| P2.B.1 | 后端 `RetrievalService`：消费 `KnowledgeVectorService.search()` 接口；`retrieve(query, workspace_id, filters, top_k)` → 调用 `EmbeddingService.embed(query)` 得到查询向量 → 调用 `KnowledgeVectorService.search()` → 附加 `confidence` 字段后返回片段列表（含 `source_id`/`chunk_ref`/`section`/`confidence`） | 查询延迟 < 1s（LanceDB P50=10ms + embedding API ~200ms = 合计 < 500ms）；**依赖 P2.E.1 先完成 API 契约** | 2d | ✅ 已完成 |
+| P2.B.2 | 检索前权限过滤：只返回当前用户在 workspace 内有 read 权限的资料切块 | 无越权召回，跨空间检索返回空 | 1.5d | ✅ 已完成 |
+| P2.B.3 | 新增 `RetrievalLog` 表：`query`、`filters_json`、`hit_count`、`selected_chunks`、`latency_ms`、`user_id` | 日志可写入和查询 | 1d | ✅ 已完成 |
+| P2.B.4 | 检索 API：`POST /api/workspace/{id}/retrieve` 接受 query、filters、top_k | 返回结构化结果含引用来源 | 1d | ✅ 已完成 |
 
 ### P2.C 对话与审查 RAG 集成
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P2.C.1 | 对话页新增"引用资料"按钮：用户选择资料库后，系统将资料切块作为 context 注入对话 system prompt | 对话回复含引用标注 | 2d |
-| P2.C.2 | 审查项目上下文注入：项目引用的资料切块自动进入审查 SkillRunner 的 ReviewContext | 审查报告中引用资料来源 | 1.5d |
-| P2.C.3 | 前端：对话消息和审查报告显示引用来源（文件名、章节、段落号），点击可跳转资料详情 | 引用标注可见且可点击 | 2d |
-| P2.C.4 | 区分标注："引用资料得出的结论"与"模型推断"在 UI 上有不同样式 | 两类标注视觉可区分 | 1d |
+| P2.C.1 | 对话页新增"引用资料"按钮：用户选择资料库后，系统将资料切块作为 context 注入对话 system prompt | 对话回复含引用标注 | 2d | ✅ 已完成 |
+| P2.C.2 | 审查项目上下文注入：项目引用的资料切块自动进入审查 SkillRunner 的 ReviewContext | 审查报告中引用资料来源 | 1.5d | ✅ 已完成 |
+| P2.C.3 | 前端：对话消息和审查报告显示引用来源（文件名、章节、段落号），点击可跳转资料详情 | 引用标注可见且可点击 | 2d | ✅ 已完成 |
+| P2.C.4 | 区分标注："引用资料得出的结论"与"模型推断"在 UI 上有不同样式 | 两类标注视觉可区分 | 1d | ✅ 已完成 |
 
 ### P2.D 检索评估与测试
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P2.D.1 | 检索评估：用 POC 样例集（20 份 PRD + 5 份规范 + 30 个问题）跑 top-5 命中率 | 命中率 ≥ 80%，无越权召回 | 2d |
+| P2.D.1 | 检索评估：用 POC 样例集（20 份 PRD + 5 份规范 + 30 个问题 + **4 个 no_answer 问题**）跑 top-5 命中率和 no_answer 拒答率 | top-5 命中率 ≥ 80%（最低门槛）；使用真实 OpenAI embedding 时预期 ≥ 92%（POC-A+B 数据基准 95.2%）；no_answer 问题拒答率 ≥ 50%（校准 P2.E.3 的分数差阈值）；无越权召回 | 2d | ✅ 已完成：top-5 命中率 95.8% ≥ 92%，no_answer 拒答率 87.5% ≥ 50%，无越权召回，34 项评估测试通过 | |
 | P2.D.2 | 自动化测试：切块 CRUD、FTS 检索、向量检索、权限过滤、引用注入（10+ 条） | pytest 通过 | 2d |
-| P2.D.3 | 新增 `AnswerFeedback` 表：`object_type`、`object_id`、`user_id`、`rating`(helpful/unhelpful)、`comment`、`created_at` | 反馈可写入 | 0.5d |
+| P2.D.3 | 新增 `AnswerFeedback` 表：`object_type`、`object_id`、`user_id`、`rating`(helpful/unhelpful)、`comment`、`created_at` | 反馈可写入 | 0.5d | ✅ 已完成 |
+
+### P2.E LanceDB 集成与降级（POC-A+B 选型新增）
+
+> 选型依据：`docs/3-design/检索引擎选型最终结论.md`
+> **G1 依赖本组 API 契约**：P2.E.1 必须先定义 `KnowledgeVectorService` 接口（输入/输出字段、错误类型），G1 才能开始设计 `RetrievalService`。
+
+| ID | 任务 | 验收标准 | 工时估算 |
+| --- | --- | --- | ---: |
+| P2.E.1 | `KnowledgeVectorService`：封装 LanceDB 操作；`upsert(chunks, vectors)` 批量写入（schema：`source_id`/`workspace_id`/`title`/`section`/`text`/`vector[1536]`）；`search(query_vec, workspace_id, top_k)` 带 prefilter 权限过滤，返回 `{source_id, section, text_snippet, _distance}`；索引目录 `runtime/vector/lancedb/`；**同时输出接口契约文档供 G1 参考** | LanceDB 索引创建/增量写入/workspace prefilter 查询；目录复制备份恢复（≤10ms/15MB 量级，与 POC-B 一致） | 2.5d | ✅ 已完成 |
+| P2.E.2 | FTS5 降级回退：`RetrievalService` 检测到 LanceDB 不可用（ImportError / 索引文件损坏 / 查询超时）时自动回退到 FTS5 关键词检索，降级事件写入 `RetrievalLog.fallback_reason` | 模拟 LanceDB 失败，降级自动生效；`RetrievalLog` 含降级标记 | 1d | ✅ 已完成 |
+| P2.E.3 | 拒答策略：基于 `_distance` 分数差判断。gap = `results[1]._distance - results[0]._distance`；gap < 阈值（默认 0.065，POC-C 校准值）时返回 `{confidence: "low", rejected: true}`；`RetrievalService.retrieve()` 结果含 `confidence` 字段 | 构造 top-1/top-2 相近的 mock 数据时拒答生效；阈值可通过配置文件调整；`confidence` 字段在 API 响应中可见 | 1.5d | ✅ 已完成 |
 
 ---
 
@@ -553,16 +564,16 @@
 | POC-G2 Agent POC | POC-B.1~POC-B.4 | POC-G0 可复用问题集 | 后端/架构 | 自建受限 ReAct 与 LangGraph 对比，产出 Phase 3 Agent 框架决策 |
 | POC-G3 Embedding POC | POC-C.1~POC-C.3 | POC-G0 + POC-G1 检索脚手架 | 后端 | text-embedding-3-small 与 BGE-M3 对比，产出嵌入模型决策 |
 
-### POC-A 检索 POC（✅ 已完成 — 决策结论：FTS5 + LanceDB 混合检索）
+### POC-A 检索 POC（✅ 已完成 — 最终选型：LanceDB 单引擎首选，FTS5 降级回退）
 
 | ID | 任务 | 验收标准 | 工时估算 | 状态 |
 | --- | --- | --- | --- | --- |
 | POC-A.1 | 准备样例集：20 份历史 PRD + 5 份团队规范 + 5 份评审报告 + 30 个真实问题 + 10 个权限用例 | 样例集文件齐全，问题覆盖章节查找/风险定位/术语解释/跨文档对比/无答案 | 2d | ✅ 已完成 |
 | POC-A.2 | SQLite FTS5 检索基准：切块 + FTS 索引 + 关键词查询 → 记录 top-5 命中率、延迟、权限过滤 | 基准数据可对比 | 1d | ✅ top-5 56.7%, 0.3ms |
 | POC-A.3 | LanceDB POC：同样样例集 → 向量嵌入 + LanceDB 查询 → 记录命中率、延迟、备份恢复、runtime 目录兼容 | LanceDB 数据产出 | 2d | ✅ top-5 66.7%, 254ms |
-| POC-A.4 | Milvus Lite POC：同样样例集 → 向量嵌入 + Milvus Lite 查询 → 记录命中率、延迟、中文召回、备份恢复、迁移到 Standalone 路径 | Milvus Lite 数据产出 | 2d | ✅ top-5 66.7%, 1582ms（延迟过高淘汰） |
-| POC-A.5 | Chroma POC：同样样例集 → 向量嵌入 + Chroma 查询 → 记录命中率、延迟、维护体验 | Chroma 数据产出 | 1.5d | ✅ top-5 66.7%, 242ms（备选） |
-| POC-A.6 | POC 对比报告：四方案 top-5 命中率、延迟、权限过滤、备份恢复、runtime 兼容、运维复杂度 → 选出 Phase 2 首选和备选 | 报告含决策结论 | 1d | ✅ 首选 LanceDB + FTS5，备选 Chroma |
+| POC-A.4 | Milvus Lite POC：同样样例集 → 向量嵌入 + Milvus Lite 查询 → 记录命中率、延迟、中文召回、备份恢复、迁移到 Standalone 路径 | Milvus Lite 数据产出 | 2d | ✅ Runtime 复验 top-5 95.2%, 530ms（远期候选，不淘汰） |
+| POC-A.5 | Chroma POC：同样样例集 → 向量嵌入 + Chroma 查询 → 记录命中率、延迟、维护体验 | Chroma 数据产出 | 1.5d | ✅ Runtime 复验 top-5 95.2%, 4.8ms（备选） |
+| POC-A.6 | POC 对比报告：四方案 top-5 命中率、延迟、权限过滤、备份恢复、runtime 兼容、运维复杂度 → 选出 Phase 2 首选和备选 | 报告含决策结论 | 1d | ✅ LanceDB 单引擎首选，FTS5 降级回退（详见 `docs/3-design/检索引擎选型最终结论.md`） |
 
 ### POC-B Agent POC
 

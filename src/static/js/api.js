@@ -202,6 +202,11 @@ const API = {
     addProjectSourceRef(projectId, data) { return this.request('POST', `/api/review/project/${projectId}/sources`, data); },
     listProjectSourceRefs(projectId) { return this.request('GET', `/api/review/project/${projectId}/sources`); },
 
+    /* ── 知识库检索 ── */
+    retrieveKnowledge(wsId, query, topK = 5) {
+        return this.request('POST', `/api/workspace/${wsId}/retrieve`, { query, top_k: topK });
+    },
+
     /* ── 需求审查 ── */
 
     getReviewProjects() { return this.request('GET', '/api/review/projects'); },

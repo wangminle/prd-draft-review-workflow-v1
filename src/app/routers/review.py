@@ -137,6 +137,70 @@ async def _load_review_context(db: AsyncSession, project_id: int) -> dict | None
     return merge_review_context_defaults(json.loads(ctx.context_data))
 
 
+async def _load_project_knowledge_context(db: AsyncSession, project_id: int) -> str | None:
+    """P2.C.2: 加载项目引用资料的知识切块，注入审查上下文。
+
+    流程：
+    1. 查找项目引用的所有 KnowledgeSource
+    2. 查找每个 source 对应的 KnowledgeDocument → KnowledgeChunk
+    3. 格式化为可注入 SkillRunner 的文本
+    """
+    from app.models.knowledge import KnowledgeDocument, KnowledgeChunk
+    from app.models.workspace import ProjectSourceRef, KnowledgeSource
+
+    # 1. 获取项目引用的资料列表
+    ref_result = await db.execute(
+        select(ProjectSourceRef).where(ProjectSourceRef.project_id == project_id)
+    )
+    refs = ref_result.scalars().all()
+    if not refs:
+        return None
+
+    source_ids = [ref.source_id for ref in refs]
+
+    # 2. 仅使用仍处于 active 状态的引用资料，避免已归档资料继续影响审查结果。
+    source_result = await db.execute(
+        select(KnowledgeSource).where(
+            KnowledgeSource.id.in_(source_ids),
+            KnowledgeSource.status == "active",
+        )
+    )
+    active_source_map = {s.id: s.title for s in source_result.scalars().all()}
+    if not active_source_map:
+        return None
+
+    doc_result = await db.execute(
+        select(KnowledgeDocument).where(KnowledgeDocument.source_id.in_(active_source_map.keys()))
+    )
+    docs = doc_result.scalars().all()
+    if not docs:
+        return None
+
+    doc_ids = [doc.id for doc in docs]
+    # 限制加载数量，防止超出 LLM 上下文窗口（每个 chunk 约 512 字符，50 个 ≈ 25K 字符）
+    MAX_CHUNKS_PER_PROJECT = 50
+    chunk_result = await db.execute(
+        select(KnowledgeChunk)
+        .where(KnowledgeChunk.document_id.in_(doc_ids))
+        .order_by(KnowledgeChunk.document_id, KnowledgeChunk.chunk_no)
+        .limit(MAX_CHUNKS_PER_PROJECT)
+    )
+    chunks = chunk_result.scalars().all()
+    if not chunks:
+        return None
+
+    # 3. 格式化
+    doc_source_map = {doc.id: doc.source_id for doc in docs}
+    parts = []
+    for chunk in chunks:
+        source_id = doc_source_map.get(chunk.document_id)
+        title = active_source_map.get(source_id, "未知资料")
+        section_info = f" [{chunk.section}]" if chunk.section else ""
+        parts.append(f"- [{title}{section_info}] {chunk.text}")
+
+    return "\n".join(parts)
+
+
 progress_queues: dict[int, asyncio.Queue] = {}
 
 
@@ -1125,6 +1189,11 @@ async def _run_pipeline(
         # Load ReviewContext for this project
         context = await _load_review_context(db, project_id)
         context_data = context or {}
+
+        # P2.C.2: 加载项目引用资料的知识切块注入审查上下文
+        knowledge_chunks_text = await _load_project_knowledge_context(db, project_id)
+        if knowledge_chunks_text:
+            context_data["knowledge_chunks"] = knowledge_chunks_text
 
         # Create SkillRunner instance
         pipeline_cfg = _settings.get("review", {}).get("pipeline", {})

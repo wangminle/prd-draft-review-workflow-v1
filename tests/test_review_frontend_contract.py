@@ -719,3 +719,47 @@ def test_chat_js_adds_context_to_send_payload():
     send_block = CHAT_JS.split("API.chatStream({", 1)[1].split("})", 1)[0]
     assert "contextFileIds" in send_block
     assert "contextRules" in send_block
+
+
+# ── P2.C.3/P2.C.4: 审查报告引用来源前端契约测试 ──
+
+
+def test_review_citation_marker_replacement_in_review_js():
+    """P2.C.3: review.js 有 _replaceCitationMarkers 方法，能匹配 [来源ID:x]"""
+    assert "_replaceCitationMarkers(text)" in REVIEW_JS
+    assert "[来源ID:" in REVIEW_JS
+    assert "review-citation" in REVIEW_JS
+    assert "data-source-id" in REVIEW_JS
+
+
+def test_review_citation_resolved_class_in_css():
+    """P2.C.3: CSS 包含审查引用来源解析后的样式"""
+    assert ".review-citation" in CSS
+    assert ".review-citation-resolved" in CSS
+    assert ".review-citation:hover" in CSS
+
+
+def test_review_knowledge_based_class_in_css():
+    """P2.C.4: CSS 包含审查报告引用段落标注样式"""
+    assert ".review-knowledge-based" in CSS
+    assert ".review-knowledge-based::before" in CSS
+
+
+def test_review_fill_citation_titles_in_report_js():
+    """P2.C.3: review.js 有 _fillCitationTitlesInReport 方法"""
+    assert "_fillCitationTitlesInReport(contentEl)" in REVIEW_JS
+    assert "review-citation-resolved" in REVIEW_JS
+
+
+def test_review_citation_click_delegation_in_review_js():
+    """P2.C.3: result-content 有 citation 点击事件委托"""
+    # _bindResultActions 内的 result-content listener 有 citation 点击处理
+    result_content_block = REVIEW_JS.split("document.getElementById('result-content').addEventListener('click'", 1)[1].split("});", 1)[0]
+    assert "review-citation-resolved" in result_content_block
+    assert "App._pendingSourceDetail" in result_content_block
+
+
+def test_app_pending_source_detail_handler():
+    """P2.C.3: app.js 有 _pendingSourceDetail 跳转处理"""
+    assert "_pendingSourceDetail" in APP_JS
+    assert "Workspace._showSourceDetail" in APP_JS

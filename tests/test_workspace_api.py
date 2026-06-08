@@ -85,6 +85,16 @@ async def test_upload_source_success():
         assert "extracted_text" in data
         assert data["extracted_text"] is not None
 
+        # P2.A.3: 上传后应自动完成入库切块与 FTS 索引，避免资料可见但不可检索
+        from app.models.knowledge import KnowledgeDocument, KnowledgeChunk
+        async with sm() as session:
+            doc_result = await session.execute(select(KnowledgeDocument).where(KnowledgeDocument.source_id == data["id"]))
+            doc = doc_result.scalar_one_or_none()
+            assert doc is not None
+            chunk_result = await session.execute(select(KnowledgeChunk).where(KnowledgeChunk.document_id == doc.id))
+            chunks = list(chunk_result.scalars().all())
+            assert len(chunks) >= 1
+
     await engine.dispose()
     if os.path.exists(tmp_db):
         os.unlink(tmp_db)
@@ -256,6 +266,7 @@ async def test_delete_source_success():
                 title="测试资料.md",
                 filename="test.md",
                 content_hash="abc123",
+                extracted_text="# 测试资料\n\n这是待删除资料，包含唯一关键词 删除索引验证。",
                 version=1,
                 owner_id=admin_user.id if admin_user else None,
                 status="active",
@@ -265,6 +276,15 @@ async def test_delete_source_success():
             source_id = source.id
             ws_id = ws.id
             await session.commit()
+
+        # 先建立 FTS 索引，验证删除时会同步清理检索索引
+        from app.services.knowledge_ingestion import KnowledgeIngestionService
+        async with session_maker() as session:
+            ingestion = KnowledgeIngestionService(session)
+            await ingestion.ingest_source(source_id)
+            await session.commit()
+            pre_delete_results = await ingestion.search_fts("删除索引验证", ws_id)
+            assert len(pre_delete_results) >= 1
 
         # Test delete
         resp = await c.delete(f"/api/workspace/{ws_id}/sources/{source_id}", headers=headers)
@@ -279,6 +299,10 @@ async def test_delete_source_success():
             deleted = result.scalar_one_or_none()
             assert deleted is not None
             assert deleted.status == "archived"
+
+            ingestion = KnowledgeIngestionService(session)
+            post_delete_results = await ingestion.search_fts("删除索引验证", ws_id)
+            assert post_delete_results == []
 
     await engine.dispose()
     if os.path.exists(tmp_db):

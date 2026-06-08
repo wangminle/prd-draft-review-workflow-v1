@@ -140,8 +140,8 @@ WHITELIST = {
         "shutil_rmtree": 0,
     },
     "workspace.py": {
-        "db_add": 0,
-        "db_commit": 5,   # delete source + update tags + upload source + update default workspace + update member
+        "db_add": 1,      # RetrievalLog in retrieve endpoint
+        "db_commit": 8,   # delete source + update tags + upload source + upload ingest failure + update default workspace + update member + retrieve log + ingest
         "db_flush": 1,   # update member status
         "builtin_open": 0,
         "os_makedirs": 0,
