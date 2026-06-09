@@ -10,7 +10,11 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import get_settings
 from app.models.user import Base
-from app.models.user import ContextItem, SkillConfig  # noqa: F401 — ensure tables are registered
+from app.models.user import (  # noqa: F401 — ensure tables are registered
+    ContextItem, SkillConfig, PiAgentConfig,
+    AgentProfile, AgentAuthorization, AgentRun, AgentStep, ToolCallTrace,
+    MCPServerConfig, MCPToolPolicy, AgentApprovalRequest,
+)
 from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource, ProjectSourceRef  # noqa: F401 — ensure workspace tables are registered
 from app.models.knowledge import KnowledgeDocument, KnowledgeChunk, RetrievalLog, AnswerFeedback  # noqa: F401 — ensure knowledge tables are registered
 from app.utils import now_cn
@@ -54,6 +58,7 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_review_schema(conn)
+        await _migrate_pi_agent_columns(conn)
 
     # FTS5 虚拟表
     await _ensure_fts5()
@@ -69,6 +74,13 @@ async def init_db():
 
     # 内置 Skills 配置
     await _ensure_skill_configs()
+
+    # Pi Agent 默认配置（先迁移再确保唯一行）
+    await _migrate_pi_agent_singleton()
+    await _ensure_pi_agent_config()
+
+    # P3: 为已有用户创建默认 AgentProfile
+    await _ensure_agent_profiles()
 
     # 清理僵尸任务：服务重启后遗留的 running/pending 状态
     await _cleanup_zombie_tasks()
@@ -395,6 +407,75 @@ async def _ensure_skill_configs():
         await session.commit()
 
 
+async def _migrate_pi_agent_singleton():
+    """迁移旧 pi_agent_config 表：添加 singleton_key 列并去重。"""
+    from app.models.user import PiAgentConfig
+
+    async with engine.begin() as conn:
+        result = await conn.execute(text("PRAGMA table_info(pi_agent_config)"))
+        columns = {row[1] for row in result.fetchall()}
+        if "singleton_key" not in columns:
+            await conn.execute(text(
+                "ALTER TABLE pi_agent_config ADD COLUMN singleton_key VARCHAR(20) NOT NULL DEFAULT 'default'"
+            ))
+        # Deduplicate: keep the row with the smallest id, delete the rest
+        rows = await conn.execute(text(
+            "SELECT id FROM pi_agent_config ORDER BY id"
+        ))
+        all_ids = [row[0] for row in rows.fetchall()]
+        if len(all_ids) > 1:
+            keep_id = all_ids[0]
+            for drop_id in all_ids[1:]:
+                await conn.execute(text(f"DELETE FROM pi_agent_config WHERE id = {drop_id}"))
+            logger.info(f"[INIT] Pi Agent 配置去重：保留 id={keep_id}，删除 {len(all_ids) - 1} 条重复行")
+        # Ensure the unique index exists (idempotent)
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_pi_agent_singleton_key ON pi_agent_config(singleton_key)"
+        ))
+
+
+async def _ensure_pi_agent_config():
+    """确保 Pi Agent 配置行存在（单行记录，防并发重复）。"""
+    from app.models.user import PiAgentConfig
+    from sqlalchemy.exc import IntegrityError
+
+    async with async_session() as session:
+        result = await session.execute(select(PiAgentConfig))
+        if result.scalar_one_or_none() is None:
+            config = PiAgentConfig(singleton_key="default")
+            session.add(config)
+            try:
+                await session.commit()
+            except IntegrityError:
+                # Concurrent creation from another worker — safe to ignore.
+                await session.rollback()
+        logger.info("[INIT] Pi Agent 配置行已确保存在")
+
+
+async def _ensure_agent_profiles():
+    """为所有现有用户创建默认 AgentProfile（幂等）。"""
+    from app.models.user import AgentProfile, User
+
+    async with async_session() as session:
+        # 获取所有用户 ID
+        users = (await session.execute(select(User.id))).scalars().all()
+        # 获取已有 AgentProfile 的 owner_id
+        existing = (
+            await session.execute(
+                select(AgentProfile.owner_id).where(AgentProfile.owner_type == "user")
+            )
+        ).scalars().all()
+        existing_set = set(existing)
+        created = 0
+        for uid in users:
+            if uid not in existing_set:
+                session.add(AgentProfile(owner_type="user", owner_id=uid, name="My Agent"))
+                created += 1
+        if created:
+            await session.commit()
+            logger.info("[INIT] 为 %d 个用户创建默认 AgentProfile", created)
+
+
 async def _cleanup_zombie_tasks():
     """Mark running/pending tasks as failed — they can't resume after a server restart."""
     from app.models.review import ReviewTask
@@ -490,3 +571,29 @@ async def _migrate_projects_to_default_workspace(default_workspace_id: int):
                 p.workspace_id = default_workspace_id
             await session.commit()
             logger.info(f"[INIT] {len(unassigned)} 个旧项目已归入默认 workspace")
+
+
+async def _migrate_pi_agent_columns(conn):
+    """pi_agent_config 列级迁移 — 为已存在的表补充新列（ALTER TABLE 兼容）。"""
+    # 检查表是否存在
+    result = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='pi_agent_config'"))
+    if not result.fetchone():
+        return  # 表不存在，create_all 会创建完整表
+
+    # 获取当前列名
+    col_result = await conn.execute(text("PRAGMA table_info(pi_agent_config)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    # 补充可能缺失的列（随版本迭代新增）
+    new_columns = {
+        "vision_encrypted_api_key": "TEXT",
+        "vision_model": "VARCHAR(100)",
+        "extension_blocked_tools": "TEXT",
+        "skills_registry_url": "VARCHAR(1000)",
+        "skills_installed_list": "TEXT",
+        "system_prompt": "TEXT",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE pi_agent_config ADD COLUMN {col_name} {col_type}"))
+            logger.info("[MIGRATE] pi_agent_config 新增列: %s", col_name)

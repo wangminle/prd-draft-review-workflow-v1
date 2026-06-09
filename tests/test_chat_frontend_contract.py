@@ -290,5 +290,7 @@ def test_citation_card_methods_in_chat_js():
 
 
 def test_knowledge_status_style_in_css():
-    """P2.C.1: knowledge-btn active 状态有视觉样式"""
-    assert "#knowledge-btn[data-active=\"true\"]" in CSS
+    """P2.C.1: tool-btn active 状态有统一样式（虚线框→实线框+蓝色）"""
+    assert ".tool-btn[data-active=\"true\"]" in CSS
+    assert ".tool-btn" in CSS
+    assert "dashed" in CSS

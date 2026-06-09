@@ -132,3 +132,195 @@ class SkillConfig(Base):
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
+
+
+class PiAgentConfig(Base):
+    """Pi Agent 独立配置 — 单行记录，所有能力模块集中管理。"""
+    __tablename__ = "pi_agent_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    singleton_key: Mapped[str] = mapped_column(String(20), unique=True, nullable=False, default="default")
+
+    # ── LLM 大模型配置 ──
+    llm_provider: Mapped[str] = mapped_column(String(30), nullable=False, default="deepseek")
+    llm_api_base: Mapped[str] = mapped_column(String(500), nullable=False, default="https://api.deepseek.com/v1")
+    llm_model: Mapped[str] = mapped_column(String(100), nullable=False, default="deepseek-chat")
+    llm_encrypted_api_key: Mapped[str | None] = mapped_column(Text)
+    llm_max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    llm_temperature: Mapped[float] = mapped_column(default=0.7)
+
+    # ── Search Tool（知识库检索）配置 ──
+    search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    search_provider: Mapped[str] = mapped_column(String(30), nullable=False, default="builtin")
+    search_api_base: Mapped[str | None] = mapped_column(String(500))
+    search_encrypted_api_key: Mapped[str | None] = mapped_column(Text)
+    search_max_results: Mapped[int] = mapped_column(Integer, default=5)
+
+    # ── Vision（读图）配置 ──
+    vision_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    vision_provider: Mapped[str] = mapped_column(String(30), nullable=False, default="openai_compatible")
+    vision_api_base: Mapped[str | None] = mapped_column(String(500))
+    vision_encrypted_api_key: Mapped[str | None] = mapped_column(Text)
+    vision_model: Mapped[str | None] = mapped_column(String(100))
+
+    # ── Extension 配置 ──
+    extension_path: Mapped[str | None] = mapped_column(String(500))
+    extension_max_tool_calls: Mapped[int] = mapped_column(Integer, default=3)
+    extension_blocked_tools: Mapped[str] = mapped_column(Text, default="bash,write,edit")
+
+    # ── Skill 安装配置 ──
+    skills_install_dir: Mapped[str] = mapped_column(String(500), nullable=False, default="skills")
+    skills_registry_url: Mapped[str | None] = mapped_column(String(1000))
+    skills_installed_list: Mapped[str | None] = mapped_column(Text)  # JSON: ["skill_id1", ...]
+
+    # ── System Prompt ──
+    system_prompt: Mapped[str | None] = mapped_column(Text)
+
+    # ── 通用 ──
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_test_status: Mapped[str | None] = mapped_column(String(20))
+    last_test_time: Mapped[datetime | None] = mapped_column(DateTime)
+    last_test_latency_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
+
+
+class AgentProfile(Base):
+    """个人 Agent 配置 — 每个用户拥有一个 Agent Profile。"""
+    __tablename__ = "agent_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    owner_type: Mapped[str] = mapped_column(String(20), nullable=False, default="user")  # user/team/review
+    owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # user.id or workspace.id
+    name: Mapped[str] = mapped_column(String(100), nullable=False, default="My Agent")
+    system_policy: Mapped[str | None] = mapped_column(Text)  # system prompt for this agent
+    allowed_tools_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["search", "rag", "skill_runner", "artifact"]
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active/disabled
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
+
+    authorizations = relationship("AgentAuthorization", back_populates="agent", cascade="all, delete-orphan")
+
+
+class AgentAuthorization(Base):
+    """Agent 授权条目 — 控制 Agent 在特定范围内的权限。"""
+    __tablename__ = "agent_authorizations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agent_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    granted_by: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)  # 授权人
+    scope_type: Mapped[str] = mapped_column(String(20), nullable=False)  # workspace/project/personal
+    scope_id: Mapped[int | None] = mapped_column(Integer)  # workspace.id or project.id, null for personal
+    permissions_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["read", "write", "search", "execute"]
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+    agent = relationship("AgentProfile", back_populates="authorizations")
+
+
+class AgentRun(Base):
+    """Agent 运行实例 — 一次 Agent 对话任务。"""
+    __tablename__ = "agent_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    agent_id: Mapped[int] = mapped_column(ForeignKey("agent_profiles.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    conversation_id: Mapped[int | None] = mapped_column(ForeignKey("conversations.id", ondelete="SET NULL"))
+    goal: Mapped[str] = mapped_column(Text, nullable=False)  # 用户目标/指令
+    plan_json: Mapped[str | None] = mapped_column(Text)  # JSON: Agent 规划
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="planning")  # planning/running/completed/failed
+    total_steps: Mapped[int] = mapped_column(Integer, default=0)
+    total_tool_calls: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    steps = relationship("AgentStep", back_populates="run", cascade="all, delete-orphan", order_by="AgentStep.step_no")
+    traces = relationship("ToolCallTrace", back_populates="run", cascade="all, delete-orphan")
+
+
+class AgentStep(Base):
+    """Agent 运行步骤 — ReAct 循环中的每一步。"""
+    __tablename__ = "agent_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_no: Mapped[int] = mapped_column(Integer, nullable=False)  # 步骤序号
+    step_type: Mapped[str] = mapped_column(String(20), nullable=False)  # plan/tool/observe/respond
+    tool_name: Mapped[str | None] = mapped_column(String(80))
+    input_ref: Mapped[str | None] = mapped_column(Text)  # 输入摘要
+    output_ref: Mapped[str | None] = mapped_column(Text)  # 输出摘要
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/running/completed/failed
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+    run = relationship("AgentRun", back_populates="steps")
+
+
+class ToolCallTrace(Base):
+    """工具调用追踪 — 记录每次工具调用的详细信息。"""
+    __tablename__ = "tool_call_traces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    step_id: Mapped[int | None] = mapped_column(ForeignKey("agent_steps.id", ondelete="SET NULL"))
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    input_json: Mapped[str | None] = mapped_column(Text)  # JSON: 输入参数摘要
+    output_ref: Mapped[str | None] = mapped_column(Text)  # 输出摘要
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/running/completed/failed/blocked
+    risk_level: Mapped[str] = mapped_column(String(10), nullable=False, default="low")  # low/medium/high
+    approval_status: Mapped[str] = mapped_column(String(20), nullable=False, default="none")  # none/pending/approved/rejected
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+    run = relationship("AgentRun", back_populates="traces")
+
+
+class MCPServerConfig(Base):
+    """MCP Server 配置 — 外部工具服务器连接信息。"""
+    __tablename__ = "mcp_server_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[int | None] = mapped_column(Integer, index=True)  # null = global
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    server_type: Mapped[str] = mapped_column(String(30), nullable=False, default="stdio")  # stdio/sse/http
+    endpoint_ref: Mapped[str] = mapped_column(String(500), nullable=False)  # command or URL
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active/disabled
+    metadata_json: Mapped[str | None] = mapped_column(Text)  # JSON: extra config
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
+
+    policies = relationship("MCPToolPolicy", back_populates="server", cascade="all, delete-orphan")
+
+
+class MCPToolPolicy(Base):
+    """MCP 工具策略 — 控制工具调用权限和审批要求。"""
+    __tablename__ = "mcp_tool_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    server_id: Mapped[int] = mapped_column(ForeignKey("mcp_server_configs.id", ondelete="CASCADE"), nullable=False, index=True)
+    tool_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    allowed_roles_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["owner", "admin", "member"]
+    requires_approval: Mapped[bool] = mapped_column(Boolean, default=False)
+    risk_level: Mapped[str] = mapped_column(String(10), nullable=False, default="low")  # low/medium/high
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+    server = relationship("MCPServerConfig", back_populates="policies")
+
+
+class AgentApprovalRequest(Base):
+    """Agent 审批请求 — 高风险操作需人工审批。"""
+    __tablename__ = "agent_approval_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
+    trace_id: Mapped[int | None] = mapped_column(ForeignKey("tool_call_traces.id", ondelete="SET NULL"))
+    requester_id: Mapped[int] = mapped_column(Integer, nullable=False)  # agent or user who triggered
+    approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    action_type: Mapped[str] = mapped_column(String(50), nullable=False)  # tool_call/write/notify/archive
+    payload_ref: Mapped[str | None] = mapped_column(Text)  # JSON: action details
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/approved/rejected
+    decision_comment: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime)

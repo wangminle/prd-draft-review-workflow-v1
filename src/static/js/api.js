@@ -143,6 +143,15 @@ const API = {
     getAdminSkills() { return this.request('GET', '/api/admin/skills'); },
     updateAdminSkill(skillId, data) { return this.request('PUT', `/api/admin/skills/${encodeURIComponent(skillId)}`, data); },
 
+    /* 管理 — Pi Agent 配置 */
+    getPiAgentConfig() { return this.request('GET', '/api/pi-agent/config'); },
+    updatePiAgentConfig(data) { return this.request('PUT', '/api/pi-agent/config', data); },
+    updatePiAgentLlmApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/llm-api-key', { api_key: apiKey }); },
+    updatePiAgentSearchApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/search-api-key', { api_key: apiKey }); },
+    updatePiAgentVisionApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/vision-api-key', { api_key: apiKey }); },
+    testPiAgentConnection() { return this.request('POST', '/api/pi-agent/config/test-connection'); },
+    speedTestPiAgent() { return this.request('POST', '/api/pi-agent/config/speed-test'); },
+
     /* 管理 — 统计 */
     getStats() { return this.request('GET', '/api/admin/stats'); },
 
@@ -339,4 +348,20 @@ const API = {
     deleteContextItem(convId, itemId) {
         return this.request('DELETE', `/api/chat/conversations/${convId}/context/${itemId}`);
     },
+
+    /* ── Agent (P3) ── */
+    getAgentProfile() { return this.request('GET', '/api/agent/profile'); },
+    updateAgentProfile(data) { return this.request('PUT', '/api/agent/profile', data); },
+    listAgentAuthorizations() { return this.request('GET', '/api/agent/profile/authorizations'); },
+    createAgentAuthorization(data) { return this.request('POST', '/api/agent/profile/authorizations', data); },
+    revokeAgentAuthorization(authId) { return this.request('DELETE', `/api/agent/profile/authorizations/${authId}`); },
+    createAgentRun(data) { return this.request('POST', '/api/agent/runs', data); },
+    getAgentRun(runId) { return this.request('GET', `/api/agent/runs/${runId}`); },
+    listAgentRuns() { return this.request('GET', '/api/agent/runs'); },
+    listPendingApprovals() { return this.request('GET', '/api/agent/approvals'); },
+    decideApproval(reqId, data) { return this.request('POST', `/api/agent/approvals/${reqId}/decide`, data); },
+    listMCPServers() { return this.request('GET', '/api/agent/mcp/servers'); },
+    createMCPServer(data) { return this.request('POST', '/api/agent/mcp/servers', data); },
+    listMCPServerPolicies(serverId) { return this.request('GET', `/api/agent/mcp/servers/${serverId}/policies`); },
+    createMCPServerPolicy(serverId, data) { return this.request('POST', `/api/agent/mcp/servers/${serverId}/policies`, data); },
 };

@@ -33,6 +33,22 @@ case "${1:-start}" in
       echo "Generated JWT_SECRET for this session"
     fi
     export RUNTIME_ROOT="$RUNTIME_DIR"
+    # 可选依赖检测（Pi Agent 功能需要，主应用不受影响）
+    LOCAL_PI_BIN="$PROJECT_DIR/node_modules/.bin/pi"
+    if [ -x "$LOCAL_PI_BIN" ]; then
+      echo "Pi Agent CLI: $($LOCAL_PI_BIN --version 2>/dev/null) ($LOCAL_PI_BIN)"
+    elif command -v pi &>/dev/null; then
+      echo "Pi Agent CLI: $(pi --version 2>/dev/null) ($(command -v pi))"
+      echo "[WARN] Using global pi CLI; run npm install to use project-local node_modules/.bin/pi"
+    else
+      echo "[WARN] pi CLI not found — Pi Agent features will be unavailable"
+    fi
+    if ! command -v node &>/dev/null; then
+      echo "[WARN] node not found — Pi Agent extensions will be unavailable"
+    fi
+    if ! command -v npm &>/dev/null; then
+      echo "[WARN] npm not found — Pi Agent project dependencies cannot be installed"
+    fi
     PYTHONPATH=src nohup uvicorn src.main:app \
       --host 0.0.0.0 \
       --port $PORT \
@@ -63,6 +79,7 @@ case "${1:-start}" in
     ;;
   status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      PORT="${SERVER_PORT:-17957}"
       echo "Server running (PID $(cat "$PID_FILE"))"
       curl -s http://localhost:$PORT/api/health && echo "" || echo "Health check failed"
     else

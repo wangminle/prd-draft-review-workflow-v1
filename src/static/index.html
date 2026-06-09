@@ -74,7 +74,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.11</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -138,7 +138,7 @@
                     <div class="input-panel">
                         <div class="input-tools">
                             <div class="toolbar-left">
-                                <label class="tool-btn" id="file-btn" title="上传文件" aria-label="上传文件">
+                                <label class="tool-btn" id="file-btn" for="file-input" title="上传文件" aria-label="上传文件">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
                                 </label>
                                 <label class="tool-btn" id="url-btn" title="添加链接" aria-label="添加链接">
@@ -146,6 +146,9 @@
                                 </label>
                                 <button class="tool-btn" id="knowledge-btn" title="引用资料" aria-label="引用资料" data-active="false">
                                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+                                </button>
+                                <button class="tool-btn" id="agent-mode-btn" title="Agent 模式" aria-label="Agent 模式" data-active="false">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
                                 </button>
                                 <input type="file" id="file-input" hidden multiple aria-label="上传文件">
                             </div>
@@ -300,7 +303,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.11</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -574,7 +577,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.11</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -651,7 +654,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.11</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -692,6 +695,14 @@
                         <button class="admin-nav-item" data-tab="skills">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 17h7"/><path d="M17.5 13.5v7"/></svg>
                             Skills 管理
+                        </button>
+                        <button class="admin-nav-item" data-tab="pi-agent">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                            Pi Agent 配置
+                        </button>
+                        <button class="admin-nav-item" data-tab="agent">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+                            Agent 设置
                         </button>
                     </nav>
                     <div class="sidebar-toggle">
@@ -817,6 +828,33 @@
                                 </tr></thead>
                                 <tbody id="skill-table-body"></tbody>
                             </table>
+                        </div>
+                    </div>
+
+                    <!-- Pi Agent 配置 -->
+                    <div id="tab-pi-agent" class="admin-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3 class="panel-title">Pi Agent 配置</h3>
+                                <p style="margin:4px 0 0;color:var(--color-text-muted);font-size:var(--fs-13)">管理智能对话 Agent 的所有能力模块：大模型、知识库检索、读图、Extension 和 Skill 安装。独立于通用模型配置。</p>
+                            </div>
+                            <button id="pi-agent-save-btn" class="btn btn-primary btn-sm">保存配置</button>
+                        </div>
+                        <div id="pi-agent-config-area">
+                            <!-- 由 JS 动态渲染 -->
+                        </div>
+                    </div>
+
+                    <!-- Agent 设置 (P3) -->
+                    <div id="tab-agent" class="admin-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3 class="panel-title">Agent 设置</h3>
+                                <p style="margin:4px 0 0;color:var(--color-text-muted);font-size:var(--fs-13)">管理个人 Agent 配置、授权范围、运行记录和待审批请求。</p>
+                            </div>
+                        </div>
+                        <div id="agent-settings-area">
+                            <!-- 由 JS 动态渲染 -->
                         </div>
                     </div>
                 </main>

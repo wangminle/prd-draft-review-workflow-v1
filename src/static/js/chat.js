@@ -17,6 +17,8 @@ const Chat = {
     _knowledgeEnabled: false,     // P2.C.1: 知识库引用是否开启
     _knowledgeWorkspaceId: null,  // P2.C.1: 当前 workspace ID（缓存）
     _pendingCitations: [],        // P2.C.3: 当前消息的引用结果列表
+    _agentMode: false,            // P3.E.1: Agent 模式开关
+    _agentRunId: null,            // P3.E.1: 当前 Agent Run ID
 
     async init() {
         await this.loadModels();
@@ -30,6 +32,7 @@ const Chat = {
             this._bound = true;
         }
         this._bindContextEvents();
+        this._updateToolbarStatus();
     },
 
     destroy() {
@@ -112,12 +115,27 @@ const Chat = {
         this._knowledgeEnabled = !this._knowledgeEnabled;
         const btn = document.getElementById('knowledge-btn');
         btn.dataset.active = String(this._knowledgeEnabled);
-        const statusEl = document.getElementById('input-status');
-        const attachCount = this._files.length + this._urls.length;
+        this._updateToolbarStatus();
+    },
+
+    _toggleAgentMode() {
+        this._agentMode = !this._agentMode;
+        const btn = document.getElementById('agent-mode-btn');
+        if (btn) btn.dataset.active = String(this._agentMode);
+        this._updateToolbarStatus();
+    },
+
+    /** 统一更新工具栏状态栏：始终显示四个工具开关状态 */
+    _updateToolbarStatus() {
+        const el = document.getElementById('input-status');
+        if (!el) return;
         const parts = [];
-        if (attachCount) parts.push(`${attachCount} 个附件`);
-        if (this._knowledgeEnabled) parts.push('引用资料: 开');
-        statusEl.textContent = parts.join(' · ');
+        const hasAttachments = this._files.length + this._urls.length > 0;
+        parts.push(`附件: ${hasAttachments ? '开' : '关'}`);
+        parts.push(`链接: ${this._urls.length > 0 ? '开' : '关'}`);
+        parts.push(`引用资料: ${this._knowledgeEnabled ? '开' : '关'}`);
+        parts.push(`Agent: ${this._agentMode ? '开' : '关'}`);
+        el.textContent = parts.join(' · ');
     },
 
     async loadPrompts() {
@@ -281,6 +299,52 @@ const Chat = {
         }
 
         try {
+            // ── Agent 模式 (P3.E.1) ──
+            if (this._agentMode) {
+                try {
+                    const run = await API.createAgentRun({ goal: text, conversation_id: this._currentConvId });
+                    this._agentRunId = run.id;
+                    const result = await API.getAgentRun(run.id);
+                    // 显示 Agent 运行结果
+                    let agentHtml = '';
+                    // 工具调用轨迹
+                    if (result.traces && result.traces.length > 0) {
+                        agentHtml += '<div class="agent-trace">';
+                        agentHtml += '<div class="agent-trace-header">🔧 工具调用轨迹</div>';
+                        for (const trace of result.traces) {
+                            const statusIcon = trace.status === 'completed' ? '✅' : trace.status === 'blocked' ? '🚫' : '⏳';
+                            const riskBadge = trace.risk_level === 'high' ? '<span class="agent-risk-high">高风险</span>' : '';
+                            agentHtml += `<div class="agent-trace-item">${statusIcon} <strong>${trace.tool_name}</strong> ${riskBadge} <span class="agent-trace-status">${trace.status}</span>${trace.latency_ms ? ` <span class="agent-trace-latency">${trace.latency_ms}ms</span>` : ''}</div>`;
+                            if (trace.output_ref) {
+                                let outputText = trace.output_ref;
+                                try { outputText = JSON.stringify(JSON.parse(trace.output_ref), null, 2); } catch(e) {}
+                                agentHtml += `<div class="agent-trace-output"><pre>${this._esc(outputText).slice(0, 500)}</pre></div>`;
+                            }
+                        }
+                        agentHtml += '</div>';
+                    }
+                    // Agent 步骤
+                    if (result.steps && result.steps.length > 0) {
+                        agentHtml += '<div class="agent-steps">';
+                        agentHtml += '<div class="agent-steps-header">📋 执行步骤</div>';
+                        for (const step of result.steps) {
+                            const typeIcon = { plan: '🧠', tool: '🔧', observe: '👁', respond: '💬' }[step.step_type] || '▶';
+                            agentHtml += `<div class="agent-step-item">${typeIcon} [${step.step_type}] ${step.tool_name || ''} ${step.status === 'completed' ? '✅' : '❌'}${step.latency_ms ? ` ${step.latency_ms}ms` : ''}</div>`;
+                        }
+                        agentHtml += '</div>';
+                    }
+                    this._appendMessage('assistant', agentHtml || 'Agent 已执行，无工具调用。', { isHtml: true });
+                    this._sending = false;
+                    this._updateSendBtn();
+                    return;
+                } catch (e) {
+                    this._appendMessage('assistant', `Agent 执行失败: ${e.message}`);
+                    this._sending = false;
+                    this._updateSendBtn();
+                    return;
+                }
+            }
+
             if (this._streamCtrl) this._streamCtrl.abort();
             this._streamCtrl = new AbortController();
             const reader = await API.chatStream({
@@ -716,7 +780,7 @@ const Chat = {
         document.getElementById('file-list').innerHTML = '';
         document.getElementById('url-list').style.display = 'none';
         document.getElementById('url-list').innerHTML = '';
-        document.getElementById('input-status').textContent = '';
+        this._updateToolbarStatus();
     },
 
     async handleFileUpload(files) {
@@ -766,9 +830,7 @@ const Chat = {
         }
 
         // Status
-        const status = document.getElementById('input-status');
-        const count = this._files.length + this._urls.length;
-        status.textContent = count ? `${count} 个附件` : '';
+        this._updateToolbarStatus();
     },
 
     _removeFile(index) {
@@ -970,6 +1032,7 @@ const Chat = {
 
         // P2.C.1: Knowledge toggle button
         document.getElementById('knowledge-btn').addEventListener('click', () => this._toggleKnowledge(), { signal });
+        document.getElementById('agent-mode-btn').addEventListener('click', () => this._toggleAgentMode(), { signal });
 
         // Search
         document.getElementById('conv-search').addEventListener('input', (e) => {

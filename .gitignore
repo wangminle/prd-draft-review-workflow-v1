@@ -37,6 +37,10 @@ dist/
 *.egg
 *.whl
 
+# Node.js dependencies (npm install output)
+node_modules/
+package-lock.json
+
 # POC-A experiment directory
 # Keep scripts, tests and reports in git; ignore samples and results (generated data).
 poc-a/*

@@ -36,7 +36,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from app.database import init_db
 from app.middleware.auth import get_optional_user
 from app.models.user import User
-from app.routers import admin, auth, chat, history, review, upload, workspace
+from app.routers import admin, agent, auth, chat, history, review, upload, workspace, pi_agent
 from app.services.branding_config import (
     get_branding_config,
     resolve_branding_asset,
@@ -61,13 +61,16 @@ async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     ensure_branding_dirs()
     await init_db()
+    # 注册 Agent 内置工具 (P3.C.1)
+    from app.services.tool_registry import register_builtin_tools
+    register_builtin_tools()
     yield
 
 
 app = FastAPI(
     title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.2.11",
+    version="0.2.12",
     lifespan=lifespan,
 )
 
@@ -79,13 +82,15 @@ app.include_router(chat.router, prefix="/api/chat", tags=["对话"])
 app.include_router(upload.router, prefix="/api/upload", tags=["上传"])
 app.include_router(history.router, prefix="/api/history", tags=["历史记录"])
 app.include_router(admin.router, prefix="/api/admin", tags=["管理"])
+app.include_router(pi_agent.router, prefix="/api/pi-agent", tags=["Pi Agent"])
 app.include_router(review.router, prefix="/api/review", tags=["需求审查"])
 app.include_router(workspace.router, prefix="/api", tags=["团队空间"])
+app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
 
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.2.11"}
+    return {"status": "ok", "version": "0.2.12"}
 
 
 @app.get("/api/app/branding")

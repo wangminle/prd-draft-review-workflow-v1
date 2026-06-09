@@ -41,7 +41,8 @@
 - 已验证完成：**P1 全部 10 项**，即 `P1.A.1~P1.C.2`（791 全量回归通过）。
 - 已验证完成：**POC-A 全部 6 项 + POC-B 深度验证 + POC-C 真实嵌入验证**（最终选型结论：LanceDB 单引擎首选，FTS5 降级回退，dist[0]+gap 拒答，OpenAI text-embedding-3-small；详见 `docs/3-design/检索引擎选型最终结论.md`）。
 - 已验证完成：**Phase 2 全部 20 项**，即 `P2.A.1~P2.E.3 + P2.D.1~D.3 + P2.C.1~C.4`（887 全量回归通过，58+ P2 专项测试通过，34 项 P2.D.1 评估测试通过，P2.D.1 验收通过：top-5 命中率 95.8% ≥ 92%，no_answer 拒答率 87.5% ≥ 50%，无越权召回；BUG-052 检索可用性缺口已修复，BUG-053 SSE 分片解析已修复）
-- 未开始：**Phase 3~Phase 6**
+- 未开始：**Phase 4~Phase 6**
+- 已完成并验证：**Phase 3（Agent 对话与工具注册）** — 数据模型+API+Repository+前端Agent设置页+PiAgentBridge子进程桥接+ToolRegistry schema+审批面板+Agent模式按钮+工具轨迹展示+15条自动化测试；方案A（Pi RPC子进程）已实现，自建ReAct循环已删除；2026-06-09 运行面验证确认当前源码暴露 12 个 `/api/agent/*` 路由，17957 运行实例需重启后生效
 - 快速验证依据：
   - 数据模型/仓储与迁移：`tests/test_workspace.py`
   - 团队空间 API/权限/项目引用：`tests/test_workspace_api.py`
@@ -336,10 +337,12 @@
 
 ---
 
-## Phase 3：Agent 对话与工具注册（未开始）
+## Phase 3：Agent 对话与工具注册（已完成并验证）
 
 > 前置：Agent POC 已通过（见 POC-B）。
 > 目标：用户能以"自己的账号 Agent"完成对话、检索、搜索和简单内容生成。
+>
+> 状态（2026-06-09）：✅ P3.A~P3.E 已完成并通过运行面/自动化验证。当前源码已包含 AgentProfile/AgentAuthorization/AgentRun/AgentStep/ToolCallTrace/ToolRegistry/MCPServerConfig/MCPToolPolicy/AgentApprovalRequest、Agent 设置页、对话页 Agent 模式、审批面板、PiAgentBridge 方案A 子进程桥接和 15 条 P3 自动化测试；17957 既有运行实例需重启后加载 `/api/agent/*` 后端路由。
 
 ### P3.0 并行开发分组
 

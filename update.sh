@@ -17,7 +17,7 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 BACKUP_DIR="$RUNTIME_DIR/update_backups"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-15}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-5}"
-NEW_VERSION="0.2.11"
+NEW_VERSION="0.2.12"
 
 SKIP_MIGRATE=false
 SKIP_BACKUP=false
@@ -481,8 +481,24 @@ copy_versioned_files "$EXTRACTED_DIR"
 # 同步 ui-branding.yaml 中的 app_version 与代码版本号
 sync_yaml_version
 
-if ! python3 -c "import fastapi, uvicorn, sqlalchemy, aiosqlite" 2>/dev/null; then
+if ! python3 -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, cryptography, dotenv, httpx, openai, lancedb, pyarrow, numpy" 2>/dev/null; then
   warn "当前 Python 环境缺少依赖，请手动执行: python3 -m pip install -r requirements.txt"
+fi
+
+# Pi Agent 可选依赖检测（缺失不影响主应用，仅 Agent 模式不可用）
+LOCAL_PI_BIN="$PROJECT_DIR/node_modules/.bin/pi"
+if [ -x "$LOCAL_PI_BIN" ]; then
+  log "Pi Agent CLI: $($LOCAL_PI_BIN --version 2>/dev/null) ($LOCAL_PI_BIN)"
+elif command -v pi &>/dev/null; then
+  warn "使用全局 pi CLI: $(pi --version 2>/dev/null) ($(command -v pi))；建议执行 npm install 使用项目本地 node_modules/.bin/pi"
+else
+  warn "pi CLI 未找到 — Agent 模式不可用"
+fi
+if ! command -v node &>/dev/null; then
+  warn "Node.js 未找到 — Pi Agent Extension 不可用"
+fi
+if ! command -v npm &>/dev/null; then
+  warn "npm 未找到 — 无法安装 Pi Agent 项目依赖"
 fi
 
 log "启动新版本服务..."

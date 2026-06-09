@@ -19,7 +19,7 @@ def test_all_topbars_use_same_product_title_and_show_version():
     assert 'data-branding="review-title"' not in HTML
     assert HTML.count('data-branding="topbar-title"') == 4  # chat + review + workspace + admin
     assert HTML.count('data-branding="app-version"') == 4
-    assert 'Ver. 0.2.11' in HTML
+    assert 'Ver. 0.2.12' in HTML
     assert '.topbar-brand-text {' in CSS
     assert '.topbar-version {' in CSS
     assert "app-version" in AUTH_JS

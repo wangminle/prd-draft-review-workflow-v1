@@ -31,6 +31,8 @@ const Admin = {
             'review-prompts': 'loadReviewPrompts',
             models: 'loadModels',
             skills: 'loadSkills',
+            'pi-agent': 'loadPiAgentConfig',
+            agent: 'loadAgentSettings',
             stats: 'loadStats',
         };
         const fn = tabMap[tab];
@@ -1144,6 +1146,577 @@ const Admin = {
             this.loadReviewPrompts();
         } catch (e) {
             errEl.textContent = '创建失败: ' + e.message;
+        }
+    },
+
+    /* ── Pi Agent 配置 ── */
+    _piAgentData: null,
+
+    async loadPiAgentConfig() {
+        const area = document.getElementById('pi-agent-config-area');
+        if (!area) return;
+        try {
+            const cfg = await API.getPiAgentConfig();
+            this._piAgentData = cfg;
+            area.innerHTML = this._renderPiAgentConfigHTML(cfg);
+            this._bindPiAgentEvents(cfg);
+        } catch (e) {
+            area.innerHTML = `<div style="color:var(--color-danger);padding:16px">加载失败: ${this._esc(e.message)}</div>`;
+        }
+    },
+
+    _renderPiAgentConfigHTML(cfg) {
+        return `
+        <div class="pi-agent-sections">
+            <!-- 全局开关 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>全局开关</h4>
+                    <label class="pi-agent-toggle">
+                        <input type="checkbox" id="pi-enabled" ${cfg.enabled ? 'checked' : ''}>
+                        <span>启用 Pi Agent</span>
+                    </label>
+                </div>
+                <p class="pi-agent-section-desc">启用后，智能对话页面将使用 Pi Agent 作为对话引擎（通过 RPC 子进程模式），替代直接 LLM 调用。</p>
+            </div>
+
+            <!-- 大模型配置 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>🧠 大模型 (LLM)</h4>
+                    <span class="pi-agent-status-badge ${cfg.llm_has_api_key ? 'badge-ok' : 'badge-warn'}">${cfg.llm_has_api_key ? '已配置' : '未配置'}</span>
+                </div>
+                <div class="pi-agent-fields">
+                    <div class="field">
+                        <label>Provider</label>
+                        <select id="pi-llm-provider">
+                            <option value="deepseek" ${cfg.llm_provider === 'deepseek' ? 'selected' : ''}>DeepSeek (原生)</option>
+                            <option value="openai" ${cfg.llm_provider === 'openai' ? 'selected' : ''}>OpenAI</option>
+                            <option value="openai_compatible" ${cfg.llm_provider === 'openai_compatible' ? 'selected' : ''}>OpenAI 兼容</option>
+                            <option value="anthropic" ${cfg.llm_provider === 'anthropic' ? 'selected' : ''}>Anthropic</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>API Base URL</label>
+                        <input id="pi-llm-api-base" value="${this._escAttr(cfg.llm_api_base || '')}" placeholder="https://api.deepseek.com/v1">
+                    </div>
+                    <div class="field">
+                        <label>模型名</label>
+                        <input id="pi-llm-model" value="${this._escAttr(cfg.llm_model || '')}" placeholder="deepseek-chat">
+                    </div>
+                    <div class="field">
+                        <label>API Key</label>
+                        <div class="sensitive-input">
+                            <input type="password" id="pi-llm-api-key" placeholder="${cfg.llm_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-llm-api-key">可见</button>
+                        </div>
+                        ${cfg.llm_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.llm_api_key_masked)}</small>` : ''}
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label>Max Tokens</label>
+                            <input type="number" id="pi-llm-max-tokens" value="${cfg.llm_max_tokens != null ? cfg.llm_max_tokens : 4096}">
+                        </div>
+                        <div class="field">
+                            <label>Temperature</label>
+                            <input type="number" id="pi-llm-temperature" value="${cfg.llm_temperature != null ? cfg.llm_temperature : 0.7}" step="0.1" min="0" max="2">
+                        </div>
+                    </div>
+                    <div class="field">
+                        <button class="btn btn-sm" style="background:var(--green-6);color:#fff" id="pi-llm-test-btn">连接测试</button>
+                        <button class="btn btn-sm" style="background:var(--blue-6);color:#fff" id="pi-llm-speed-btn">测速</button>
+                        <span id="pi-llm-test-feedback" style="margin-left:8px;font-size:var(--fs-13)"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Search Tool 配置 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>🔍 Search Tool (知识库检索)</h4>
+                    <label class="pi-agent-toggle">
+                        <input type="checkbox" id="pi-search-enabled" ${cfg.search_enabled ? 'checked' : ''}>
+                        <span>启用</span>
+                    </label>
+                </div>
+                <div class="pi-agent-fields" id="pi-search-fields" style="${cfg.search_enabled ? '' : 'display:none'}">
+                    <div class="field">
+                        <label>Provider</label>
+                        <select id="pi-search-provider">
+                            <option value="builtin" ${cfg.search_provider === 'builtin' ? 'selected' : ''}>内置检索 (LanceDB+FTS5)</option>
+                            <option value="openai_compatible" ${cfg.search_provider === 'openai_compatible' ? 'selected' : ''}>OpenAI 兼容 API</option>
+                            <option value="tavily" ${cfg.search_provider === 'tavily' ? 'selected' : ''}>Tavily</option>
+                            <option value="serpapi" ${cfg.search_provider === 'serpapi' ? 'selected' : ''}>SerpAPI</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>API Base URL (外部检索)</label>
+                        <input id="pi-search-api-base" value="${this._escAttr(cfg.search_api_base || '')}" placeholder="https://api.tavily.com/v1">
+                    </div>
+                    <div class="field">
+                        <label>API Key (外部检索)</label>
+                        <div class="sensitive-input">
+                            <input type="password" id="pi-search-api-key" placeholder="${cfg.search_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-search-api-key">可见</button>
+                        </div>
+                        ${cfg.search_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.search_api_key_masked)}</small>` : ''}
+                    </div>
+                    <div class="field">
+                        <label>最大返回结果数</label>
+                        <input type="number" id="pi-search-max-results" value="${cfg.search_max_results != null ? cfg.search_max_results : 5}" min="1" max="20">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vision 配置 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>👁️ Vision (读图)</h4>
+                    <label class="pi-agent-toggle">
+                        <input type="checkbox" id="pi-vision-enabled" ${cfg.vision_enabled ? 'checked' : ''}>
+                        <span>启用</span>
+                    </label>
+                </div>
+                <div class="pi-agent-fields" id="pi-vision-fields" style="${cfg.vision_enabled ? '' : 'display:none'}">
+                    <div class="field">
+                        <label>Provider</label>
+                        <select id="pi-vision-provider">
+                            <option value="openai_compatible" ${cfg.vision_provider === 'openai_compatible' ? 'selected' : ''}>OpenAI 兼容</option>
+                            <option value="openai" ${cfg.vision_provider === 'openai' ? 'selected' : ''}>OpenAI</option>
+                            <option value="deepseek" ${cfg.vision_provider === 'deepseek' ? 'selected' : ''}>DeepSeek VL</option>
+                            <option value="qwen" ${cfg.vision_provider === 'qwen' ? 'selected' : ''}>Qwen VL</option>
+                        </select>
+                    </div>
+                    <div class="field">
+                        <label>API Base URL</label>
+                        <input id="pi-vision-api-base" value="${this._escAttr(cfg.vision_api_base || '')}" placeholder="https://api.openai.com/v1">
+                    </div>
+                    <div class="field">
+                        <label>API Key</label>
+                        <div class="sensitive-input">
+                            <input type="password" id="pi-vision-api-key" placeholder="${cfg.vision_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-vision-api-key">可见</button>
+                        </div>
+                        ${cfg.vision_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.vision_api_key_masked)}</small>` : ''}
+                    </div>
+                    <div class="field">
+                        <label>视觉模型名</label>
+                        <input id="pi-vision-model" value="${this._escAttr(cfg.vision_model || '')}" placeholder="gpt-4o / deepseek-vl">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Extension 配置 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>🔌 Extension (扩展与权限)</h4>
+                </div>
+                <div class="pi-agent-fields">
+                    <div class="field">
+                        <label>Extension 文件路径</label>
+                        <input id="pi-extension-path" value="${this._escAttr(cfg.extension_path || '')}" placeholder="extensions/agent-limiter.ts">
+                        <small style="color:var(--color-text-muted)">Pi Agent 启动时通过 --extension 加载的扩展文件</small>
+                    </div>
+                    <div class="field-row">
+                        <div class="field">
+                            <label>单次最大工具调用数</label>
+                            <input type="number" id="pi-extension-max-tool-calls" value="${cfg.extension_max_tool_calls != null ? cfg.extension_max_tool_calls : 3}" min="1" max="50">
+                        </div>
+                        <div class="field">
+                            <label>拦截的高风险工具</label>
+                            <input id="pi-extension-blocked-tools" value="${this._escAttr(cfg.extension_blocked_tools || 'bash,write,edit')}" placeholder="bash,write,edit">
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Skill 安装配置 -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>📦 Skill 安装</h4>
+                </div>
+                <div class="pi-agent-fields">
+                    <div class="field">
+                        <label>Skill 安装目录</label>
+                        <input id="pi-skills-install-dir" value="${this._escAttr(cfg.skills_install_dir || 'skills')}" placeholder="skills">
+                    </div>
+                    <div class="field">
+                        <label>Skill Registry URL</label>
+                        <input id="pi-skills-registry-url" value="${this._escAttr(cfg.skills_registry_url || '')}" placeholder="https://registry.example.com/skills">
+                        <small style="color:var(--color-text-muted)">后续用于从 Skill Registry 拉取和安装新 Skill</small>
+                    </div>
+                    <div class="field">
+                        <label>已安装 Skills (JSON)</label>
+                        <textarea id="pi-skills-installed-list" rows="3" placeholder='["rag_search", "doc_analysis"]'>${this._esc(cfg.skills_installed_list || '')}</textarea>
+                    </div>
+                </div>
+            </div>
+
+            <!-- System Prompt -->
+            <div class="pi-agent-section">
+                <div class="pi-agent-section-head">
+                    <h4>📝 System Prompt</h4>
+                </div>
+                <div class="pi-agent-fields">
+                    <div class="field">
+                        <label>Agent 系统提示词</label>
+                        <textarea id="pi-system-prompt" rows="6" placeholder="定义 Agent 的角色、职责和限制...">${this._esc(cfg.system_prompt || '')}</textarea>
+                        <small style="color:var(--color-text-muted)">Pi Agent 启动时通过 --system-prompt 注入，约束 Agent 行为和权限边界</small>
+                    </div>
+                </div>
+            </div>
+        </div>`;
+    },
+
+    _bindPiAgentEvents(cfg) {
+        // 敏感输入切换
+        this._bindSensitiveInputToggle('pi-llm-api-key');
+        this._bindSensitiveInputToggle('pi-search-api-key');
+        this._bindSensitiveInputToggle('pi-vision-api-key');
+
+        // Search 启用/禁用切换
+        const searchToggle = document.getElementById('pi-search-enabled');
+        const searchFields = document.getElementById('pi-search-fields');
+        if (searchToggle && searchFields) {
+            searchToggle.addEventListener('change', () => {
+                searchFields.style.display = searchToggle.checked ? '' : 'none';
+            });
+        }
+
+        // Vision 启用/禁用切换
+        const visionToggle = document.getElementById('pi-vision-enabled');
+        const visionFields = document.getElementById('pi-vision-fields');
+        if (visionToggle && visionFields) {
+            visionToggle.addEventListener('change', () => {
+                visionFields.style.display = visionToggle.checked ? '' : 'none';
+            });
+        }
+
+        // LLM 连接测试
+        const testBtn = document.getElementById('pi-llm-test-btn');
+        const feedback = document.getElementById('pi-llm-test-feedback');
+        if (testBtn) {
+            testBtn.addEventListener('click', async () => {
+                testBtn.disabled = true;
+                feedback.textContent = '测试中...';
+                feedback.style.color = 'var(--blue-6)';
+                try {
+                    const result = await API.testPiAgentConnection();
+                    if (result.status === 'ok') {
+                        feedback.textContent = '连接成功 ✓';
+                        feedback.style.color = 'var(--green-6)';
+                    } else {
+                        feedback.textContent = '连接失败: ' + (result.detail || '');
+                        feedback.style.color = 'var(--red-6)';
+                    }
+                } catch (e) {
+                    feedback.textContent = '测试失败: ' + e.message;
+                    feedback.style.color = 'var(--red-6)';
+                }
+                testBtn.disabled = false;
+            });
+        }
+
+        // LLM 测速
+        const speedBtn = document.getElementById('pi-llm-speed-btn');
+        if (speedBtn) {
+            speedBtn.addEventListener('click', async () => {
+                speedBtn.disabled = true;
+                feedback.textContent = '测速中...';
+                feedback.style.color = 'var(--blue-6)';
+                try {
+                    const result = await API.speedTestPiAgent();
+                    if (result.status === 'ok') {
+                        feedback.textContent = `延迟 ${result.latency_ms}ms ✓`;
+                        feedback.style.color = 'var(--green-6)';
+                    } else {
+                        feedback.textContent = '测速失败: ' + (result.detail || '');
+                        feedback.style.color = 'var(--red-6)';
+                    }
+                } catch (e) {
+                    feedback.textContent = '测速失败: ' + e.message;
+                    feedback.style.color = 'var(--red-6)';
+                }
+                speedBtn.disabled = false;
+            });
+        }
+
+        // 保存按钮
+        const saveBtn = document.getElementById('pi-agent-save-btn');
+        if (saveBtn) {
+            saveBtn.addEventListener('click', () => this.savePiAgentConfig());
+        }
+    },
+
+    async savePiAgentConfig() {
+        const saveBtn = document.getElementById('pi-agent-save-btn');
+        try {
+            if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = '保存中...'; }
+
+            // 收集配置数据
+            const data = {
+                enabled: document.getElementById('pi-enabled')?.checked || false,
+                // LLM
+                llm_provider: document.getElementById('pi-llm-provider')?.value,
+                llm_api_base: document.getElementById('pi-llm-api-base')?.value.trim(),
+                llm_model: document.getElementById('pi-llm-model')?.value.trim(),
+                llm_max_tokens: parseInt(document.getElementById('pi-llm-max-tokens')?.value || '4096'),
+                llm_temperature: parseFloat(document.getElementById('pi-llm-temperature')?.value || '0.7'),
+                // Search
+                search_enabled: document.getElementById('pi-search-enabled')?.checked || false,
+                search_provider: document.getElementById('pi-search-provider')?.value,
+                search_api_base: document.getElementById('pi-search-api-base')?.value.trim() || null,
+                search_max_results: parseInt(document.getElementById('pi-search-max-results')?.value || '5'),
+                // Vision
+                vision_enabled: document.getElementById('pi-vision-enabled')?.checked || false,
+                vision_provider: document.getElementById('pi-vision-provider')?.value,
+                vision_api_base: document.getElementById('pi-vision-api-base')?.value.trim() || null,
+                vision_model: document.getElementById('pi-vision-model')?.value.trim() || null,
+                // Extension
+                extension_path: document.getElementById('pi-extension-path')?.value.trim() || null,
+                extension_max_tool_calls: parseInt(document.getElementById('pi-extension-max-tool-calls')?.value || '3'),
+                extension_blocked_tools: document.getElementById('pi-extension-blocked-tools')?.value.trim(),
+                // Skills
+                skills_install_dir: document.getElementById('pi-skills-install-dir')?.value.trim() || 'skills',
+                skills_registry_url: document.getElementById('pi-skills-registry-url')?.value.trim() || null,
+                skills_installed_list: document.getElementById('pi-skills-installed-list')?.value.trim() || null,
+                // System Prompt
+                system_prompt: document.getElementById('pi-system-prompt')?.value || null,
+            };
+
+            // 更新主配置
+            await API.updatePiAgentConfig(data);
+
+            // 单独更新 API Keys（如果有输入新值）
+            const llmKey = document.getElementById('pi-llm-api-key')?.value;
+            if (llmKey) await API.updatePiAgentLlmApiKey(llmKey);
+
+            const searchKey = document.getElementById('pi-search-api-key')?.value;
+            if (searchKey) await API.updatePiAgentSearchApiKey(searchKey);
+
+            const visionKey = document.getElementById('pi-vision-api-key')?.value;
+            if (visionKey) await API.updatePiAgentVisionApiKey(visionKey);
+
+            // 刷新配置
+            await this.loadPiAgentConfig();
+            if (saveBtn) { saveBtn.textContent = '已保存 ✓'; saveBtn.style.background = 'var(--green-6)'; }
+            setTimeout(() => {
+                if (saveBtn) { saveBtn.textContent = '保存配置'; saveBtn.style.background = ''; saveBtn.disabled = false; }
+            }, 2000);
+        } catch (e) {
+            alert('保存失败: ' + e.message);
+            if (saveBtn) { saveBtn.textContent = '保存配置'; saveBtn.disabled = false; }
+        }
+    },
+
+    /* ── Agent 设置 (P3.A.4) ── */
+    async loadAgentSettings() {
+        const area = document.getElementById('agent-settings-area');
+        if (!area) return;
+        area.innerHTML = '<p style="color:var(--color-text-muted)">加载中…</p>';
+        try {
+            const [profile, auths, runs, approvals] = await Promise.all([
+                API.getAgentProfile(),
+                API.listAgentAuthorizations(),
+                API.listAgentRuns(),
+                API.listPendingApprovals(),
+            ]);
+            const tools = profile.allowed_tools || [];
+            const toolOptions = ['search', 'rag', 'skill_runner', 'artifact'];
+            const toolLabels = { search: '知识检索', rag: 'RAG 检索', skill_runner: 'Skill 运行', artifact: '产物生成' };
+
+            area.innerHTML = `
+                <div class="pi-agent-sections">
+                    <!-- Agent Profile -->
+                    <div class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h3>个人 Agent 配置</h3>
+                            <span class="pi-agent-status-badge ${profile.status === 'active' ? 'badge-ok' : 'badge-warn'}">${profile.status === 'active' ? '已启用' : '已禁用'}</span>
+                        </div>
+                        <p style="color:var(--color-text-muted);margin:0 0 var(--sp-3)">配置你的个人 AI Agent，控制它可使用的工具和行为策略。</p>
+                        <div class="pi-agent-fields">
+                            <div class="pi-field">
+                                <label>Agent 名称</label>
+                                <input type="text" id="agent-name" value="${this._escAttr(profile.name)}" placeholder="My Agent">
+                            </div>
+                            <div class="pi-field">
+                                <label>System Policy（Agent 行为策略）</label>
+                                <textarea id="agent-system-policy" rows="3" placeholder="你是一个帮助用户完成需求评审的 Agent…">${this._esc(profile.system_policy || '')}</textarea>
+                            </div>
+                            <div class="pi-field">
+                                <label>允许使用的工具</label>
+                                <div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-top:var(--sp-2)">
+                                    ${toolOptions.map(t => `
+                                        <label style="display:flex;align-items:center;gap:var(--sp-1);cursor:pointer">
+                                            <input type="checkbox" id="agent-tool-${t}" ${tools.includes(t) ? 'checked' : ''}>
+                                            <span>${toolLabels[t] || t}</span>
+                                        </label>
+                                    `).join('')}
+                                </div>
+                            </div>
+                            <div class="pi-field">
+                                <label>状态</label>
+                                <select id="agent-status">
+                                    <option value="active" ${profile.status === 'active' ? 'selected' : ''}>启用</option>
+                                    <option value="disabled" ${profile.status === 'disabled' ? 'selected' : ''}>禁用</option>
+                                </select>
+                            </div>
+                            <button id="agent-save-btn" class="btn-primary" onclick="Admin._saveAgentProfile()" style="margin-top:var(--sp-3)">保存配置</button>
+                        </div>
+                    </div>
+
+                    <!-- Authorizations -->
+                    <div class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h3>授权范围</h3>
+                            <span class="pi-agent-status-badge">${auths.length} 条授权</span>
+                        </div>
+                        <p style="color:var(--color-text-muted);margin:0 0 var(--sp-3)">管理你的 Agent 在团队空间、项目和个人范围内的权限。</p>
+                        ${auths.length > 0 ? `
+                            <table class="admin-table" style="margin-bottom:var(--sp-3)">
+                                <thead><tr><th>范围类型</th><th>范围 ID</th><th>权限</th><th>操作</th></tr></thead>
+                                <tbody>
+                                    ${auths.map(a => `
+                                        <tr>
+                                            <td>${a.scope_type}</td>
+                                            <td>${a.scope_id ?? '-'}</td>
+                                            <td>${(a.permissions || []).join(', ') || '-'}</td>
+                                            <td><button class="btn-sm btn-danger" onclick="Admin._revokeAgentAuth(${a.id})">撤销</button></td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : '<p style="color:var(--color-text-muted)">暂无授权条目。</p>'}
+                        <div style="display:flex;gap:var(--sp-2);align-items:end;flex-wrap:wrap">
+                            <div class="pi-field" style="flex:1;min-width:120px">
+                                <label>范围类型</label>
+                                <select id="auth-scope-type">
+                                    <option value="personal">personal</option>
+                                    <option value="workspace">workspace</option>
+                                    <option value="project">project</option>
+                                </select>
+                            </div>
+                            <div class="pi-field" style="flex:1;min-width:120px">
+                                <label>范围 ID</label>
+                                <input type="number" id="auth-scope-id" placeholder="可选">
+                            </div>
+                            <button class="btn-primary" onclick="Admin._addAgentAuth()" style="height:36px">添加授权</button>
+                        </div>
+                    </div>
+
+                    <!-- Recent Runs -->
+                    <div class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h3>最近运行</h3>
+                            <span class="pi-agent-status-badge">${runs.length} 条记录</span>
+                        </div>
+                        ${runs.length > 0 ? `
+                            <table class="admin-table">
+                                <thead><tr><th>ID</th><th>目标</th><th>状态</th><th>步骤</th><th>工具调用</th><th>创建时间</th></tr></thead>
+                                <tbody>
+                                    ${runs.slice(0, 20).map(r => `
+                                        <tr>
+                                            <td>${r.id}</td>
+                                            <td title="${this._escAttr(r.goal)}">${r.goal.length > 40 ? r.goal.slice(0, 40) + '…' : r.goal}</td>
+                                            <td><span class="pi-agent-status-badge ${r.status === 'completed' ? 'badge-ok' : r.status === 'failed' ? 'badge-warn' : ''}">${r.status}</span></td>
+                                            <td>${r.total_steps}</td>
+                                            <td>${r.total_tool_calls}</td>
+                                            <td>${r.created_at ? new Date(r.created_at).toLocaleString('zh-CN') : '-'}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : '<p style="color:var(--color-text-muted)">暂无运行记录。</p>'}
+                    </div>
+
+                    <!-- Pending Approvals -->
+                    <div class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h3>待审批请求</h3>
+                            <span class="pi-agent-status-badge ${approvals.length > 0 ? 'badge-warn' : 'badge-ok'}">${approvals.length} 条待处理</span>
+                        </div>
+                        ${approvals.length > 0 ? `
+                            <table class="admin-table">
+                                <thead><tr><th>ID</th><th>运行 ID</th><th>操作类型</th><th>状态</th><th>创建时间</th><th>操作</th></tr></thead>
+                                <tbody>
+                                    ${approvals.map(a => `
+                                        <tr>
+                                            <td>${a.id}</td>
+                                            <td>${a.run_id}</td>
+                                            <td>${a.action_type}</td>
+                                            <td>${a.status}</td>
+                                            <td>${a.created_at ? new Date(a.created_at).toLocaleString('zh-CN') : '-'}</td>
+                                            <td>
+                                                <button class="btn-sm btn-primary" onclick="Admin._decideApproval(${a.id}, 'approved')">批准</button>
+                                                <button class="btn-sm btn-danger" onclick="Admin._decideApproval(${a.id}, 'rejected')">拒绝</button>
+                                            </td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        ` : '<p style="color:var(--color-text-muted)">暂无待审批请求。</p>'}
+                    </div>
+                </div>
+            `;
+        } catch (e) {
+            area.innerHTML = `<p style="color:red">加载失败: ${e.message}</p>`;
+        }
+    },
+
+    async _saveAgentProfile() {
+        const btn = document.getElementById('agent-save-btn');
+        try {
+            if (btn) { btn.textContent = '保存中…'; btn.disabled = true; }
+            const toolOptions = ['search', 'rag', 'skill_runner', 'artifact'];
+            const allowedTools = toolOptions.filter(t => document.getElementById(`agent-tool-${t}`)?.checked);
+            await API.updateAgentProfile({
+                name: document.getElementById('agent-name')?.value || 'My Agent',
+                system_policy: document.getElementById('agent-system-policy')?.value || null,
+                allowed_tools: allowedTools,
+                status: document.getElementById('agent-status')?.value || 'active',
+            });
+            if (btn) { btn.textContent = '已保存 ✓'; btn.style.background = 'var(--green-6)'; }
+            setTimeout(() => {
+                if (btn) { btn.textContent = '保存配置'; btn.style.background = ''; btn.disabled = false; }
+            }, 2000);
+        } catch (e) {
+            alert('保存失败: ' + e.message);
+            if (btn) { btn.textContent = '保存配置'; btn.disabled = false; }
+        }
+    },
+
+    async _revokeAgentAuth(authId) {
+        if (!confirm('确认撤销此授权？')) return;
+        try {
+            await API.revokeAgentAuthorization(authId);
+            await this.loadAgentSettings();
+        } catch (e) {
+            alert('撤销失败: ' + e.message);
+        }
+    },
+
+    async _addAgentAuth() {
+        try {
+            const scopeType = document.getElementById('auth-scope-type')?.value || 'personal';
+            const scopeId = document.getElementById('auth-scope-id')?.value;
+            await API.createAgentAuthorization({
+                scope_type: scopeType,
+                scope_id: scopeId ? parseInt(scopeId) : null,
+                permissions: ['read', 'write', 'search', 'execute'],
+            });
+            await this.loadAgentSettings();
+        } catch (e) {
+            alert('添加失败: ' + e.message);
+        }
+    },
+
+    async _decideApproval(reqId, decision) {
+        const comment = decision === 'rejected' ? prompt('拒绝原因（可选）:') : null;
+        try {
+            await API.decideApproval(reqId, { decision, comment });
+            await this.loadAgentSettings();
+        } catch (e) {
+            alert('操作失败: ' + e.message);
         }
     },
 };
