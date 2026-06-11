@@ -137,8 +137,12 @@ async def _load_review_context(db: AsyncSession, project_id: int) -> dict | None
     return merge_review_context_defaults(json.loads(ctx.context_data))
 
 
-async def _load_project_knowledge_context(db: AsyncSession, project_id: int) -> str | None:
+async def _load_project_knowledge_context(db: AsyncSession, project_id: int, snapshot_ref: str | None = None) -> str | None:
     """P2.C.2: 加载项目引用资料的知识切块，注入审查上下文。
+
+    P4.Pre.3: 支持 snapshot_version 回读 — 当 snapshot_ref 非空时，
+    优先按 ProjectSourceRef.snapshot_version 过滤对应版本的知识切块。
+    无快照引用时回退取最新。
 
     流程：
     1. 查找项目引用的所有 KnowledgeSource
@@ -158,6 +162,14 @@ async def _load_project_knowledge_context(db: AsyncSession, project_id: int) -> 
 
     source_ids = [ref.source_id for ref in refs]
 
+    # P4.Pre.3: 构建 source_id → snapshot_version 映射
+    snapshot_version_map: dict[int, int | None] = {}
+    if snapshot_ref:
+        # snapshot_ref 格式: "snapshot:{id}" 或直接用 ProjectSourceRef.snapshot_version
+        for ref in refs:
+            if ref.snapshot_version is not None:
+                snapshot_version_map[ref.source_id] = ref.snapshot_version
+
     # 2. 仅使用仍处于 active 状态的引用资料，避免已归档资料继续影响审查结果。
     source_result = await db.execute(
         select(KnowledgeSource).where(
@@ -173,6 +185,18 @@ async def _load_project_knowledge_context(db: AsyncSession, project_id: int) -> 
         select(KnowledgeDocument).where(KnowledgeDocument.source_id.in_(active_source_map.keys()))
     )
     docs = doc_result.scalars().all()
+
+    # P4.Pre.3: 按 snapshot_version 过滤文档版本
+    if snapshot_version_map and docs:
+        filtered_docs = []
+        for doc in docs:
+            expected_ver = snapshot_version_map.get(doc.source_id)
+            if expected_ver is not None and doc.version != expected_ver:
+                continue  # 跳过版本不匹配的文档
+            filtered_docs.append(doc)
+        if filtered_docs:
+            docs = filtered_docs
+
     if not docs:
         return None
 
@@ -405,15 +429,22 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
     default_ws = await ws_repo.get_default()
     legacy_visible = default_ws is not None and default_ws.id in active_ws_ids
 
-    result = await db.execute(select(ReviewProject).where(ReviewProject.created_by == user.id).order_by(ReviewProject.updated_at.desc()))
-    projects = result.scalars().all()
+    # P4.Pre.1: 按用户活跃 workspace 过滤项目可见性，不再限制 created_by
+    from app.services.workspace_access import can
+    result = await db.execute(select(ReviewProject).order_by(ReviewProject.updated_at.desc()))
+    all_projects = result.scalars().all()
     out = []
-    for p in projects:
+    for p in all_projects:
         # workspace_id 非空且用户不在活跃集合中 → 跳过
         if p.workspace_id is not None and p.workspace_id not in active_ws_ids:
             continue
         # workspace_id 为空（legacy）且用户不在默认 workspace → 跳过
         if p.workspace_id is None and not legacy_visible:
+            continue
+        # P4.Pre.1: owner/admin 可看全部，member/viewer 只看自己创建的
+        member = await ws_repo.get_member(p.workspace_id or (default_ws.id if default_ws else None), user.id)
+        member_role = member.role if member else None
+        if member_role not in ("owner", "admin") and p.created_by != user.id:
             continue
         dc = await db.execute(select(func.count()).where(ReviewDocument.project_id == p.id))
         doc_count = dc.scalar() or 0

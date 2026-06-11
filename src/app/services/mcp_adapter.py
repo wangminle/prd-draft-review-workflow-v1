@@ -61,7 +61,7 @@ class MCPClient:
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "ai-review-agent", "version": "0.2.12"},
+                    "clientInfo": {"name": "ai-review-agent", "version": "0.2.13"},
                 },
             })
             self._proc.stdin.write(init_msg + "\n")

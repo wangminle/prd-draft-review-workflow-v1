@@ -1,14 +1,23 @@
-"""测试 API 路由（集成测试）"""
+"""测试 API 路由（集成测试）+ HTTP 中间件"""
 
 import json
 import os
+import sys
 import tempfile
 from datetime import timedelta
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
+
+ROOT = Path(__file__).parent.parent
+SRC = ROOT / "src"
+sys.path.insert(0, str(SRC))
+os.environ.setdefault("CONFIG_PATH", str(SRC / "config.yaml"))
+
+from main import app
 
 from tests.conftest import init_test_db, make_test_app
 
@@ -252,3 +261,17 @@ async def test_register_can_be_disabled_for_closed_deployment(client, monkeypatc
 
     assert resp.status_code == 403
     assert "未开放公开注册" in resp.json()["detail"]
+
+
+# ─── HTTP 中间件（原 test_http_middleware.py）───────────────────────
+
+
+@pytest.mark.asyncio
+async def test_api_responses_disable_cache():
+    """所有 API 响应应设置 Cache-Control: no-store"""
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.get("/api/health")
+
+    assert resp.status_code == 200
+    assert resp.headers["Cache-Control"] == "no-store"

@@ -14,6 +14,7 @@ from app.models.user import (  # noqa: F401 — ensure tables are registered
     ContextItem, SkillConfig, PiAgentConfig,
     AgentProfile, AgentAuthorization, AgentRun, AgentStep, ToolCallTrace,
     MCPServerConfig, MCPToolPolicy, AgentApprovalRequest,
+    Notification, Comment,
 )
 from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource, ProjectSourceRef  # noqa: F401 — ensure workspace tables are registered
 from app.models.knowledge import KnowledgeDocument, KnowledgeChunk, RetrievalLog, AnswerFeedback  # noqa: F401 — ensure knowledge tables are registered
@@ -28,6 +29,11 @@ from app.models.review import (  # noqa: F401 — ensure review tables are regis
     SystemReview,
     ReviewContext,
     ReviewPrompt,
+    ReviewRequest,
+    ReviewRound,
+    ReviewParticipant,
+    KnowledgeSnapshot,
+    Artifact,
 )
 
 _settings = get_settings()
@@ -59,6 +65,10 @@ async def init_db():
         await conn.run_sync(Base.metadata.create_all)
         await _ensure_review_schema(conn)
         await _migrate_pi_agent_columns(conn)
+        await _migrate_approval_approver_required(conn)
+        await _migrate_skill_config_status_version(conn)
+        await _migrate_message_anchor_fields(conn)
+        await _migrate_conversation_mode_project(conn)
 
     # FTS5 虚拟表
     await _ensure_fts5()
@@ -113,6 +123,13 @@ async def _ensure_review_schema(conn):
             "ALTER TABLE review_documents "
             "ADD COLUMN content_hash VARCHAR(64)"
         ))
+    # P4.A.6: 版本链
+    if "parent_document_id" not in columns:
+        await conn.execute(text(
+            "ALTER TABLE review_documents "
+            "ADD COLUMN parent_document_id INTEGER REFERENCES review_documents(id)"
+        ))
+        logger.info("[MIGRATE] review_documents 新增列: parent_document_id")
 
     # SystemReview columns for upgraded databases
     sr_result = await conn.execute(text("PRAGMA table_info(system_reviews)"))
@@ -597,3 +614,99 @@ async def _migrate_pi_agent_columns(conn):
         if col_name not in existing_cols:
             await conn.execute(text(f"ALTER TABLE pi_agent_config ADD COLUMN {col_name} {col_type}"))
             logger.info("[MIGRATE] pi_agent_config 新增列: %s", col_name)
+
+
+async def _migrate_approval_approver_required(conn):
+    """P4.Pre.4: agent_approval_requests.approver_id 从 nullable 改为 NOT NULL。
+    SQLite 不支持 ALTER COLUMN，用 requester_id 填充 NULL 值后重建约束。
+    """
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_approval_requests'"
+    ))
+    if not result.fetchone():
+        return  # 表不存在，create_all 会创建完整表
+
+    # 检查 approver_id 列是否已存在
+    col_result = await conn.execute(text("PRAGMA table_info(agent_approval_requests)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    if "approver_id" not in existing_cols:
+        # 列不存在：先 ADD COLUMN（允许 NULL 暂时），再回填，最后重建 NOT NULL 约束
+        # SQLite 不支持 ALTER COLUMN，所以分步：先加列（nullable），再回填
+        await conn.execute(text(
+            "ALTER TABLE agent_approval_requests ADD COLUMN approver_id INTEGER REFERENCES users(id)"
+        ))
+        # 回填：用 requester_id 填充 NULL 值
+        await conn.execute(text(
+            "UPDATE agent_approval_requests SET approver_id = requester_id WHERE approver_id IS NULL"
+        ))
+        logger.info("[MIGRATE] agent_approval_requests.approver_id 列已添加并回填")
+    else:
+        # 列已存在但可能包含 NULL 值，回填
+        await conn.execute(text(
+            "UPDATE agent_approval_requests SET approver_id = requester_id WHERE approver_id IS NULL"
+        ))
+        logger.info("[MIGRATE] agent_approval_requests.approver_id NULL 值已回填")
+
+
+async def _migrate_skill_config_status_version(conn):
+    """P4.Pre.6: skill_configs 新增 status 和 version 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='skill_configs'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(skill_configs)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    new_columns = {
+        "status": "VARCHAR(20) NOT NULL DEFAULT 'active'",
+        "version": "INTEGER NOT NULL DEFAULT 1",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE skill_configs ADD COLUMN {col_name} {col_type}"))
+            logger.info("[MIGRATE] skill_configs 新增列: %s", col_name)
+
+
+async def _migrate_message_anchor_fields(conn):
+    """P4.Pre.5: messages 新增 anchor_type 和 anchor_id 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(messages)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    new_columns = {
+        "anchor_type": "VARCHAR(50)",
+        "anchor_id": "INTEGER",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE messages ADD COLUMN {col_name} {col_type}"))
+            logger.info("[MIGRATE] messages 新增列: %s", col_name)
+
+
+async def _migrate_conversation_mode_project(conn):
+    """P4.Pre.2: conversations 新增 mode 和 project_id 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='conversations'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(conversations)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    new_columns = {
+        "mode": "VARCHAR(20) NOT NULL DEFAULT 'chat'",
+        "project_id": "INTEGER REFERENCES review_projects(id)",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE conversations ADD COLUMN {col_name} {col_type}"))
+            logger.info("[MIGRATE] conversations 新增列: %s", col_name)

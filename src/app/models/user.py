@@ -42,6 +42,8 @@ class Conversation(Base):
     title: Mapped[str | None] = mapped_column(String(200))
     model_id: Mapped[str] = mapped_column(String(30), nullable=False)
     prompt_template: Mapped[str | None] = mapped_column(String(50))
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="chat")  # P4.Pre.2: chat/presentation/agent
+    project_id: Mapped[int | None] = mapped_column(ForeignKey("review_projects.id"))  # P4.Pre.2: 关联审查项目
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
 
@@ -58,6 +60,8 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(10), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     token_count: Mapped[int | None] = mapped_column(Integer)
+    anchor_type: Mapped[str | None] = mapped_column(String(50))  # P4.Pre.5: artifact_draft/artifact_confirmed/review_request/review_round
+    anchor_id: Mapped[int | None] = mapped_column(Integer)  # P4.Pre.5: 关联的产物/请求/轮次 ID
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
 
     conversation = relationship("Conversation", back_populates="messages")
@@ -130,6 +134,8 @@ class SkillConfig(Base):
     update_url: Mapped[str | None] = mapped_column(String(1000))
     display_order: Mapped[int] = mapped_column(Integer, default=0)
     is_builtin: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # P4.Pre.6: active/inactive
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)  # P4.Pre.6: 技能版本号
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
 
@@ -317,10 +323,42 @@ class AgentApprovalRequest(Base):
     run_id: Mapped[int] = mapped_column(ForeignKey("agent_runs.id", ondelete="CASCADE"), nullable=False, index=True)
     trace_id: Mapped[int | None] = mapped_column(ForeignKey("tool_call_traces.id", ondelete="SET NULL"))
     requester_id: Mapped[int] = mapped_column(Integer, nullable=False)  # agent or user who triggered
-    approver_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    approver_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)  # P4.Pre.4: 指定审批人，创建时必填
     action_type: Mapped[str] = mapped_column(String(50), nullable=False)  # tool_call/write/notify/archive
     payload_ref: Mapped[str | None] = mapped_column(Text)  # JSON: action details
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")  # pending/approved/rejected
     decision_comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+# ─── P4.D: 通知与评论模型 ─────────────────────────────────────────
+
+
+class Notification(Base):
+    """P4.D.1: 通知 — 跨 Phase 基础通知模型，覆盖审查/审批/评论/提及场景。"""
+    __tablename__ = "notifications"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    object_type: Mapped[str] = mapped_column(String(30), nullable=False)  # review_request/review_round/agent_approval/artifact/comment
+    object_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    type: Mapped[str] = mapped_column(String(50), nullable=False)  # review_request_created/review_round_approved/review_round_rejected/artifact_confirmed/agent_approval/comment_reply/mention
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="unread")  # unread/read/archived
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+
+class Comment(Base):
+    """P4.D.2: 评论 — 审查任务/产物页的评论，支持回复和 @提及。"""
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    object_type: Mapped[str] = mapped_column(String(30), nullable=False, index=True)  # review_request/review_round/artifact/knowledge_source
+    object_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="SET NULL"))  # 回复
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)

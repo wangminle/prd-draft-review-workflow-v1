@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BRANDING: dict = {
     "app_title": "AI产品需求初审",
-    "app_version": "0.2.12",
+    "app_version": "0.2.13",
     "login_title": "AI产品需求初审",
     "login_subtitle": "AI 驱动的需求审查工作流平台",
     "login_notice": "",

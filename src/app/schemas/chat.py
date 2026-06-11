@@ -16,6 +16,8 @@ class ChatRequest(BaseModel):
     thinking_level: str | None = None
     enable_knowledge: bool = False  # P2.C.1: 是否启用知识库检索
     knowledge_workspace_id: int | None = None  # P2.C.1: 检索的工作空间 ID
+    mode: str | None = None  # P4.Pre.2: chat/presentation/agent
+    project_id: int | None = None  # P4.Pre.2: 关联审查项目（presentation 模式用）
     stream: bool = True
 
 

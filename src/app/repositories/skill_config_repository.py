@@ -17,11 +17,24 @@ class SkillConfigRepository:
     def __init__(self, db: AsyncSession):
         self._db = db
 
-    async def list_all(self) -> list[SkillConfig]:
-        result = await self._db.execute(
-            select(SkillConfig).order_by(SkillConfig.display_order, SkillConfig.skill_id)
-        )
+    async def list_all(self, include_inactive: bool = False) -> list[SkillConfig]:
+        query = select(SkillConfig).order_by(SkillConfig.display_order, SkillConfig.skill_id)
+        if not include_inactive:
+            query = query.where(SkillConfig.status == "active")
+        result = await self._db.execute(query)
         return list(result.scalars().all())
+
+    async def toggle_status(self, skill_id: str, status: str) -> SkillConfig | None:
+        """P4.Pre.6: 启用/禁用技能。status 只允许 active/inactive。"""
+        if status not in ("active", "inactive"):
+            raise ValueError(f"Invalid status: {status}")
+        skill = await self.get_by_skill_id(skill_id)
+        if skill is None:
+            return None
+        skill.status = status
+        await self._db.flush()
+        await self._db.refresh(skill)
+        return skill
 
     async def get_by_skill_id(self, skill_id: str) -> SkillConfig | None:
         result = await self._db.execute(

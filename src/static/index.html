@@ -74,7 +74,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.13</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -91,6 +91,26 @@
                     </div>
                 </div>
                 <div class="topbar-right">
+                    <div class="notification-bell-wrap" id="notif-bell-chat">
+                        <button class="notification-bell-btn" aria-label="通知" title="通知">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="notification-badge" id="notif-badge-chat" style="display:none">0</span>
+                        </button>
+                        <div class="notification-dropdown" id="notif-dropdown-chat" style="display:none">
+                            <div class="notification-dropdown-head">
+                                <h3 class="notification-dropdown-title">通知</h3>
+                                <button class="btn btn-ghost btn-xs" id="notif-mark-all-read-chat">全部已读</button>
+                            </div>
+                            <div class="notification-dropdown-tabs">
+                                <button class="notification-tab active" data-notif-tab="unread">未读</button>
+                                <button class="notification-tab" data-notif-tab="read">已读</button>
+                                <button class="notification-tab" data-notif-tab="archived">归档</button>
+                            </div>
+                            <div class="notification-dropdown-body" id="notif-list-chat">
+                                <div class="notification-empty">暂无通知</div>
+                            </div>
+                        </div>
+                    </div>
                     <button id="go-review" class="topbar-link" style="color:var(--green-6);font-weight:600" data-branding="review-workspace-label">需求审查工作台</button>
                     <button id="go-workspace" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <button id="go-admin" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
@@ -303,7 +323,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.13</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -320,6 +340,26 @@
                     </div>
                 </div>
                 <div class="topbar-right">
+                    <div class="notification-bell-wrap" id="notif-bell-review">
+                        <button class="notification-bell-btn" aria-label="通知" title="通知">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="notification-badge" id="notif-badge-review" style="display:none">0</span>
+                        </button>
+                        <div class="notification-dropdown" id="notif-dropdown-review" style="display:none">
+                            <div class="notification-dropdown-head">
+                                <h3 class="notification-dropdown-title">通知</h3>
+                                <button class="btn btn-ghost btn-xs" id="notif-mark-all-read-review">全部已读</button>
+                            </div>
+                            <div class="notification-dropdown-tabs">
+                                <button class="notification-tab active" data-notif-tab="unread">未读</button>
+                                <button class="notification-tab" data-notif-tab="read">已读</button>
+                                <button class="notification-tab" data-notif-tab="archived">归档</button>
+                            </div>
+                            <div class="notification-dropdown-body" id="notif-list-review">
+                                <div class="notification-empty">暂无通知</div>
+                            </div>
+                        </div>
+                    </div>
                     <button id="back-to-chat-from-review" class="topbar-link">智能对话</button>
                     <button id="go-workspace-from-review" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <button id="go-admin-from-review" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
@@ -562,6 +602,49 @@
                             <button class="result-tab" data-tab="pm-assessment">PM发展建议</button>
                         </div>
                         <div class="result-content" id="result-content"></div>
+
+                        <!-- P4.B.5: 讲解准备入口 -->
+                        <div id="review-presentation-entry" class="review-presentation-entry" style="display:none">
+                            <div class="presentation-entry-icon">
+                                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+                            </div>
+                            <div class="presentation-entry-info">
+                                <h4 class="presentation-entry-title">审查已完成</h4>
+                                <p class="presentation-entry-desc">你可以准备讲解物料，通过对话迭代优化后发起协作审查</p>
+                            </div>
+                            <button class="btn btn-primary btn-sm" id="prepare-presentation-btn">准备讲解</button>
+                        </div>
+
+                        <!-- P4.B.2: 产物卡片区域 -->
+                        <div id="review-artifact-section" class="review-artifact-section" style="display:none">
+                            <div class="artifact-section-head">
+                                <h3 class="artifact-section-title">讲解物料</h3>
+                                <button class="btn btn-primary btn-sm" id="create-artifact-btn">+ 创建物料</button>
+                            </div>
+                            <div id="review-artifact-list" class="review-artifact-list"></div>
+                        </div>
+
+                        <!-- P4.A.4: 协作审查请求面板 -->
+                        <div id="review-collab-section" class="review-collab-section" style="display:none">
+                            <div class="collab-section-head">
+                                <h3 class="collab-section-title">协作审查</h3>
+                                <button class="btn btn-primary btn-sm" id="initiate-collab-btn">发起协作审查</button>
+                            </div>
+                            <div id="review-collab-list" class="review-collab-list"></div>
+                        </div>
+
+                        <!-- P4.D.6: 评论组件 -->
+                        <div id="review-comment-section" class="review-comment-section" style="display:none">
+                            <div class="comment-section-head">
+                                <h3 class="comment-section-title">评论</h3>
+                                <span class="comment-section-count" id="comment-count">0 条</span>
+                            </div>
+                            <div class="comment-input-row">
+                                <textarea id="comment-input" class="comment-input" rows="2" placeholder="输入评论，@提及团队成员" aria-label="输入评论"></textarea>
+                                <button class="btn btn-primary btn-sm" id="comment-submit-btn">发表</button>
+                            </div>
+                            <div id="comment-list" class="comment-list"></div>
+                        </div>
                     </div>
                         </div>
                     </section>
@@ -577,7 +660,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.13</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -585,6 +668,26 @@
                     <div class="topbar-divider"></div>
                 </div>
                 <div class="topbar-right">
+                    <div class="notification-bell-wrap" id="notif-bell-workspace">
+                        <button class="notification-bell-btn" aria-label="通知" title="通知">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="notification-badge" id="notif-badge-workspace" style="display:none">0</span>
+                        </button>
+                        <div class="notification-dropdown" id="notif-dropdown-workspace" style="display:none">
+                            <div class="notification-dropdown-head">
+                                <h3 class="notification-dropdown-title">通知</h3>
+                                <button class="btn btn-ghost btn-xs" id="notif-mark-all-read-workspace">全部已读</button>
+                            </div>
+                            <div class="notification-dropdown-tabs">
+                                <button class="notification-tab active" data-notif-tab="unread">未读</button>
+                                <button class="notification-tab" data-notif-tab="read">已读</button>
+                                <button class="notification-tab" data-notif-tab="archived">归档</button>
+                            </div>
+                            <div class="notification-dropdown-body" id="notif-list-workspace">
+                                <div class="notification-empty">暂无通知</div>
+                            </div>
+                        </div>
+                    </div>
                     <button id="go-chat-from-workspace" class="topbar-link">智能对话</button>
                     <button id="go-review-from-workspace" class="topbar-link" style="color:var(--green-6);font-weight:600" data-branding="review-workspace-label">审查模式</button>
                     <button id="go-admin-from-workspace" class="topbar-link" style="display:none" data-branding="admin-label">管理后台</button>
@@ -654,7 +757,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.12</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.2.13</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -662,6 +765,26 @@
                     <div class="topbar-divider"></div>
                 </div>
                 <div class="topbar-right">
+                    <div class="notification-bell-wrap" id="notif-bell-admin">
+                        <button class="notification-bell-btn" aria-label="通知" title="通知">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+                            <span class="notification-badge" id="notif-badge-admin" style="display:none">0</span>
+                        </button>
+                        <div class="notification-dropdown" id="notif-dropdown-admin" style="display:none">
+                            <div class="notification-dropdown-head">
+                                <h3 class="notification-dropdown-title">通知</h3>
+                                <button class="btn btn-ghost btn-xs" id="notif-mark-all-read-admin">全部已读</button>
+                            </div>
+                            <div class="notification-dropdown-tabs">
+                                <button class="notification-tab active" data-notif-tab="unread">未读</button>
+                                <button class="notification-tab" data-notif-tab="read">已读</button>
+                                <button class="notification-tab" data-notif-tab="archived">归档</button>
+                            </div>
+                            <div class="notification-dropdown-body" id="notif-list-admin">
+                                <div class="notification-empty">暂无通知</div>
+                            </div>
+                        </div>
+                    </div>
                     <button id="back-to-chat" class="topbar-link">返回</button>
                     <button id="go-workspace-from-admin" class="topbar-link" style="color:var(--blue-4);font-weight:600">团队空间</button>
                     <span class="topbar-user" id="admin-user-display"></span>
@@ -824,6 +947,7 @@
                                     <th>基本功能</th>
                                     <th style="width:190px">本地路径</th>
                                     <th style="width:260px">更新地址</th>
+                                    <th style="width:70px">状态</th>
                                     <th style="width:100px">操作</th>
                                 </tr></thead>
                                 <tbody id="skill-table-body"></tbody>
@@ -886,15 +1010,16 @@
         </div>
     </div>
 
-    <script src="/vendor/purify.min.js?v=20260602-6" onerror="console.error('DOMPurify load failed')"></script>
-    <script src="/vendor/marked.min.js?v=20260602-6" onerror="console.error('marked load failed')"></script>
-    <script src="/vendor/mermaid.min.js?v=20260602-6" onerror="console.error('mermaid load failed')"></script>
-    <script src="/js/api.js?v=20260602-6"></script>
-    <script src="/js/auth.js?v=20260602-6"></script>
-    <script src="/js/chat.js?v=20260602-6"></script>
-    <script src="/js/admin.js?v=20260602-6"></script>
-    <script src="/js/review.js?v=20260602-6"></script>
-    <script src="/js/workspace.js?v=20260602-6"></script>
-    <script src="/js/app.js?v=20260602-6"></script>
+    <script src="/vendor/purify.min.js?v=20260611-1" onerror="console.error('DOMPurify load failed')"></script>
+    <script src="/vendor/marked.min.js?v=20260611-1" onerror="console.error('marked load failed')"></script>
+    <script src="/vendor/mermaid.min.js?v=20260611-1" onerror="console.error('mermaid load failed')"></script>
+    <script src="/js/api.js?v=20260611-1"></script>
+    <script src="/js/auth.js?v=20260611-1"></script>
+    <script src="/js/notification.js?v=20260611-1"></script>
+    <script src="/js/chat.js?v=20260611-1"></script>
+    <script src="/js/admin.js?v=20260611-1"></script>
+    <script src="/js/review.js?v=20260611-1"></script>
+    <script src="/js/workspace.js?v=20260611-1"></script>
+    <script src="/js/app.js?v=20260611-1"></script>
 </body>
 </html>

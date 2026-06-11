@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.2.12。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.2.13。
 
 ### 架构设计
 
@@ -62,6 +62,7 @@ flowchart LR
 ### 功能要点
 
 - 项目化评审：按项目管理需求文档、上下文版本、评审任务和报告输出。
+- 协作审查（P4）：审查通过后进入"讲解准备→产物确认→协作审查"三阶段流程；ReviewRequest/Round/Participant 模型支持多轮审批与参与者管理；讲解准备模式自动注入审查结果和知识上下文；Artifact 产物支持 draft→confirmed 冻结生命周期；通知系统实时推送审批/评论/提及事件（SSE + 铃铛 Inbox）；评论组件支持回复和 @mention。
 - 团队空间与资料库：支持团队共享资料上传、列表、详情、下载和软删除；项目可引用团队资料并自动冻结版本快照；四级角色权限（owner/admin/member/viewer）控制资料管理、上传和查看；停用成员自动阻断项目访问和资料引用；统一权限入口（require_action + is_active_member）覆盖全部 workspace 和 review 域操作。
 - OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
 - Agent 对话与工具注册：支持通过 Pi Agent（方案A：RPC 子进程桥接）进行自主工具调用对话；AgentProfile/AgentRun 管理身份与运行记录；ToolRegistry schema 声明可用工具；高风险工具调用触发人工审批流程；MCP 适配器支持外部工具服务连接；前端提供 Agent 模式开关和审批面板。
@@ -107,12 +108,12 @@ cp .env.example .env
 
 ```text
 src/main.py                 FastAPI 入口与静态站点挂载
-src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent）
-src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器
-src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent）
+src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact）
+src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService
+src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact）
 src/app/storage/            文档与运行时文件存储（含 KnowledgeFileStorage）
 src/app/log_writers/        审计、前端、LLM 会话日志
-src/static/                 前端 SPA（含 workspace.js 资料库页面）
+src/static/                 前端 SPA（含 workspace.js 资料库、notification.js 通知模块）
 skills/                     需求评审技能链
 src/agent/extensions/       Agent 安全 Extension（工具调用拦截与审批）
 package.json                Pi Agent npm 依赖声明（pi-coding-agent）
@@ -139,7 +140,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.2.12.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.2.13.
 
 ### Architecture
 
@@ -191,6 +192,7 @@ Supported review modes:
 ### Feature Highlights
 
 - Project-centric review management for documents, context versions, tasks, and reports.
+- Collaborative review (P4): post-approval workflow covers "presentation preparation → artifact confirmation → collaborative review"; ReviewRequest/Round/Participant models support multi-round approval and participant management; presentation mode auto-injects review results and knowledge context; Artifact lifecycle with draft→confirmed freeze; real-time notification system (SSE + bell Inbox) for approval/comment/mention events; comment component with replies and @mention support.
 - Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access; inactive members automatically blocked from project access and source referencing; unified permission entry point (require_action + is_active_member) covering all workspace and review-domain operations.
 - OpenAI-compatible multi-model integration with encrypted API key storage and configurable thinking settings.
 - Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
@@ -236,12 +238,12 @@ The default server port is 17957.
 
 ```text
 src/main.py                 FastAPI entry point and static site mount
-src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent)
-src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter
-src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent)
+src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact)
+src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService
+src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact)
 src/app/storage/            Runtime file storage (incl. KnowledgeFileStorage)
 src/app/log_writers/        Audit, frontend, and LLM session logs
-src/static/                 Frontend SPA (incl. workspace.js knowledge library page)
+src/static/                 Frontend SPA (incl. workspace.js knowledge library, notification.js notification module)
 skills/                     Review skill chain
 src/agent/extensions/       Agent security Extension (tool call interception and approval)
 package.json                Pi Agent npm dependency (pi-coding-agent)

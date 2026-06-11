@@ -158,3 +158,87 @@ async def test_admin_stats_returns_recent_visits(client):
     data = resp.json()
     assert "recent_visits" in data
     assert isinstance(data["recent_visits"], list)
+
+
+# ─── P4.Pre.6: SkillConfig status/version ─────────────────────
+
+
+async def test_skills_list_includes_status_and_version(client):
+    """P4.Pre.6: 技能列表包含 status 和 version 字段"""
+    headers = await _admin_headers(client)
+    resp = await client.get("/api/admin/skills", headers=headers)
+    assert resp.status_code == 200
+    skills = resp.json()
+    assert len(skills) > 0
+    for skill in skills:
+        assert "status" in skill
+        assert "version" in skill
+        assert skill["status"] in ("active", "inactive")
+
+
+async def test_skill_toggle_active_to_inactive(client):
+    """P4.Pre.6: 禁用技能"""
+    headers = await _admin_headers(client)
+    # 获取第一个技能
+    resp = await client.get("/api/admin/skills", headers=headers)
+    skills = resp.json()
+    skill_id = skills[0]["skill_id"]
+
+    # 禁用
+    resp = await client.put(
+        f"/api/admin/skills/{skill_id}/toggle",
+        json={"status": "inactive"},
+        headers=headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "inactive"
+
+
+async def test_skill_toggle_inactive_to_active(client):
+    """P4.Pre.6: 重新启用技能"""
+    headers = await _admin_headers(client)
+    resp = await client.get("/api/admin/skills", headers=headers)
+    skills = resp.json()
+    skill_id = skills[0]["skill_id"]
+
+    # 先禁用再启用
+    await client.put(f"/api/admin/skills/{skill_id}/toggle", json={"status": "inactive"}, headers=headers)
+    resp = await client.put(f"/api/admin/skills/{skill_id}/toggle", json={"status": "active"}, headers=headers)
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "active"
+
+
+async def test_skill_toggle_invalid_status(client):
+    """P4.Pre.6: 非法 status 值被拒绝"""
+    headers = await _admin_headers(client)
+    resp = await client.get("/api/admin/skills", headers=headers)
+    skills = resp.json()
+    skill_id = skills[0]["skill_id"]
+
+    resp = await client.put(
+        f"/api/admin/skills/{skill_id}/toggle",
+        json={"status": "deleted"},
+        headers=headers,
+    )
+    assert resp.status_code == 422
+
+
+async def test_skills_default_list_excludes_inactive(client):
+    """P4.Pre.6: 默认技能列表不包含被禁用的技能"""
+    headers = await _admin_headers(client)
+    resp = await client.get("/api/admin/skills", headers=headers)
+    skills = resp.json()
+    skill_id = skills[0]["skill_id"]
+
+    # 禁用一个技能
+    await client.put(f"/api/admin/skills/{skill_id}/toggle", json={"status": "inactive"}, headers=headers)
+
+    # 默认列表不包含 inactive
+    resp = await client.get("/api/admin/skills", headers=headers)
+    default_skills = resp.json()
+    assert all(s["status"] == "active" for s in default_skills)
+
+    # include_inactive=true 可以看到全部
+    resp = await client.get("/api/admin/skills?include_inactive=true", headers=headers)
+    all_skills = resp.json()
+    assert len(all_skills) > len(default_skills)

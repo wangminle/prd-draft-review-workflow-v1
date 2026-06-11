@@ -49,6 +49,8 @@ class ChatApplicationService:
         message: str,
         model_id: str,
         prompt_template: str | None,
+        mode: str = "chat",  # P4.Pre.2
+        project_id: int | None = None,  # P4.Pre.2
     ) -> tuple[int, Conversation | None]:
         if conversation_id is None:
             conv = await self._conv_repo.create_conversation(
@@ -56,6 +58,8 @@ class ChatApplicationService:
                 title=message[:50] if len(message) > 50 else message,
                 model_id=model_id,
                 prompt_template=prompt_template,
+                mode=mode,
+                project_id=project_id,
             )
             await self._db.flush()
             return conv.id, conv
@@ -206,6 +210,8 @@ class ChatApplicationService:
         thinking_level: str | None = None,
         enable_knowledge: bool = False,
         knowledge_workspace_id: int | None = None,
+        mode: str = "chat",  # P4.Pre.2
+        project_id: int | None = None,  # P4.Pre.2
     ) -> ChatSession | None:
         model_cfg = await self.get_model_config(model_id)
         if not model_cfg:
@@ -217,6 +223,8 @@ class ChatApplicationService:
             message=message,
             model_id=model_id,
             prompt_template=prompt_template,
+            mode=mode,  # P4.Pre.2
+            project_id=project_id,  # P4.Pre.2
         )
         if conv_id is None:
             return None
@@ -248,6 +256,12 @@ class ChatApplicationService:
             )
             if knowledge_context:
                 context_parts.append(knowledge_context)
+
+        # P4.B.3: Presentation 模式 — 自动注入快速审查结果和项目上下文
+        if mode == "presentation" and project_id:
+            presentation_context = await self.build_presentation_context(project_id, user_id=user_id)
+            if presentation_context:
+                context_parts.append(presentation_context)
 
         context = "\n\n".join(context_parts) if context_parts else None
         llm_messages = build_messages(template, history, message, context)
@@ -327,5 +341,81 @@ class ChatApplicationService:
 
         if response.fallback_reason:
             parts.append(f"[检索降级: {response.fallback_reason}]")
+
+        return "\n".join(parts)
+
+    async def build_presentation_context(self, project_id: int, *, user_id: int | None = None) -> str | None:
+        """P4.B.3: 构建讲解准备对话模式的自动上下文。
+
+        注入快速审查结果、项目文档摘要和团队知识库上下文，
+        帮助用户与 AI 反复迭代优化讲解稿/图示/动画。
+        """
+        from app.models.review import ReviewProject, ReviewTask, DocAnalysis, SystemReview
+        parts = ["[讲解准备模式上下文]"]
+
+        # 加载项目信息
+        result = await self._db.execute(
+            select(ReviewProject).where(ReviewProject.id == project_id)
+        )
+        project = result.scalar_one_or_none()
+        if not project:
+            return None
+
+        # 权限校验：用户必须是项目创建者
+        if user_id is not None and project.created_by != user_id:
+            logger.warning(f"[PRESENTATION] 用户 {user_id} 不是项目 {project_id} 的创建者，拒绝注入上下文")
+            return None
+
+        parts.append(f"项目名称: {project.name}")
+        if project.description:
+            parts.append(f"项目描述: {project.description}")
+
+        # 加载最近的快速审查结果
+        task_result = await self._db.execute(
+            select(ReviewTask)
+            .where(ReviewTask.project_id == project_id, ReviewTask.status == "completed")
+            .order_by(ReviewTask.created_at.desc())
+            .limit(1)
+        )
+        latest_task = task_result.scalar_one_or_none()
+        if latest_task:
+            parts.append(f"\n最近审查任务 (ID: {latest_task.id}, 模式: {latest_task.mode})")
+
+            # 加载逐篇分析结果
+            analyses_result = await self._db.execute(
+                select(DocAnalysis)
+                .where(DocAnalysis.task_id == latest_task.id)
+                .order_by(DocAnalysis.created_at)
+            )
+            analyses = analyses_result.scalars().all()
+            if analyses:
+                parts.append(f"逐篇分析 ({len(analyses)} 篇):")
+                for a in analyses[:5]:  # 最多展示 5 篇摘要
+                    category = a.category or "未分类"
+                    score = f"评分: {a.quality_score}" if a.quality_score else ""
+                    core = a.core_problem or ""
+                    parts.append(f"  - {category} {score}: {core[:200]}")
+
+            # 加载体系评审结果
+            sys_review_result = await self._db.execute(
+                select(SystemReview)
+                .where(SystemReview.task_id == latest_task.id)
+            )
+            sys_review = sys_review_result.scalar_one_or_none()
+            if sys_review:
+                parts.append("体系评审摘要:")
+                if sys_review.business_value:
+                    parts.append(f"  业务价值: {sys_review.business_value[:200]}")
+                if sys_review.action_plan:
+                    parts.append(f"  行动计划: {sys_review.action_plan[:200]}")
+
+        # 加载项目知识上下文
+        from app.routers.review import _load_project_knowledge_context
+        try:
+            knowledge_ctx = await _load_project_knowledge_context(self._db, project_id)
+            if knowledge_ctx:
+                parts.append(f"\n[项目知识上下文]\n{knowledge_ctx[:2000]}")
+        except Exception as e:
+            logger.warning(f"[PRESENTATION] 加载项目知识上下文失败: {e}")
 
         return "\n".join(parts)

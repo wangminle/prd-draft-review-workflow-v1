@@ -202,12 +202,14 @@ class AgentApprovalRepository:
         self._db = db
 
     async def create(self, run_id: int, requester_id: int, action_type: str,
+                     approver_id: int,
                      payload_ref: str | None = None,
                      trace_id: int | None = None) -> AgentApprovalRequest:
         req = AgentApprovalRequest(
             run_id=run_id,
             trace_id=trace_id,
             requester_id=requester_id,
+            approver_id=approver_id,
             action_type=action_type,
             payload_ref=payload_ref,
             status="pending",
@@ -217,8 +219,11 @@ class AgentApprovalRepository:
         await self._db.refresh(req)
         return req
 
-    async def list_pending(self, approver_id: int | None = None) -> list[AgentApprovalRequest]:
-        query = select(AgentApprovalRequest).where(AgentApprovalRequest.status == "pending")
+    async def list_pending(self, approver_id: int) -> list[AgentApprovalRequest]:
+        query = select(AgentApprovalRequest).where(
+            AgentApprovalRequest.status == "pending",
+            AgentApprovalRequest.approver_id == approver_id,
+        )
         result = await self._db.execute(query.order_by(AgentApprovalRequest.created_at.desc()))
         return list(result.scalars().all())
 

@@ -11,6 +11,7 @@ const App = {
         const loggedIn = await Auth.init();
         if (loggedIn) {
             const lastPage = sessionStorage.getItem('lastPage') || 'review';
+            Notification.init();
             this._navigateTo(lastPage);
         } else {
             this._showLoginPage();

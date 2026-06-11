@@ -225,6 +225,23 @@ const Chat = {
         document.querySelectorAll('.conv-item').forEach(el => el.classList.remove('active'));
     },
 
+    /* P4.B.5: 创建 presentation 模式对话 */
+    createConversationWithMode(mode, projectId) {
+        this.newConversation();
+        this._presentationMode = mode;
+        this._presentationProjectId = projectId;
+        // 在 welcome 区域显示提示
+        const container = document.getElementById('chat-messages');
+        const welcome = container.querySelector('.welcome');
+        if (welcome) {
+            const title = welcome.querySelector('.welcome-title');
+            if (title) title.textContent = '讲解准备模式';
+            const desc = welcome.querySelector('.welcome-desc');
+            if (desc) desc.textContent = '在对话中迭代优化讲解物料，完成后确认物料并发起协作审查';
+        }
+        App._showToast('已进入讲解准备模式');
+    },
+
     async sendMessage() {
         if (this._sending) return;
         this._sending = true;
@@ -360,6 +377,8 @@ const Chat = {
                 thinking_level: this._getThinkingLevel(),
                 enable_knowledge: this._knowledgeEnabled,
                 knowledge_workspace_id: this._knowledgeEnabled ? this._knowledgeWorkspaceId : undefined,
+                mode: this._presentationMode || undefined,  // P4.B.5: 讲解准备模式
+                project_id: this._presentationProjectId || undefined,  // P4.B.5: 关联项目
             });
 
             let fullText = '';

@@ -294,3 +294,51 @@ def test_knowledge_status_style_in_css():
     assert ".tool-btn[data-active=\"true\"]" in CSS
     assert ".tool-btn" in CSS
     assert "dashed" in CSS
+
+
+# ─── P4.Pre.5: Message anchor ────────────────────────────────
+
+
+def test_message_model_has_anchor_fields():
+    """P4.Pre.5: Message 模型有 anchor_type 和 anchor_id 字段"""
+    from app.models.user import Message
+    columns = {c.name for c in Message.__table__.columns}
+    assert "anchor_type" in columns
+    assert "anchor_id" in columns
+
+
+def test_conversation_repo_append_message_accepts_anchor():
+    """P4.Pre.5: ConversationRepository.append_message 接受 anchor_type/anchor_id 参数"""
+    import inspect
+    from app.repositories.conversation_repository import ConversationRepository
+    sig = inspect.signature(ConversationRepository.append_message)
+    assert "anchor_type" in sig.parameters
+    assert "anchor_id" in sig.parameters
+
+
+# ─── P4.Pre.2: Conversation mode/project_id ──────────────────
+
+
+def test_conversation_model_has_mode_and_project_id():
+    """P4.Pre.2: Conversation 模型有 mode 和 project_id 字段"""
+    from app.models.user import Conversation
+    columns = {c.name for c in Conversation.__table__.columns}
+    assert "mode" in columns
+    assert "project_id" in columns
+
+
+def test_chat_request_schema_has_mode_and_project_id():
+    """P4.Pre.2: ChatRequest schema 有 mode 和 project_id 可选参数"""
+    from app.schemas.chat import ChatRequest
+    fields = ChatRequest.model_fields
+    assert "mode" in fields
+    assert "project_id" in fields
+
+
+def test_conversation_repo_create_accepts_mode_project_id():
+    """P4.Pre.2: ConversationRepository.create_conversation 接受 mode/project_id 参数"""
+    import inspect
+    from app.repositories.conversation_repository import ConversationRepository
+    sig = inspect.signature(ConversationRepository.create_conversation)
+    assert "mode" in sig.parameters
+    assert "project_id" in sig.parameters

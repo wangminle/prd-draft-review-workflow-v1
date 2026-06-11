@@ -140,8 +140,9 @@ const API = {
     speedTestModel(modelId) { return this.request('POST', `/api/admin/models/${modelId}/speed-test`); },
 
     /* 管理 — Skills */
-    getAdminSkills() { return this.request('GET', '/api/admin/skills'); },
+    getAdminSkills(includeInactive = false) { return this.request('GET', `/api/admin/skills${includeInactive ? '?include_inactive=true' : ''}`); },
     updateAdminSkill(skillId, data) { return this.request('PUT', `/api/admin/skills/${encodeURIComponent(skillId)}`, data); },
+    toggleAdminSkill(skillId, data) { return this.request('PUT', `/api/admin/skills/${encodeURIComponent(skillId)}/toggle`, data); },
 
     /* 管理 — Pi Agent 配置 */
     getPiAgentConfig() { return this.request('GET', '/api/pi-agent/config'); },
@@ -364,4 +365,58 @@ const API = {
     createMCPServer(data) { return this.request('POST', '/api/agent/mcp/servers', data); },
     listMCPServerPolicies(serverId) { return this.request('GET', `/api/agent/mcp/servers/${serverId}/policies`); },
     createMCPServerPolicy(serverId, data) { return this.request('POST', `/api/agent/mcp/servers/${serverId}/policies`, data); },
+
+    /* ── P4.D: 通知 ── */
+
+    listNotifications(status = null, page = 1) {
+        let url = `/api/notifications?page=${page}&page_size=20`;
+        if (status) url += `&status=${status}`;
+        return this.request('GET', url);
+    },
+    getUnreadNotificationCount() { return this.request('GET', '/api/notifications/unread-count'); },
+    markNotificationRead(id) { return this.request('PUT', `/api/notifications/${id}/read`); },
+    batchMarkNotificationsRead() { return this.request('POST', '/api/notifications/batch-read', {}); },
+    archiveNotification(id) { return this.request('PUT', `/api/notifications/${id}/archive`); },
+
+    /* ── P4.D: 评论 ── */
+
+    createComment(data) { return this.request('POST', '/api/notifications/comments', data); },
+    listComments(objectType, objectId) { return this.request('GET', `/api/notifications/comments?object_type=${objectType}&object_id=${objectId}`); },
+    deleteComment(id) { return this.request('DELETE', `/api/notifications/comments/${id}`); },
+
+    /* ── P4.A: 协作审查 ── */
+
+    createReviewRequest(data) { return this.request('POST', '/api/review/requests', data); },
+    listReviewRequests(projectId = null) {
+        let url = '/api/review/requests';
+        if (projectId) url += `?project_id=${projectId}`;
+        return this.request('GET', url);
+    },
+    getReviewRequest(requestId) { return this.request('GET', `/api/review/requests/${requestId}`); },
+    resubmitReviewRequest(requestId) { return this.request('POST', `/api/review/requests/${requestId}/resubmit`); },
+    listReviewParticipants(requestId) { return this.request('GET', `/api/review/requests/${requestId}/participants`); },
+    listReviewRounds(requestId) { return this.request('GET', `/api/review/requests/${requestId}/rounds`); },
+    decideReviewRound(roundId, decision, comment = '') { return this.request('POST', `/api/review/rounds/${roundId}/decide`, { decision, comment }); },
+
+    /* ── P4.B: 产物 ── */
+
+    createArtifact(data) { return this.request('POST', '/api/review/artifacts', data); },
+    listArtifacts(objectType = null, objectId = null) {
+        let url = '/api/review/artifacts';
+        if (objectType && objectId) url += `?object_type=${objectType}&object_id=${objectId}`;
+        return this.request('GET', url);
+    },
+    getArtifact(id) { return this.request('GET', `/api/review/artifacts/${id}`); },
+    updateArtifactContent(id, contentJson) { return this.request('PUT', `/api/review/artifacts/${id}/content`, { content_json: contentJson }); },
+    confirmArtifact(id) { return this.request('POST', `/api/review/artifacts/${id}/confirm`); },
+    unconfirmArtifact(id) { return this.request('POST', `/api/review/artifacts/${id}/unconfirm`); },
+
+    /* ── P4.B: 知识快照 ── */
+
+    createSnapshot(data) { return this.request('POST', '/api/review/snapshots', data); },
+    listSnapshots(projectId = null) {
+        let url = '/api/review/snapshots';
+        if (projectId) url += `?project_id=${projectId}`;
+        return this.request('GET', url);
+    },
 };

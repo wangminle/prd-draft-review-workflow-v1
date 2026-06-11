@@ -132,7 +132,7 @@ WHITELIST = {
     },
     "admin.py": {
         "db_add": 0,       # 已迁移到 User/PromptTemplate/ModelConfig/SkillConfig repositories — E.2 完成
-        "db_commit": 16,   # router 控制事务边界 — E.2 完成
+        "db_commit": 17,   # P4.Pre.6: +1 for toggle_skill_status
         "builtin_open": 0,  # audit reading 已迁到 AuditLogReader — WBS B 完成
         "os_makedirs": 0,
         "os_remove": 0,

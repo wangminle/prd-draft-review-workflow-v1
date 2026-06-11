@@ -45,13 +45,16 @@ class ConversationRepository:
         self._db = db
 
     async def create_conversation(
-        self, *, user_id: int, title: str | None, model_id: str, prompt_template: str | None
+        self, *, user_id: int, title: str | None, model_id: str, prompt_template: str | None,
+        mode: str = "chat", project_id: int | None = None,  # P4.Pre.2
     ) -> Conversation:
         conv = Conversation(
             user_id=user_id,
             title=title,
             model_id=model_id,
             prompt_template=prompt_template,
+            mode=mode,
+            project_id=project_id,
         )
         self._db.add(conv)
         await self._db.flush()
@@ -85,13 +88,16 @@ class ConversationRepository:
         return PaginatedResult(items=items, total=total, page=page, page_size=page_size)
 
     async def append_message(
-        self, *, conversation_id: int, role: str, content: str, token_count: int | None = None
+        self, *, conversation_id: int, role: str, content: str, token_count: int | None = None,
+        anchor_type: str | None = None, anchor_id: int | None = None,  # P4.Pre.5
     ) -> Message:
         msg = Message(
             conversation_id=conversation_id,
             role=role,
             content=content,
             token_count=token_count,
+            anchor_type=anchor_type,
+            anchor_id=anchor_id,
         )
         self._db.add(msg)
         await self._db.flush()

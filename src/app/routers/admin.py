@@ -595,12 +595,15 @@ def _serialize_skill(skill: SkillConfig):
         "update_url": skill.update_url,
         "display_order": skill.display_order,
         "is_builtin": skill.is_builtin,
+        "status": skill.status,  # P4.Pre.6
+        "version": skill.version,  # P4.Pre.6
         "updated_at": skill.updated_at.isoformat() if skill.updated_at else None,
     }
 
 
 @router.get("/skills")
 async def list_skills(
+    include_inactive: bool = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -608,7 +611,7 @@ async def list_skills(
     repo = SkillConfigRepository(db)
     await repo.ensure_defaults()
     await db.commit()
-    skills = await repo.list_all()
+    skills = await repo.list_all(include_inactive=include_inactive)
     return [_serialize_skill(skill) for skill in skills]
 
 
@@ -627,6 +630,29 @@ async def update_skill(
     if skill is None:
         raise HTTPException(status_code=404, detail="Skill不存在")
 
+    await db.commit()
+    return _serialize_skill(skill)
+
+
+class SkillToggle(BaseModel):
+    status: str  # active/inactive
+
+
+@router.put("/skills/{skill_id}/toggle")
+async def toggle_skill_status(
+    skill_id: str,
+    req: SkillToggle,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P4.Pre.6: 启用/禁用技能。"""
+    _require_admin(user)
+    if req.status not in ("active", "inactive"):
+        raise HTTPException(status_code=422, detail="status must be 'active' or 'inactive'")
+    repo = SkillConfigRepository(db)
+    skill = await repo.toggle_status(skill_id, req.status)
+    if skill is None:
+        raise HTTPException(status_code=404, detail="Skill不存在")
     await db.commit()
     return _serialize_skill(skill)
 

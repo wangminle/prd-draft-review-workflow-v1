@@ -25,8 +25,8 @@
 | P1 | 单团队权限底座与成员管理 | 2-3 周 | 10 | 高 | P0 完成 |
 | P2 | 知识库检索与对话 RAG | 4-6 周 | 20 | 高 | P1 完成 + 检索 POC 通过 |
 | P3 | Agent 对话与工具注册 | 4-6 周 | 18 | 中 | P2 完成 + Agent POC 通过 |
-| P4 | 审查平台协作化 | 5-7 周 | 21 | 中 | P3 完成 |
-| P5 | 个人账号 Agent 与消息中心 | 4-6 周 | 11 | 中 | P3 完成 |
+| P4 | 审查平台协作化（三阶段：个人自审→讲解准备→协作审查） | 7-10.5 周 | 32 | 中 | P3 完成 |
+| P5 | 个人账号 Agent 与消息中心 | 3-5 周 | 11 | 中 | P3 完成 + P4 核心版可用 |
 | P6 | 治理与运营 | 3-5 周 | 11 | 低 | P4/P5 完成 |
 
 前置闸门：
@@ -41,8 +41,8 @@
 - 已验证完成：**P1 全部 10 项**，即 `P1.A.1~P1.C.2`（791 全量回归通过）。
 - 已验证完成：**POC-A 全部 6 项 + POC-B 深度验证 + POC-C 真实嵌入验证**（最终选型结论：LanceDB 单引擎首选，FTS5 降级回退，dist[0]+gap 拒答，OpenAI text-embedding-3-small；详见 `docs/3-design/检索引擎选型最终结论.md`）。
 - 已验证完成：**Phase 2 全部 20 项**，即 `P2.A.1~P2.E.3 + P2.D.1~D.3 + P2.C.1~C.4`（887 全量回归通过，58+ P2 专项测试通过，34 项 P2.D.1 评估测试通过，P2.D.1 验收通过：top-5 命中率 95.8% ≥ 92%，no_answer 拒答率 87.5% ≥ 50%，无越权召回；BUG-052 检索可用性缺口已修复，BUG-053 SSE 分片解析已修复）
-- 未开始：**Phase 4~Phase 6**
-- 已完成并验证：**Phase 3（Agent 对话与工具注册）** — 数据模型+API+Repository+前端Agent设置页+PiAgentBridge子进程桥接+ToolRegistry schema+审批面板+Agent模式按钮+工具轨迹展示+15条自动化测试；方案A（Pi RPC子进程）已实现，自建ReAct循环已删除；2026-06-09 运行面验证确认当前源码暴露 12 个 `/api/agent/*` 路由，17957 运行实例需重启后生效
+- 已开始：**Phase 4** — P4.Pre（6项前置任务）+ P4.A（数据模型）+ P4.B（知识快照与产物）+ P4.D（通知与评论）后端+测试已完成（963全量回归通过），P4.B.5/P4.D.5/P4.D.6 前端页面待后续实现，P4.C 讲解产物管线（P4.v2 增强版）优先级较低
+- 已完成并验证：**Phase 3（Agent 对话与工具注册）** — 数据模型+API+Repository+前端Agent设置页+PiAgentBridge子进程桥接+ToolRegistry schema+审批面板+Agent模式按钮+工具轨迹展示+15条自动化测试；方案A（Pi RPC子进程）已实现，自建ReAct循环已删除；2026-06-09 源码层验证通过；2026-06-11 17957 运行实例重启后 OpenAPI 暴露 12 个 `/api/agent/*` 路由，P3 运行面闭环确认
 - 快速验证依据：
   - 数据模型/仓储与迁移：`tests/test_workspace.py`
   - 团队空间 API/权限/项目引用：`tests/test_workspace_api.py`
@@ -399,72 +399,124 @@
 
 ---
 
-## Phase 4：审查平台协作化（未开始）
+## Phase 4：审查平台协作化（P4.Pre+P4.A+P4.B+P4.D 后端已完成，2026-06-11）
 
-> 目标：形成"发起 → AI 初审 → 人工确认 → 讲解产物 → 团队评审"的闭环。
+> 业务流程三阶段设计（基于 2026-06-11 团队讨论确认）：
+>
+> **阶段A：个人自审**（现有流程扩展）
+> 同事导入文档 → 项目上下文自动加载（历史文档/团队知识库/团队指导意见） → 点快速审查 → AI 跑 classify+per_analysis → 看结果 → 不满意则更新文档版本 → 再走一遍快速审查 → 通过后进入下一阶段。
+>
+> **阶段B：讲解准备**（迭代对话）
+> 通过自审后 → 与 AI 对话描述"我想讲哪些点、哪些地方需要图示" → AI 生成讲解稿/图示/动画 → 反复迭代优化 → 满意后点"确认物料" → 物料冻结保存（确认 ≠ 立即发送，只是准备好）。
+>
+> **阶段C：协作审查**（多轮次提交）
+> 确认物料后 → 指定审查员发起协作审查请求 → 审查员确认/驳回 → 驳回则发起人回到阶段A更新文档 → 重走快速审查 → 可能更新物料 → 确认物料 → 发起新一轮提交 → 循环直到审查员通过 → 归档。
+>
+> **核心原则**：
+> - 单篇快速审查是核心产出，其他审查模式是参考辅助。
+> - 不要在工作流框架内做文件增删改查，文件管理在软件外部执行；工作流内只提供"更新文档"按钮重新上传新版本。
+> - ReviewRequest 是 ReviewProject 的后置扩展（串联而非替代），1 个 ReviewProject 通过后可发起 1~N 个 ReviewRequest。
+> - 阶段B用对话模式（复用 Conversation/Message + SSE），不是单次 Skill 调用。
+> - 协作审查有轮次追踪（ReviewRound），每轮记录提交物、审查员决策和意见。
+
+### P4.Pre 协作底座收口（前置必做，2026-06-11 代码差距验证新增）
+
+> 背景：2026-06-11 对照代码验证发现 P4~P6 有 6 处把"已有底座"假设过满，不先补齐则后续任务（ReviewRound / presentation 对话 / 快照回放 / 审批收件箱 / 个人知识 / 治理）会边做边返工。以下 6 个任务必须在 P4.A~P4.E 正式任务之前完成。
+
+| ID | 任务 | 验收标准 | 工时估算 | 差距来源 |
+| --- | --- | --- | ---: | --- |
+| P4.Pre.1 | 审查域访问模型改造：`review.py` 的 `list_projects` 从 `created_by==user.id` 硬过滤改为 workspace 成员可见性过滤（owner/admin 看全部，member/viewer 看自己创建+被指派参与的）；`_verify_project_owner` 已放开 workspace 权限但需补充 ReviewParticipant 挂接点（预留 request_id 参数位，P4.A 实际接入时只需填入）。**不改动现有 owner-only 单项目访问的向下兼容** | workspace 成员可在项目列表中看到他人创建的项目（按角色过滤）；ReviewParticipant 挂接点预留 | 1d | review.py `list_projects` 仍硬过滤 created_by |
+| P4.Pre.2 | Conversation 扩展 presentation 模式：`Conversation` 新增 `mode`(chat/presentation/agent, 默认 chat) 和 `project_id`(FK nullable) 字段；`ConversationRepository.create_conversation` 接受 mode+project_id 参数；`chat.py` 创建对话时根据 mode 注入对应 system context（mode=presentation 时自动注入快速审查结果）；`ChatRequest` schema 新增 mode 和 project_id 可选参数。**不破坏现有聊天对话流程** | mode=presentation 对话可创建，审查结果作为上下文自动注入，现有 chat 对话不受影响 | 1.5d | Conversation 无 mode/project_id 字段，WBS P4.B.3 假设可复用 |
+| P4.Pre.3 | 快照版本回读能力：`knowledge_source_repository.py` 新增 `get_source_at_version(source_id, version)` 和 `get_chunks_at_version(document_id, version)` 方法，按 snapshot_version 检索对应版本的知识内容和切块；`review.py` 的 `_load_project_knowledge_context` 改为优先按 ReviewRound.submitted_snapshot_ref 指定的版本加载，无快照引用时回退取最新。**P0 freeze_snapshot 只写不读的缺口补齐** | 按版本号可检索到对应的知识内容和切块，审查时知识上下文可回放到快照时的状态 | 1.5d | freeze_snapshot 只写版本号，加载始终取最新 |
+| P4.Pre.4 | Agent 审批单指定审批人：`AgentApprovalRequest` 创建时 `approver_id` 必须填入（从 nullable 改为 required）；`AgentApprovalRepository.list_pending` 改为按 `approver_id` 过滤（只返回当前用户的待审批）；`agent.py` 的 `list_pending_approvals` endpoint 传入当前 user.id 作为 approver_id；新增 `GET /api/agent/approvals?status=pending` 查询参数。**P4 通知/P5 收件箱的语义基础** | 审批单有明确审批人，待审批列表按审批人过滤，不暴露全局待审批 | 1d | approver_id 存在但创建时为 None，list_pending 不过滤 |
+| P4.Pre.5 | Conversation 消息锚点：`Message` 新增 `anchor_type`(artifact_draft/artifact_confirmed/review_request/review_round, nullable) 和 `anchor_id`(nullable) 字段，支持将对话中的特定消息标记为"产物确认点"或"审查轮次关联点"。`chat.py` SSE 流式响应新增 `anchor` 事件类型。**P4 物料确认和 P5 评论的对话溯源基础** | 消息可标记锚点，锚点类型和 ID 落库，前端可在对话中定位产物确认消息 | 0.5d | Message 无锚点概念，物料确认/审查关联无法回溯到对话 |
+| P4.Pre.6 | SkillConfig.status 字段补齐：`SkillConfig` 新增 `status`(active/inactive, 默认 active) 字段 + `version`(int, 默认 1) 字段；`SkillConfigRepository` 的 list/get 方法默认只返回 status=active 的配置；admin 技能管理页面新增启用/禁用开关。**P6.B.2 SkillPackage 治理的前置字段** | SkillConfig 有 status 和 version 字段，可按状态过滤，管理员可启停技能 | 0.5d | SkillConfig 无 status 字段，P6.B.2 假设可演进 |
 
 ### P4.0 并行开发分组
 
 | 并行组 | 包含任务 | 依赖 | 可并行角色 | 并行说明 |
 | --- | --- | --- | --- | --- |
-| P4-G0 审查请求与状态机 | P4.A.1~P4.A.5 | P3 完成 | 后端/架构 | 先定义 ReviewRequest、Participant、StageExecution 和阶段重跑规则 |
-| P4-G1 快照与人工确认 | P4.B.1~P4.B.3 | P4-G0 状态机 | 全栈 | 知识快照冻结、采纳/驳回/强行通过是审查控制权核心 |
-| P4-G2 讲解产物管线 | P4.C.1~P4.C.6 | P4-G0 + P4-G1 输出结构 | 后端/前端 | Artifact、presentation-generator、沙盒预览可独立推进，但来源必须追溯快照 |
-| P4-G3 通知与评论 | P4.D.1~P4.D.5 | P4-G0 事件定义 | 全栈 | 通知、评论、@提及可与讲解管线并行，事件名称要统一 |
-| P4-G4 测试与回归 | P4.E.1~P4.E.2 | 随 P4-G0~G3 增量执行 | 测试/全栈 | 覆盖状态流转、快照冻结、人工确认、产物生成和旧审查模式回归 |
+| **P4-GPre 协作底座收口** | **P4.Pre.1~P4.Pre.6** | **P3 完成** | **后端/架构** | **审查权限改造、Conversation 模式扩展、快照回读、审批人归属、消息锚点、SkillConfig.status——必须在 P4.A~P4.E 之前完成，否则后续任务边做边返工** |
+| P4-G0 数据模型与基础服务 | P4.A.1~P4.A.7 | P4-GPre 完成 | 后端/架构 | ReviewRequest、ReviewRound、ReviewParticipant、ReviewDocument 版本链和 ReviewRequestRepository |
+| P4-G1 知识快照与发起服务 | P4.B.1~P4.B.5 | P4-G0 数据模型 | 全栈 | 快照冻结（扩展 P0 freeze_snapshot）、讲解准备对话模式、Artifact 确认冻结 |
+| P4-G2 讲解产物管线（P4.v2 增强版） | P4.C.1~P4.C.6 | P4-G1 Artifact 可用 | 后端/前端 | 讲解 Skill、HTML/SVG 渲染、沙盒预览；**优先级低于 P4-G0/G1/G3，核心版完成后再做** |
+| P4-G3 通知与评论 | P4.D.1~P4.D.6 | P4-G0 事件定义 | 全栈 | Notification/Comment 跨 Phase 基础层、NotificationService SSE 推送、前端通知铃铛和评论组件 |
+| P4-G4 测试与回归 | P4.E.1~P4.E.2 | 随 P4-G0~G3 增量执行 | 测试/全栈 | 覆盖状态流转、轮次追踪、快照冻结、文档更新、物料确认/冻结和旧审查模式回归 |
 
-### P4.A 发起式审查状态机
+> **P4 交付分期**：
+> - **P4.Pre 协作底座**：P4-GPre（审查权限+对话模式+快照回读+审批人+消息锚点+SkillConfig.status），约 1-1.5 周，**必须先完成**。
+> - **P4.v1 核心版**：P4-G0 + P4-G1 + P4-G3 + P4-G4（数据模型+快照+发起+文档更新+讲解对话+物料确认+通知评论+测试），约 4-6 周。
+> - **P4.v2 增强版**：P4-G2 讲解产物管线（presentation-generator Skill + HTML/SVG 渲染 + 沙盒预览 + 产物预览页），约 2-3 周。
 
-| ID | 任务 | 验收标准 | 工时估算 |
-| --- | --- | --- | ---: |
-| P4.A.1 | 新增 `ReviewRequest` 表：`workspace_id`、`project_id`、`initiator_id`、`goal`(text)、`status`(initiated/snapshot_frozen/ai_reviewing/pending_confirm/modifying/forced_pass/presenting/in_review/archived)、`created_at` | 表创建，状态枚举完整 | 1d |
-| P4.A.2 | 新增 `ReviewParticipant` 表：`request_id`、`user_id`、`role`(initiator/reviewer/approver/observer)、`permissions_json`、`status` | 参与者可添加和变更角色 | 1d |
-| P4.A.3 | 新增 `ReviewStageExecution` 表：`request_id`、`stage`(snapshot/classify/per_analysis/system_review/confirm/presentation/review_meeting/archive)、`status`(pending/running/completed/failed)、`input_snapshot_ref`、`output_ref`、`started_at`、`finished_at` | 阶段执行可记录和重跑 | 1d |
-| P4.A.4 | 后端 `ReviewInitiationService`：发起审查 → 冻结快照 → 触发 SkillRunner → 产出 AI 初审结果 | 发起后自动冻结知识快照，SkillRunner 按阶段执行 | 3d |
-| P4.A.5 | 阶段重跑：支持从某阶段重新执行，不从头全量重跑 | 重跑后新结果覆盖该阶段，后续阶段可重新触发 | 1.5d |
-
-### P4.B 知识快照与人工确认
+### P4.A 数据模型与基础服务
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P4.B.1 | 新增 `KnowledgeSnapshot` 表：`workspace_id`、`project_id`、`request_id`、`source_refs_json`(资料版本列表)、`chunk_refs_json`(切块版本列表)、`prompt_version`、`skill_version`、`model_config_hash`、`created_at` | 快照可创建，审查开始后只追加不覆盖 | 1d |
-| P4.B.2 | 人工确认功能：发起人对 AI 初审结果逐条采纳/驳回/强行通过，记录 `decision_comment` | 确认操作落库，驳回可附带原因 | 2d |
-| P4.B.3 | 前端：审查确认页 — 显示 AI 初审问题清单，逐条操作（采纳/驳回/强行通过），强行通过需二次确认弹窗 | UI 可操作，强行通过有额外确认 | 2d |
+| P4.A.1 | 新增 `ReviewRequest` 表：`project_id`(FK→ReviewProject)、`initiator_id`、`goal`(text)、`status`(initiated/pending_approval/approved/rejected/archived)、`current_round`(int, 默认 1)、`created_at`、`updated_at`。ReviewRequest 是 ReviewProject 通过后的后置扩展（串联而非替代），1 个 ReviewProject 可发起 1~N 个 ReviewRequest | 表创建，状态枚举完整，project_id FK 有效 | 1d |
+| P4.A.2 | 新增 `ReviewParticipant` 表：`request_id`(FK)、`user_id`、`role`(Reviewer/Approver/Observer)、`status`(active/inactive)。角色规则：自建项目 member → Reviewer，被指派审查员 → Approver，其他 workspace member → Observer | 参与者可添加和变更角色，角色映射逻辑正确 | 1d |
+| P4.A.3 | 新增 `ReviewRound` 表：`request_id`(FK)、`round_no`(int)、`submitted_snapshot_ref`(提交时的知识快照版本)、`submitted_artifact_ref`(提交时的物料版本)、`approver_id`、`decision`(pending/approved/rejected)、`decision_comment`(text)、`created_at`、`decided_at`。每次发起人提交或驳回后重新提交时创建新 ReviewRound | 轮次可追踪，每轮记录完整提交包和审查员决策 | 1d |
+| P4.A.4 | 后端 `ReviewInitiationService`：阶段A（快速审查）通过后 → 发起人可选发起协作审查 → 指定 Approver → 创建 ReviewRequest + ReviewRound(round_no=1) + 通知 Approver。**不替代现有 SkillRunner 流程**，串联在其后 | 发起后自动创建 Request + Round + Participant + 通知 | 2d |
+| P4.A.5 | ReviewRound 提交与驳回 API：Approver 确认/驳回 ReviewRound → 驳回时通知发起人 → 发起人回到阶段A更新文档 → 重走快速审查 → 更新物料 → 发起新 Round(round_no+1)。每轮驳回意见落库 | 驳回→修改→重新提交循环完整，每轮意见可追溯 | 1.5d |
+| P4.A.6 | ReviewDocument 版本链：`ReviewDocument` 新增 `parent_document_id`(FK, nullable)字段，"更新文档"操作在文档对话中点"更新"按钮 → 重新上传新版本文件 → 自动走一遍快速审查 → 新版本文档关联 parent_document_id 形成版本链。**不做文件增删改查编辑器，文件管理在软件外部执行** | 版本链可追溯，"更新文档"按钮可操作，新版自动走快速审查 | 1d |
+| P4.A.7 | ReviewRequestRepository + ReviewRoundRepository + ReviewParticipantRepository：CRUD + 状态变更 + round 创建 + participant 角色查询 | Repository CRUD 和状态流转通过测试 | 1d |
 
-### P4.C AI 讲解产物管线
+### P4.B 知识快照、讲解准备与物料确认
 
-| ID | 任务 | 验收标准 | 工时估算 |
-| --- | --- | --- | ---: |
-| P4.C.1 | 新增 `Artifact` 表：`object_type`、`object_id`、`artifact_type`(html_presentation/svg_summary/mermaid_diagram/meeting_pack)、`path_ref`、`source_snapshot_ref`、`template_version`、`created_at` | 产物可记录，不覆盖历史 | 1d |
-| P4.C.2 | 讲解 DSL 生成 Skill：`presentation-generator` 输入 PRD + 初审结果 + 快照，输出结构化讲解 JSON（场景列表：标题/要点/旁白/视觉/时长） | 输出 JSON 含完整场景定义，Schema 校验通过 | 2d |
-| P4.C.3 | HTML/SVG 渲染：讲解 JSON → 固定模板渲染 Mermaid 图 → SVG 视觉摘要 → HTML 讲解页（可交互，章节导航） | 产物可预览，关键结论可追溯到快照 | 3d |
-| P4.C.4 | 新增 Skill `skills/presentation-generator/`：SKILL.md、prompts/、templates/（讲解 JSON Schema） | Skill 独立可运行，可被 SkillRunner 编排 | 1.5d |
-| P4.C.5 | 沙盒预览：AI 生成的 HTML 在 iframe sandbox 中渲染，禁止访问 cookie/API/外部网络 | 预览隔离，沙盒安全校验通过 | 1d |
-| P4.C.6 | 前端：讲解产物预览页 — 章节导航、全屏播放、来源标注 | 可预览和全屏 | 2d |
-
-### P4.D 通知与评论
+> 说明：P4.B 同时覆盖阶段B的讲解准备对话和物料确认冻结功能。
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P4.D.1 | 新增 `Notification` 表：`recipient_id`、`actor_id`、`object_type`、`object_id`、`type`(review_request/approval/comment/mention)、`status`(unread/read/archived)、`created_at` | 通知可写入和查询 | 1d |
-| P4.D.2 | 新增 `Comment` 表：`object_type`(review_request/artifact/source)、`object_id`、`author_id`、`body`、`parent_id`(回复)、`created_at` | 评论可创建/查询/回复 | 0.5d |
-| P4.D.3 | 后端 `NotificationService`：审查事件（发起、初审完成、待确认、讲解生成、评审会）→ 创建通知 → SSE 推送 | 审查流程中关键节点触发通知 | 2d |
-| P4.D.4 | 前端：通知铃铛 + Inbox 列表（未读/已读/归档），点击跳转到对应审查任务 | 通知实时到达，可跳转 | 1.5d |
-| P4.D.5 | 前端：评论组件 — 审查任务页/讲解产物页下方评论区，支持回复和 @提及 | 评论可创建和展示 | 1d |
+| P4.B.1 | 新增 `KnowledgeSnapshot` 表：`workspace_id`、`project_id`、`request_id`、`source_refs_json`(资料版本列表)、`chunk_refs_json`(切块版本列表)、`prompt_version`、`skill_version`、`model_config_hash`、`created_at`。**扩展 P0.C.3 freeze_snapshot**：P0 已有 ProjectSourceRef.freeze_snapshot() 冻结 source 版本，P4.B.1 在此基础上扩展为完整快照（含切块版本/prompt/skill/模型配置hash），与 P0 快照兼容 | 快照可创建，审查开始后只追加不覆盖，与 P0 freeze_snapshot 兼容 | 0.5d |
+| P4.B.2 | 新增 `Artifact` 表：`object_type`(review_request/conversation)、`object_id`、`artifact_type`(html_presentation/svg_summary/mermaid_diagram/meeting_pack/explanation_json)、`content_json`(TEXT, 产物内容)、`source_conversation_id`(FK→Conversation, nullable)、`source_snapshot_ref`、`template_version`、`status`(draft/confirmed)、`confirmed_at`(nullable)、`created_at`。draft→confirmed 状态转换：物料确认操作时冻结产物，confirmed 后不可修改但可查看 | 产物可记录和查询，draft/confirmed 状态流转正确，confirmed 后不可修改 | 1d |
+| P4.B.3 | 讲解准备对话模式：`Conversation` 新增 `mode` 字段（普通聊天/presentation/agent），mode=presentation 时 system prompt 自动注入"快速审查结果 + 项目上下文"作为对话背景，用户与 AI 反复迭代优化讲解稿/图示/动画。**复用现有 SSE 流式对话 + ContextItem + 知识库引用**，不新建独立对话系统 | mode=presentation 对话可创建和流式交互，审查结果作为上下文自动注入 | 1.5d |
+| P4.B.4 | 物料确认冻结操作：讲解对话中用户满意后点"确认物料" → 从对话最后一条 AI 回复提取产物 JSON → 创建 Artifact(status=confirmed) → 冻结保存 → 对话中显示"物料已确认"标记。确认 ≠ 立即发送协作审查请求，物料只是准备好，等用户后续决定是否提交 | "确认物料"按钮可操作，Artifact 从 draft→confirmed，confirmed 内容不可修改 | 1d |
+| P4.B.5 | 前端：讲解准备对话 UI — 项目审查通过后出现"准备讲解"入口 → 进入 presentation 模式对话 → 对话中可迭代优化 → "确认物料"按钮 → 确认后显示物料卡片（可预览、可取消确认回到 draft 继续优化） → 确认物料后出现"发起协作审查"按钮 | UI 流程完整，确认物料和发起审查是两个独立操作 | 2d |
+
+### P4.C AI 讲解产物管线（P4.v2 增强版，核心版完成后再做）
+
+> 优先级：**中**——先做 P4-G0/G1/G3 核心版，讲解产物管线作为增强版单独交付。
+
+| ID | 任务 | 验收标准 | 工时估算 |
+| --- | --- | --- | ---: |
+| P4.C.1 | 讲解 DSL 生成 Skill：`presentation-generator` 输入 PRD + 快速审查结果 + 用户意图描述 + 快照，输出结构化讲解 JSON（场景列表：标题/要点/旁白/视觉/时长）。作为 presentation 模式对话的 system prompt 注入能力，不是独立单次 Skill 调用 | 输出 JSON 含完整场景定义，Schema 校验通过 | 2d |
+| P4.C.2 | HTML/SVG 渲染：讲解 JSON → 固定模板渲染 Mermaid 图 → SVG 视觉摘要 → HTML 讲解页（可交互，章节导航）。产物可追溯到快照 | 产物可预览，关键结论可追溯到快照 | 3d |
+| P4.C.3 | 新增 Skill `skills/presentation-generator/`：SKILL.md、prompts/、templates/（讲解 JSON Schema）。Skill 独立可运行，可被 SkillRunner 编排，也可作为 presentation 对话的 system prompt 上下文 | Skill 独立可运行 | 1.5d |
+| P4.C.4 | 沙盒预览：AI 生成的 HTML 在 iframe sandbox 中渲染，禁止访问 cookie/API/外部网络。复用 P2 已实现的 Mermaid 渲染 + DOMPurify 安全过滤 | 预览隔离，沙盒安全校验通过 | 1d |
+| P4.C.5 | 前端：讲解产物预览页 — 章节导航、全屏播放、来源标注、Artifact 卡片展示 | 可预览和全屏 | 2d |
+| P4.C.6 | 讲解产物与 Artifact 集成：presentation 对话确认物料时，讲解 JSON + 渲染产物自动写入 Artifact(content_json)，与 ReviewRound 提交包衔接 | 物料确认后 Artifact 含完整讲解产物，可被 ReviewRound 引用 | 1d |
+
+### P4.D 通知与评论（跨 Phase 基础层）
+
+> 说明：Notification 和 Comment 是跨 Phase 基础模型，P3 AgentApprovalRequest 审批事件和 P5 消息中心都依赖此基础层。
+
+| ID | 任务 | 验收标准 | 工时估算 |
+| --- | --- | --- | ---: |
+| P4.D.1 | 新增 `Notification` 表：`recipient_id`、`actor_id`、`object_type`(review_request/review_round/agent_approval/artifact/comment)、`object_id`、`type`(review_request_created/review_round_approved/review_round_rejected/artifact_confirmed/agent_approval/comment_reply/mention)、`status`(unread/read/archived)、`title`(text)、`body`(text, nullable)、`created_at` | 通知可写入和查询，type 覆盖 P3 审批 + P4 审查 + P5 消息场景 | 1d |
+| P4.D.2 | 新增 `Comment` 表：`object_type`(review_request/review_round/artifact/knowledge_source)、`object_id`、`author_id`、`body`、`parent_id`(FK→Comment, nullable, 回复)、`created_at` | 评论可创建/查询/回复 | 0.5d |
+| P4.D.3 | 后端 `NotificationService`：审查事件（发起协作审查、审查员确认/驳回、物料确认）+ P3 Agent 审批事件 → 创建 Notification → SSE 推送。**复用现有 SseTicketStore 鉴权 + chat.py SSE 流式通道模式**，新增独立 Notification SSE 端点 | 审查流程和 Agent 审批中关键节点触发通知，SSE 实时推送 | 2d |
+| P4.D.4 | Notification SSE 端点：`GET /api/notifications/stream` — 复用 SseTicketStore 鉴权，推送 unread 通知增量事件（new_notification/read/archived），与 chat SSE 端点独立运行 | SSE 端点可连接，通知事件实时到达前端 | 1d |
+| P4.D.5 | 前端：通知铃铛 + Inbox 列表（未读/已读/归档），点击跳转到对应审查任务/Agent 审批/讲解对话。通知实时到达，跨 P3/P4/P5 统一入口 | 通知实时到达，可跳转 | 1.5d |
+| P4.D.6 | 前端：评论组件 — 审查任务页/讲解产物页下方评论区，支持回复和 @提及 | 评论可创建和展示 | 1d |
 
 ### P4.E 测试与回归
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P4.E.1 | 自动化测试：ReviewRequest 状态流转、快照冻结、人工确认操作、讲解产物生成、通知创建/推送、评论 CRUD（12+ 条） | pytest 通过 | 2d |
-| P4.E.2 | 回归验证：原有 6 种审查模式仍可正常运行，SkillRunner 不受协作流程影响 | 全量 pytest 通过 | 1d |
+| P4.E.1 | 自动化测试：ReviewRequest 状态流转、ReviewRound 多轮驳回→重新提交循环、ReviewParticipant 角色映射、快照冻结（与 P0 兼容）、文档版本链、Artifact draft→confirmed、通知创建/推送、评论 CRUD（15+ 条） | pytest 通过 | 2d |
+| P4.E.2 | 回归验证：原有 6 种审查模式仍可正常运行，SkillRunner 不受协作流程影响，presentation 对话模式不破坏普通聊天功能 | 全量 pytest 通过 | 1d |
 
 ---
 
-## Phase 5：个人账号 Agent 与消息中心（未开始）
+## Phase 5：个人账号 Agent 与消息中心（未开始，2026-06-11 衔接更新）
 
 > 目标：他人与你的 Agent 对话后你可收到消息并回复/批注；账号从登录凭证升级为协作主体。
-> 单团队部署口径：P5 不新增与“团队空间”并列的“个人空间”一级页面；个人资料先作为用户私有知识作用域存在，通过个人 Agent 设置和消息中心访问。
+> 单团队部署口径：P5 不新增与”团队空间”并列的”个人空间”一级页面；个人资料先作为用户私有知识作用域存在，通过个人 Agent 设置和消息中心访问。
+>
+> **与 P3/P4 衔接要点**（2026-06-11 更新）：
+> - P3 已有 `AgentProfile`(owner_type/owner_id) → P5.A.1/2 复用扩展，不新建 Agent 模型
+> - P3 已有 `AgentApprovalRequest` → P5.A.3 扩展 action_type=agent_conversation，不新建审批模型
+> - P3 已有 admin.js `loadAgentSettings` → P5.A.4 从 admin 版分拆出个人版入口
+> - P4.D 已有 Notification/Comment 表 → P5.B/C 在此基础上扩展消息类型和 @提及，不重新建表
 
 ### P5.0 并行开发分组
 
@@ -479,18 +531,18 @@
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P5.A.1 | 个人私有知识作用域：每个用户有默认私有 scope，`KnowledgeSource`/`KnowledgeChunk` 可标记为 `owner_type=user`、`visibility=private` | 个人资料默认不进入团队知识库；不新增个人空间一级页面 | 1d |
-| P5.A.2 | 个人 Agent 默认行为：只访问个人授权资料 + 已授权项目资料；别人向我的 Agent 提问时优先生成"待本人确认/回复"消息 | Agent 回答不越权，自动生成待确认消息 | 2d |
-| P5.A.3 | Agent 间对话：用户 B 的 Agent 调用用户 A 的 Agent 时，系统创建 `AgentApprovalRequest` → A 收到通知 → A 可亲自回复或授权 Agent 代答 | 跨人对话有通知和审批链路 | 2d |
-| P5.A.4 | 前端：个人 Agent 设置入口 — 个人知识库管理、Agent 配置、授权范围查看，入口放在个人菜单或消息中心，不作为一级导航页面 | UI 正常操作；一级导航仍只有团队空间/智能对话/审查模式/管理后台等主入口 | 2d |
+| P5.A.1 | 个人私有知识作用域（联动改造）：`KnowledgeSource` 新增 `owner_type`(workspace/user) 和 `visibility`(team/private) 字段；`workspace_id` 改为 nullable（允许个人知识不属于任何 workspace）；`KnowledgeChunk` 同步新增 `visibility`；`workspace.py` 所有 source listing/CRUD endpoint 补充 owner_type+visibility 过滤逻辑；`RetrievalService.retrieve()` 和 `KnowledgeVectorService.search()` 新增 personal scope 分支（owner_type=user 时按 owner_id 过滤而非 workspace_id）；前端 workspace 资料库 Tab 区分"团队资料"和"我的资料"两个子视图。**不是仅加两个字段，是知识模型+检索API+前端入口联动改造** | 个人资料默认不进入团队知识库检索；检索 API 支持 personal scope；前端可切换"团队资料/我的资料"；不新增个人空间一级页面 | 2d |
+| P5.A.2 | 个人 Agent 默认行为：复用 P3 `AgentProfile`(owner_type=user)，增加 scope_type=personal 默认策略——只访问个人授权资料 + 已授权项目资料；别人向我的 Agent 提问时优先生成"待本人确认/回复" Notification（type=agent_conversation） | Agent 回答不越权，自动生成待确认通知 | 1.5d |
+| P5.A.3 | Agent 间对话：复用 P3 `AgentApprovalRequest`，扩展 action_type 增加 agent_conversation 值；用户 B 的 Agent 调用用户 A 的 Agent 时 → 创建 AgentApprovalRequest(action_type=agent_conversation) → A 收到 Notification(type=agent_approval) → A 可亲自回复或授权 Agent 代答 | 跨人对话有通知和审批链路，复用 P3 已有审批模型 | 1.5d |
+| P5.A.4 | 前端：个人 Agent 设置入口 — 从 P3 admin.js `loadAgentSettings` 分拆出个人版入口（非管理员也能操作自己的 Agent），入口放在个人菜单或消息中心，不作为一级导航页面。**不是从零构建，是从 admin 版精简分拆** | UI 正常操作；一级导航仍只有团队空间/智能对话/审查模式/管理后台等主入口 | 1d |
 
 ### P5.B 消息中心完善
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P5.B.1 | 消息中心 API：`GET /api/notifications` 分页列表；`PUT /api/notifications/{id}/read` 标记已读；`POST /api/notifications/batch-read` 批量已读；`PUT /api/notifications/{id}/archive` 归档 | CRUD 可用 | 1d |
+| P5.B.1 | 消息中心 API：在 P4.D.1 Notification 表基础上扩展 API — `GET /api/notifications` 分页列表；`PUT /api/notifications/{id}/read` 标记已读；`POST /api/notifications/batch-read` 批量已读；`PUT /api/notifications/{id}/archive` 归档。**复用 P4.D.1 已建 Notification 表和 NotificationService，不重新建表** | CRUD 可用 | 0.5d |
 | P5.B.2 | 消息类型扩展：review_request、approval_request、comment_reply、mention、agent_conversation、task_reminder | 各类型通知可区分展示 | 0.5d |
-| P5.B.3 | 前端：消息中心页 — 按类型分组、未读高亮、批量操作、跳转链接 | 完整消息中心可用 | 2d |
+| P5.B.3 | 前端：消息中心页 — 在 P4.D.5 通知铃铛基础上扩展为完整消息中心（按类型分组、未读高亮、批量操作、跳转链接），统一展示 P3 Agent 审批 + P4 审查通知 + P5 agent_conversation 消息 | 完整消息中心可用 | 1.5d |
 
 ### P5.C 评论与提及完善
 
@@ -508,9 +560,14 @@
 
 ---
 
-## Phase 6：治理与运营（未开始）
+## Phase 6：治理与运营（未开始，2026-06-11 衔接更新）
 
 > 目标：管理员能看到团队采用情况、技能调用、成本耗时、文件访问、人工确认、失败率和质量趋势。
+>
+> **与已有结构衔接要点**（2026-06-11 更新）：
+> - `LlmSessionLogWriter`（P1 已有）已含 model/messages/usage/elapsed_ms → P6.A.1 从 JSONL 日志聚合写入 CostDailySummary，不是新建采集管道
+> - `SkillConfig`（P1 已有 skill_id/name/description/status）→ P6.B.2 演进为 SkillPackage，增加 capabilities/permissions/versioning，不新建表
+> - `AgentProfile.status`（P3 已有 active/disabled）→ P6.B.3 增加 archived 状态和退役检查，不新建表
 
 ### P6.0 并行开发分组
 
@@ -525,7 +582,7 @@
 
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
-| P6.A.1 | 成本统计服务：按 workspace/用户/模式统计模型调用次数、输入/输出 token 数、embedding token 数，写入 `CostDailySummary` 表 | 每日统计可查询 | 2d |
+| P6.A.1 | 成本统计服务：从 `LlmSessionLogWriter`（P1 已有，已含 model/usage/elapsed_ms）JSONL 日志聚合写入 `CostDailySummary` 表——按 workspace/用户/模式统计模型调用次数、输入/输出 token 数、embedding token 数。**不是新建采集管道，是日志→结构化聚合** | 每日统计可查询 | 1.5d |
 | P6.A.2 | 质量统计服务：按 workspace/项目统计平均评分趋势、高频缺失章节、高频边界外问题、问题关闭率，写入 `QualityWeeklySummary` 表 | 每周统计可查询 | 1.5d |
 | P6.A.3 | 前端：运营仪表盘 — 用量（用户/项目/任务/模式分布）、效率（平均耗时/失败率/重试率）、成本（token/模型分布）、质量（评分趋势/高频问题） | 仪表盘可展示图表 | 3d |
 
@@ -534,9 +591,9 @@
 | ID | 任务 | 验收标准 | 工时估算 |
 | --- | --- | --- | ---: |
 | P6.B.1 | Skill 回归测试框架：每个 Skill 绑定样例文档 + 期望输出结构，升级前自动验证 | 回归框架可运行，输出对比结果 | 2d |
-| P6.B.2 | `SkillPackage` 表：`name`、`version`、`description`、`capabilities_json`、`permission_requirements_json`、`status`(published/draft/deprecated) | 技能包可注册/启停/版本管理 | 1d |
-| P6.B.3 | Agent 生命周期治理：AgentProfile 可退役（disabled → archived），退役前检查是否有活跃 AgentRun | 退役操作安全，无活跃运行 | 1d |
-| P6.B.4 | 权限审计：定期输出 ResourceACL 和 AgentAuthorization 变更报告 | 报告可导出 | 1d |
+| P6.B.2 | `SkillPackage` 演进：基于 P4.Pre.6 已补齐的 `SkillConfig.status`/`version` 字段，继续扩展增加 `capabilities_json`（技能能力声明）、`permission_requirements_json`（权限需求声明）、`status` 扩展为 published/draft/deprecated（P4.Pre.6 补的 active/inactive 作为子状态保留）。**不新建独立表，在 SkillConfig 基础上演进；P4.Pre.6 是本任务的前置** | 技能包可注册/启停/版本管理/能力声明 | 0.5d |
+| P6.B.3 | Agent 生命周期治理：在 P3 已有 `AgentProfile.status`(active/disabled) 基础上增加 `archived` 状态；退役操作 disabled→archived，退役前检查是否有活跃 AgentRun（status=running）。**不新建表** | 退役操作安全，无活跃运行 | 0.5d |
+| P6.B.4 | 权限审计：基于现有 `workspace_access.py` 的 `ROLE_ACTION_MAP` 和 `AgentAuthorization` 变更记录（审计日志），定期输出权限变更报告。**不依赖未落地的 ResourceACL，基于现有粗粒度 helper + 审计日志聚合** | 报告可导出，覆盖 workspace 角色变更 + Agent 授权变更 | 1d |
 
 ### P6.C Workspace 配额与预警
 

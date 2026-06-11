@@ -287,6 +287,7 @@ class PiAgentBridge:
                                 approval = await self._approval_repo.create(
                                     run_id=self._run.id,
                                     requester_id=self._run.user_id,
+                                    approver_id=self._run.user_id,  # P4.Pre.4: Agent 所有者作为默认审批人
                                     action_type=f"tool_call:{blocked_tool}",
                                     payload_ref=line[:1000],
                                 )

@@ -374,6 +374,20 @@ async def test_old_database_can_be_loaded_by_current_engine():
     )
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
+    # P4.Pre: 运行数据库迁移为旧库补全新列
+    from app.database import (
+        _migrate_approval_approver_required,
+        _migrate_skill_config_status_version,
+        _migrate_message_anchor_fields,
+        _migrate_conversation_mode_project,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await _migrate_approval_approver_required(conn)
+        await _migrate_skill_config_status_version(conn)
+        await _migrate_message_anchor_fields(conn)
+        await _migrate_conversation_mode_project(conn)
+
     async with session_maker() as session:
         # Users
         result = await session.execute(select(User))
@@ -490,7 +504,7 @@ async def test_init_db_preserves_existing_data():
     )
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
-    # Run migration logic (mirrors _ensure_review_schema from database.py)
+    # Run migration logic (mirrors init_db from database.py)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         # Run schema patching
@@ -508,6 +522,11 @@ async def test_init_db_preserves_existing_data():
         if "content_hash" not in columns:
             await conn.execute(sa_text(
                 "ALTER TABLE review_documents ADD COLUMN content_hash VARCHAR(64)"
+            ))
+        # P4.A.6: 版本链
+        if "parent_document_id" not in columns:
+            await conn.execute(sa_text(
+                "ALTER TABLE review_documents ADD COLUMN parent_document_id INTEGER REFERENCES review_documents(id)"
             ))
 
         sr_result = await conn.execute(sa_text("PRAGMA table_info(system_reviews)"))
@@ -528,6 +547,18 @@ async def test_init_db_preserves_existing_data():
             await conn.execute(sa_text(
                 "ALTER TABLE review_projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
             ))
+
+        # P4.Pre 迁移：补充新列
+        from app.database import (
+            _migrate_approval_approver_required,
+            _migrate_skill_config_status_version,
+            _migrate_message_anchor_fields,
+            _migrate_conversation_mode_project,
+        )
+        await _migrate_approval_approver_required(conn)
+        await _migrate_skill_config_status_version(conn)
+        await _migrate_message_anchor_fields(conn)
+        await _migrate_conversation_mode_project(conn)
 
     # Verify old data still intact after migration
     async with session_maker() as session:
@@ -631,6 +662,20 @@ async def test_fts5_can_be_created_on_old_database():
         f"sqlite+aiosqlite:///{db_path}",
         connect_args={"check_same_thread": False},
     )
+
+    # P4.Pre: 运行迁移为旧库补全新列
+    from app.database import (
+        _migrate_approval_approver_required,
+        _migrate_skill_config_status_version,
+        _migrate_message_anchor_fields,
+        _migrate_conversation_mode_project,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await _migrate_approval_approver_required(conn)
+        await _migrate_skill_config_status_version(conn)
+        await _migrate_message_anchor_fields(conn)
+        await _migrate_conversation_mode_project(conn)
 
     async with engine.begin() as conn:
         await conn.execute(sa_text(

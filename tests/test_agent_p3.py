@@ -258,3 +258,83 @@ class TestApproval:
         resp = await client.get("/api/agent/approvals", headers=headers)
         assert resp.status_code == 200
         assert isinstance(resp.json(), list)
+
+    async def test_approval_requires_approver_id(self, client):
+        """P4.Pre.4: AgentApprovalRepository.create 必须传 approver_id"""
+        from app.models.user import AgentApprovalRequest, AgentRun, AgentProfile
+        from app.repositories.agent_repository import AgentApprovalRepository
+
+        # 通过 API 获取 profile（自动创建）
+        headers = await _auth_header(client)
+        profile_resp = await client.get("/api/agent/profile", headers=headers)
+        assert profile_resp.status_code == 200
+        profile_id = profile_resp.json()["id"]
+
+        # 通过 dependency_overrides 获取测试数据库 session
+        from app.database import get_db as original_get_db
+        app = client._transport.app  # type: ignore
+        async for db in app.dependency_overrides[original_get_db]():
+            run = AgentRun(agent_id=profile_id, user_id=1, goal="test")
+            db.add(run)
+            await db.commit()
+            await db.refresh(run)
+
+            # 创建审批请求——approver_id 是必填参数
+            approval_repo = AgentApprovalRepository(db)
+            approval = await approval_repo.create(
+                run_id=run.id,
+                requester_id=1,
+                approver_id=1,
+                action_type="tool_call:bash",
+            )
+            assert approval.approver_id == 1
+            assert approval.status == "pending"
+            break
+
+    async def test_list_pending_filters_by_approver(self, client):
+        """P4.Pre.4: 待审批列表按 approver_id 过滤，不同审批人只看自己的"""
+        from app.models.user import AgentRun
+        from app.repositories.agent_repository import AgentApprovalRepository
+
+        headers = await _auth_header(client)
+        profile_resp = await client.get("/api/agent/profile", headers=headers)
+        profile_id = profile_resp.json()["id"]
+
+        from app.database import get_db as original_get_db
+        app = client._transport.app  # type: ignore
+        async for db in app.dependency_overrides[original_get_db]():
+            run = AgentRun(agent_id=profile_id, user_id=1, goal="test2")
+            db.add(run)
+            await db.commit()
+            await db.refresh(run)
+
+            approval_repo = AgentApprovalRepository(db)
+            # 创建两个审批请求，分别给不同审批人
+            await approval_repo.create(
+                run_id=run.id, requester_id=1, approver_id=1,
+                action_type="tool_call:bash",
+            )
+            await approval_repo.create(
+                run_id=run.id, requester_id=1, approver_id=2,
+                action_type="tool_call:write",
+            )
+
+            # 审批人 1 只看到 1 条
+            pending_1 = await approval_repo.list_pending(approver_id=1)
+            assert len(pending_1) == 1
+            assert pending_1[0].approver_id == 1
+
+            # 审批人 2 只看到 1 条
+            pending_2 = await approval_repo.list_pending(approver_id=2)
+            assert len(pending_2) == 1
+            assert pending_2[0].approver_id == 2
+            break
+
+    async def test_api_approvals_returns_only_mine(self, client):
+        """P4.Pre.4: GET /api/agent/approvals 只返回当前用户作为审批人的请求"""
+        headers = await _auth_header(client)
+        resp = await client.get("/api/agent/approvals", headers=headers)
+        assert resp.status_code == 200
+        # admin 用户 (id=1) 没有被指派为审批人的待审批请求
+        data = resp.json()
+        assert isinstance(data, list)

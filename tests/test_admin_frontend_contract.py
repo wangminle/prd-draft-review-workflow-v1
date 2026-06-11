@@ -62,8 +62,9 @@ def test_admin_has_skills_management_tab():
     assert "editSkillUpdateUrl" in ADMIN_JS
     assert "saveSkillUpdateUrl" in ADMIN_JS
 
-    assert "getAdminSkills()" in API_JS
+    assert "getAdminSkills(" in API_JS
     assert "updateAdminSkill(skillId, data)" in API_JS
+    assert "toggleAdminSkill" in API_JS  # P4.Pre.6
 
 
 def test_admin_stats_tab_is_first_and_default():

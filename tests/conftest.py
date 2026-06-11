@@ -41,7 +41,7 @@ def make_test_app(db_path: str):
 
     from fastapi import FastAPI
 
-    from app.routers import admin, agent, auth, chat, history, review, upload, workspace
+    from app.routers import admin, agent, auth, chat, history, review, upload, workspace, review_request, notification, artifact
 
     engine = create_async_engine(
         f"sqlite+aiosqlite:///{db_path}",
@@ -68,10 +68,13 @@ def make_test_app(db_path: str):
     app.include_router(review.router, prefix="/api/review", tags=["需求审查"])
     app.include_router(workspace.router, prefix="/api", tags=["团队空间"])
     app.include_router(agent.router, prefix="/api/agent", tags=["Agent"])
+    app.include_router(review_request.router, prefix="/api/review", tags=["协作审查"])
+    app.include_router(notification.router, prefix="/api/notifications", tags=["通知与评论"])
+    app.include_router(artifact.router, prefix="/api/review", tags=["知识快照与产物"])
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.2.12"}
+        return {"status": "ok", "version": "0.2.13"}
 
     return app, engine, TestSessionLocal
 

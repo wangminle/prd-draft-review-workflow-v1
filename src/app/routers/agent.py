@@ -414,11 +414,13 @@ async def list_agent_tools(
 
 @router.get("/approvals")
 async def list_pending_approvals(
+    status: str | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     repo = AgentApprovalRepository(db)
-    requests = await repo.list_pending()
+    # P4.Pre.4: 只返回当前用户作为审批人的待审批请求
+    requests = await repo.list_pending(approver_id=user.id)
     return [_serialize_approval(r) for r in requests]
 
 

@@ -74,6 +74,7 @@ const Review = {
             this._bindProgressActions();
             this._bindResultActions();
             this._bindSourcePicker();
+            this._bindP4Actions();
             this._bound = true;
         }
         this._showWorkspaceShell();
@@ -521,6 +522,7 @@ const Review = {
         document.getElementById('review-workspace').style.display = '';
         document.getElementById('review-progress').style.display = 'none';
         document.getElementById('review-result').style.display = 'none';
+        this._hideP4Panels();
     },
 
     _syncActionAvailability() {
@@ -1202,6 +1204,7 @@ const Review = {
                 <p style="font-size:var(--fs-15);color:var(--color-text-secondary);margin-bottom:var(--sp-3)">当前文档暂无"${modeConfig.label}"审查结果</p>
                 <p style="font-size:var(--fs-13);color:var(--color-text-muted)">点击左侧操作卡片启动审查后，AI 生成的分析会展示在这里。</p>
             </div>`;
+        this._hideP4Panels();
     },
 
     async _showResult(options = {}) {
@@ -1257,6 +1260,8 @@ const Review = {
         } catch (e) {
             document.getElementById('result-content').innerHTML = '<div class="empty-state"><p>加载报告失败</p></div>';
         }
+        // P4: 结果显示后触发协作审查/产物/评论/讲解准备面板
+        this._showP4PanelsAfterResult();
     },
 
     async _aggregateDocReports(currentReport) {
@@ -3091,6 +3096,526 @@ const Review = {
         } else {
             App._showToast('引用资料失败');
         }
+    },
+
+    /* ═══════════════════════════════════════════
+       P4: 协作审查 + 产物 + 评论 + 讲解准备
+       ═══════════════════════════════════════════ */
+
+    _currentCommentObjectType: null,
+    _currentCommentObjectId: null,
+    _presentationConvId: null,
+
+    _bindP4Actions() {
+        // P4.B.5: 讲解准备按钮
+        const prepBtn = document.getElementById('prepare-presentation-btn');
+        if (prepBtn) {
+            prepBtn.addEventListener('click', () => this._startPresentation());
+        }
+        // P4.B.2: 创建物料按钮
+        const createArtifactBtn = document.getElementById('create-artifact-btn');
+        if (createArtifactBtn) {
+            createArtifactBtn.addEventListener('click', () => this._showCreateArtifactDialog());
+        }
+        // P4.A.4: 发起协作审查按钮
+        const collabBtn = document.getElementById('initiate-collab-btn');
+        if (collabBtn) {
+            collabBtn.addEventListener('click', () => this._showInitiateCollabDialog());
+        }
+        // P4.D.6: 评论提交按钮
+        const commentSubmitBtn = document.getElementById('comment-submit-btn');
+        if (commentSubmitBtn) {
+            commentSubmitBtn.addEventListener('click', () => this._submitComment());
+        }
+    },
+
+    /* ── P4.B.5: 讲解准备 ── */
+
+    _startPresentation() {
+        if (!this.currentProjectId) {
+            App._showToast('请先选择项目');
+            return;
+        }
+        // 切换到对话页，创建 presentation 模式对话
+        const projectId = this.currentProjectId;
+        const docId = this.selectedDocumentId;
+        const mode = 'presentation';
+        // 通过 Chat 模块创建对话
+        App._showUserPage();
+        setTimeout(() => {
+            if (typeof Chat !== 'undefined' && Chat.createConversationWithMode) {
+                Chat.createConversationWithMode(mode, projectId);
+            } else {
+                // fallback: 直接创建对话
+                Chat._newChat();
+                App._showToast('已进入讲解准备模式，在对话中迭代优化物料');
+            }
+        }, 300);
+        API.log('info', 'presentation.start', { project_id: projectId, document_id: docId }, '开始讲解准备');
+    },
+
+    /* ── P4.B.2: 产物管理 ── */
+
+    async _loadArtifacts(objectType, objectId) {
+        try {
+            const artifacts = await API.listArtifacts(objectType, objectId);
+            this._renderArtifactCards(artifacts);
+            const section = document.getElementById('review-artifact-section');
+            if (section) section.style.display = artifacts.length > 0 ? '' : 'none';
+        } catch (e) {
+            console.warn('加载产物失败:', e);
+        }
+    },
+
+    _renderArtifactCards(artifacts) {
+        const list = document.getElementById('review-artifact-list');
+        if (!list) return;
+        if (!artifacts.length) {
+            list.innerHTML = '<div class="empty-state"><p>暂无讲解物料</p></div>';
+            return;
+        }
+        const typeLabels = {
+            explanation_json: '讲解稿',
+            mermaid_diagram: '流程图',
+            html_presentation: 'HTML 展示',
+            svg_summary: 'SVG 概要',
+            meeting_pack: '会议材料包',
+        };
+        const typeIcons = {
+            explanation_json: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/></svg>',
+            mermaid_diagram: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>',
+            html_presentation: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>',
+            svg_summary: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+            meeting_pack: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>',
+        };
+        list.innerHTML = artifacts.map(a => {
+            const label = typeLabels[a.artifact_type] || a.artifact_type;
+            const icon = typeIcons[a.artifact_type] || typeIcons.explanation_json;
+            const statusCls = a.status === 'confirmed' ? 'confirmed' : 'draft';
+            const statusLabel = a.status === 'confirmed' ? '已确认' : '草稿';
+            const confirmBtn = a.status === 'draft'
+                ? `<button class="btn btn-primary btn-xs" data-artifact-action="confirm" data-artifact-id="${a.id}">确认物料</button>`
+                : `<button class="btn btn-ghost btn-xs" data-artifact-action="unconfirm" data-artifact-id="${a.id}">取消确认</button>`;
+            return `
+                <div class="artifact-card" data-artifact-id="${a.id}">
+                    <div class="artifact-card-icon">${icon}</div>
+                    <div class="artifact-card-info">
+                        <div class="artifact-card-type">${this._esc(label)}</div>
+                        <div class="artifact-card-status ${statusCls}">${statusLabel}</div>
+                    </div>
+                    <div class="artifact-card-actions">
+                        ${confirmBtn}
+                        <button class="btn btn-ghost btn-xs" data-artifact-action="view" data-artifact-id="${a.id}">查看</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        list.querySelectorAll('[data-artifact-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const action = btn.dataset.artifactAction;
+                const id = parseInt(btn.dataset.artifactId);
+                try {
+                    if (action === 'confirm') {
+                        await API.confirmArtifact(id);
+                        App._showToast('物料已确认');
+                        this._loadArtifacts(this._currentCommentObjectType, this._currentCommentObjectId);
+                    } else if (action === 'unconfirm') {
+                        await API.unconfirmArtifact(id);
+                        App._showToast('已取消确认，物料回到草稿状态');
+                        this._loadArtifacts(this._currentCommentObjectType, this._currentCommentObjectId);
+                    } else if (action === 'view') {
+                        const artifact = await API.getArtifact(id);
+                        this._showArtifactContent(artifact);
+                    }
+                } catch (e) {
+                    App._showToast('操作失败: ' + (e.message || ''));
+                }
+            });
+        });
+    },
+
+    _showArtifactContent(artifact) {
+        Admin.showModal(`
+            <h3>物料详情: ${this._esc(artifact.artifact_type)}</h3>
+            <div style="margin-top:12px;max-height:400px;overflow-y:auto">
+                <pre style="background:var(--gray-1);padding:12px;border-radius:8px;font-size:13px;overflow-x:auto">${this._esc(artifact.content_json || '')}</pre>
+            </div>
+            <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+                <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">关闭</button>
+            </div>
+        `);
+    },
+
+    _showCreateArtifactDialog() {
+        if (!this.currentProjectId) {
+            App._showToast('请先选择项目');
+            return;
+        }
+        Admin.showModal(`
+            <h3>创建讲解物料</h3>
+            <div class="field">
+                <label style="font-size:13px;font-weight:600;margin-bottom:4px;display:block">物料类型</label>
+                <select id="artifact-type-input" style="width:100%;height:36px;padding:0 12px;border:1px solid var(--color-border);border-radius:8px;font-size:14px">
+                    <option value="explanation_json">讲解稿</option>
+                    <option value="mermaid_diagram">流程图</option>
+                    <option value="html_presentation">HTML 展示</option>
+                    <option value="svg_summary">SVG 概要</option>
+                </select>
+            </div>
+            <div class="field" style="margin-top:12px">
+                <label style="font-size:13px;font-weight:600;margin-bottom:4px;display:block">内容 (JSON)</label>
+                <textarea id="artifact-content-input" rows="6" style="width:100%;padding:12px;border:1px solid var(--color-border);border-radius:8px;font-size:13px" placeholder='{"title": "讲解稿", "sections": []}'></textarea>
+            </div>
+            <div id="artifact-create-error" class="field-error"></div>
+            <div class="btn-row" style="margin-top:16px">
+                <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">取消</button>
+                <button class="btn btn-primary btn-sm" onclick="Review._createArtifactSubmit()">创建</button>
+            </div>
+        `);
+    },
+
+    async _createArtifactSubmit() {
+        const type = document.getElementById('artifact-type-input').value;
+        const content = document.getElementById('artifact-content-input').value;
+        const errEl = document.getElementById('artifact-create-error');
+        if (!content.trim()) {
+            errEl.textContent = '请输入内容';
+            return;
+        }
+        try {
+            await API.createArtifact({
+                object_type: this._currentCommentObjectType || 'review_request',
+                object_id: this._currentCommentObjectId || 0,
+                artifact_type: type,
+                content_json: content,
+            });
+            Admin.closeModal();
+            App._showToast('物料创建成功');
+            this._loadArtifacts(this._currentCommentObjectType, this._currentCommentObjectId);
+        } catch (e) {
+            errEl.textContent = e.message || '创建失败';
+        }
+    },
+
+    /* ── P4.A.4: 协作审查 ── */
+
+    async _loadCollabRequests(projectId) {
+        try {
+            const requests = await API.listReviewRequests(projectId);
+            this._renderCollabCards(requests);
+            const section = document.getElementById('review-collab-section');
+            if (section) section.style.display = requests.length > 0 ? '' : 'none';
+        } catch (e) {
+            console.warn('加载协作审查失败:', e);
+        }
+    },
+
+    _renderCollabCards(requests) {
+        const list = document.getElementById('review-collab-list');
+        if (!list) return;
+        if (!requests.length) {
+            list.innerHTML = '<div class="empty-state"><p>暂无协作审查请求</p></div>';
+            return;
+        }
+        const statusLabels = {
+            pending_approval: '待审批',
+            approved: '已通过',
+            rejected: '已驳回',
+            cancelled: '已取消',
+        };
+        list.innerHTML = requests.map(r => {
+            const statusLabel = statusLabels[r.status] || r.status;
+            const actionsHtml = r.status === 'rejected'
+                ? `<button class="btn btn-outline btn-xs" data-collab-action="resubmit" data-collab-id="${r.id}">重新提交</button>`
+                : '';
+            return `
+                <div class="collab-request-card" data-collab-id="${r.id}">
+                    <div class="collab-request-info">
+                        <div class="collab-request-goal">${this._esc(r.goal || '协作审查')}</div>
+                        <div class="collab-request-status ${r.status}">${statusLabel} · 第 ${r.current_round} 轮</div>
+                    </div>
+                    <div class="collab-request-actions">
+                        ${actionsHtml}
+                        <button class="btn btn-ghost btn-xs" data-collab-action="detail" data-collab-id="${r.id}">详情</button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        list.querySelectorAll('[data-collab-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const action = btn.dataset.collabAction;
+                const id = parseInt(btn.dataset.collabId);
+                try {
+                    if (action === 'resubmit') {
+                        const result = await API.resubmitReviewRequest(id);
+                        App._showToast('已重新提交，进入第 ' + result.current_round + ' 轮');
+                        this._loadCollabRequests(this.currentProjectId);
+                    } else if (action === 'detail') {
+                        this._showCollabDetail(id);
+                    }
+                } catch (e) {
+                    App._showToast('操作失败: ' + (e.message || ''));
+                }
+            });
+        });
+    },
+
+    _showCollabDetail(requestId) {
+        API.getReviewRequest(requestId).then(req => {
+            API.listReviewRounds(requestId).then(rounds => {
+                API.listReviewParticipants(requestId).then(participants => {
+                    const roundsHtml = (rounds || []).map(r => `
+                        <div style="padding:8px 12px;background:var(--gray-1);border-radius:8px;margin-bottom:6px">
+                            <span style="font-weight:600">第 ${r.round_no} 轮</span>
+                            <span style="color:var(--color-text-muted);font-size:12px;margin-left:8px">${r.decision || '待决策'}</span>
+                            ${r.decision_comment ? `<span style="font-size:12px;color:var(--color-text-secondary);margin-left:8px">${this._esc(r.decision_comment)}</span>` : ''}
+                        </div>
+                    `).join('');
+                    const participantsHtml = (participants || []).map(p => `
+                        <span style="display:inline-flex;padding:2px 8px;border-radius:12px;background:var(--gray-2);font-size:12px;margin-right:4px">${p.role} #${p.user_id}</span>
+                    `).join('');
+                    Admin.showModal(`
+                        <h3>协作审查详情</h3>
+                        <div style="margin-top:12px">
+                            <p style="font-size:13px"><strong>目标:</strong> ${this._esc(req.goal || '')}</p>
+                            <p style="font-size:13px;margin-top:4px"><strong>状态:</strong> ${req.status} · 第 ${req.current_round} 轮</p>
+                        </div>
+                        <div style="margin-top:16px">
+                            <h4 style="font-size:14px;font-weight:600">参与者</h4>
+                            <div style="margin-top:6px">${participantsHtml || '<span style="color:var(--color-text-muted)">暂无</span>'}</div>
+                        </div>
+                        <div style="margin-top:16px">
+                            <h4 style="font-size:14px;font-weight:600">审查轮次</h4>
+                            <div style="margin-top:6px">${roundsHtml || '<span style="color:var(--color-text-muted)">暂无轮次</span>'}</div>
+                        </div>
+                        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+                            <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">关闭</button>
+                        </div>
+                    `);
+                });
+            });
+        }).catch(e => App._showToast('加载失败: ' + (e.message || '')));
+    },
+
+    _showInitiateCollabDialog() {
+        if (!this.currentProjectId) {
+            App._showToast('请先选择项目');
+            return;
+        }
+        Admin.showModal(`
+            <h3>发起协作审查</h3>
+            <div class="field">
+                <label style="font-size:13px;font-weight:600;margin-bottom:4px;display:block">审查目标</label>
+                <input id="collab-goal-input" type="text" style="width:100%;height:36px;padding:0 12px;border:1px solid var(--color-border);border-radius:8px;font-size:14px" placeholder="请输入本次协作审查的目标">
+            </div>
+            <div id="collab-create-error" class="field-error"></div>
+            <div class="btn-row" style="margin-top:16px">
+                <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">取消</button>
+                <button class="btn btn-primary btn-sm" onclick="Review._createCollabSubmit()">发起</button>
+            </div>
+        `);
+    },
+
+    async _createCollabSubmit() {
+        const goal = document.getElementById('collab-goal-input').value.trim();
+        const errEl = document.getElementById('collab-create-error');
+        if (!goal) {
+            errEl.textContent = '请输入审查目标';
+            return;
+        }
+        try {
+            await API.createReviewRequest({
+                project_id: this.currentProjectId,
+                goal,
+            });
+            Admin.closeModal();
+            App._showToast('协作审查已发起');
+            this._loadCollabRequests(this.currentProjectId);
+        } catch (e) {
+            errEl.textContent = e.message || '发起失败';
+        }
+    },
+
+    _showCollabRequest(requestId) {
+        this._showCollabDetail(requestId);
+    },
+
+    _showArtifactDetail(artifactId) {
+        API.getArtifact(artifactId).then(artifact => {
+            this._showArtifactContent(artifact);
+        }).catch(e => App._showToast('加载物料失败: ' + (e.message || '')));
+    },
+
+    /* ── P4.D.6: 评论组件 ── */
+
+    async _loadComments(objectType, objectId) {
+        this._currentCommentObjectType = objectType;
+        this._currentCommentObjectId = objectId;
+        try {
+            const comments = await API.listComments(objectType, objectId);
+            this._renderComments(comments);
+            const section = document.getElementById('review-comment-section');
+            if (section) section.style.display = '';
+            const countEl = document.getElementById('comment-count');
+            if (countEl) countEl.textContent = `${comments.length} 条`;
+        } catch (e) {
+            console.warn('加载评论失败:', e);
+        }
+    },
+
+    _renderComments(comments) {
+        const list = document.getElementById('comment-list');
+        if (!list) return;
+        if (!comments.length) {
+            list.innerHTML = '<div class="empty-state"><p>暂无评论</p></div>';
+            return;
+        }
+        // 分组顶级评论和回复
+        const topLevel = comments.filter(c => c.parent_id === null);
+        const replies = comments.filter(c => c.parent_id !== null);
+        const replyMap = {};
+        replies.forEach(r => {
+            if (!replyMap[r.parent_id]) replyMap[r.parent_id] = [];
+            replyMap[r.parent_id].push(r);
+        });
+        list.innerHTML = topLevel.map(c => {
+            const commentReplies = (replyMap[c.id] || []).map(r => `
+                <div class="comment-item reply" data-comment-id="${r.id}">
+                    <div class="comment-item-head">
+                        <span class="comment-item-author">${this._esc('用户 #' + r.author_id)}</span>
+                        <span class="comment-item-time">${this._formatCommentTime(r.created_at)}</span>
+                    </div>
+                    <div class="comment-item-body">${this._renderCommentBody(r.body)}</div>
+                    <div class="comment-item-actions">
+                        <button class="comment-item-action" data-comment-action="delete" data-comment-id="${r.id}">删除</button>
+                    </div>
+                </div>
+            `).join('');
+            return `
+                <div class="comment-item" data-comment-id="${c.id}">
+                    <div class="comment-item-head">
+                        <span class="comment-item-author">${this._esc('用户 #' + c.author_id)}</span>
+                        <span class="comment-item-time">${this._formatCommentTime(c.created_at)}</span>
+                    </div>
+                    <div class="comment-item-body">${this._renderCommentBody(c.body)}</div>
+                    <div class="comment-item-actions">
+                        <button class="comment-item-action" data-comment-action="reply" data-comment-id="${c.id}">回复</button>
+                        <button class="comment-item-action" data-comment-action="delete" data-comment-id="${c.id}">删除</button>
+                    </div>
+                    ${commentReplies}
+                </div>
+            `;
+        }).join('');
+        list.querySelectorAll('[data-comment-action]').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const action = btn.dataset.commentAction;
+                const id = parseInt(btn.dataset.commentId);
+                if (action === 'reply') {
+                    this._replyToComment(id);
+                } else if (action === 'delete') {
+                    if (!confirm('确定删除此评论？')) return;
+                    try {
+                        await API.deleteComment(id);
+                        App._showToast('评论已删除');
+                        this._loadComments(this._currentCommentObjectType, this._currentCommentObjectId);
+                    } catch (e) {
+                        App._showToast('删除失败: ' + (e.message || ''));
+                    }
+                }
+            });
+        });
+    },
+
+    _renderCommentBody(body) {
+        if (!body) return '';
+        // 替换 @username 为 mention 样式
+        const rendered = this._esc(body).replace(/@(\S+)/g, '<span class="mention-tag">@${1}</span>');
+        return rendered;
+    },
+
+    _formatCommentTime(dateStr) {
+        if (!dateStr) return '';
+        const d = new Date(dateStr);
+        return new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }).format(d);
+    },
+
+    async _submitComment() {
+        const input = document.getElementById('comment-input');
+        const body = input.value.trim();
+        if (!body) {
+            App._showToast('请输入评论内容');
+            return;
+        }
+        if (!this._currentCommentObjectType || !this._currentCommentObjectId) {
+            App._showToast('请先加载审查内容');
+            return;
+        }
+        try {
+            await API.createComment({
+                object_type: this._currentCommentObjectType,
+                object_id: this._currentCommentObjectId,
+                body,
+            });
+            input.value = '';
+            App._showToast('评论已发表');
+            this._loadComments(this._currentCommentObjectType, this._currentCommentObjectId);
+        } catch (e) {
+            App._showToast('发表失败: ' + (e.message || ''));
+        }
+    },
+
+    _replyToComment(parentId) {
+        const input = document.getElementById('comment-input');
+        input.value = `回复 #${parentId}: `;
+        input.focus();
+        // 临时标记为回复模式
+        this._replyParentId = parentId;
+    },
+
+    /* ── P4: 结果区显示后触发 P4 面板 ── */
+
+    _hideP4Panels() {
+        const ids = ['review-presentation-entry', 'review-artifact-section', 'review-collab-section', 'review-comment-section'];
+        ids.forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+        });
+    },
+
+    _showP4PanelsAfterResult() {
+        const projectId = this.currentProjectId;
+        if (!projectId) return;
+
+        // P4.B.5: 显示讲解准备入口（审查完成后）
+        const presentationEntry = document.getElementById('review-presentation-entry');
+        const taskInfo = this._getTaskInfo();
+        const isCompleted = taskInfo && ['completed', 'completed_with_warnings'].includes(taskInfo.status);
+        if (presentationEntry) {
+            presentationEntry.style.display = isCompleted ? '' : 'none';
+        }
+
+        // P4.A.4: 加载协作审查列表
+        this._loadCollabRequests(projectId);
+
+        // P4.D.6: 加载评论（基于当前审查任务）
+        const objectType = 'review_request';
+        // 使用项目 id 查找关联的 review request
+        API.listReviewRequests(projectId).then(requests => {
+            if (requests.length > 0) {
+                const requestId = requests[0].id;
+                this._loadComments(objectType, requestId);
+                this._loadArtifacts(objectType, requestId);
+            } else {
+                // 无协作审查请求时，评论基于项目
+                this._loadComments('review_request', 0);
+                const collabSection = document.getElementById('review-collab-section');
+                if (collabSection) collabSection.style.display = 'none';
+                const commentSection = document.getElementById('review-comment-section');
+                if (commentSection) commentSection.style.display = 'none';
+                const artifactSection = document.getElementById('review-artifact-section');
+                if (artifactSection) artifactSection.style.display = 'none';
+            }
+        });
     },
 };
 

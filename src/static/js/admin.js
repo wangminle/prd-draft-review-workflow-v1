@@ -929,6 +929,12 @@ const Admin = {
                             : '<span style="color:var(--color-text-muted)">未配置</span>'}
                     </td>
                     <td>
+                        <label class="skill-toggle">
+                            <input type="checkbox" ${skill.status === 'active' ? 'checked' : ''} data-toggle-skill="${this._escAttr(skill.skill_id)}">
+                            <span class="skill-toggle-slider"></span>
+                        </label>
+                    </td>
+                    <td>
                         <button class="btn btn-primary btn-sm" data-edit-skill="${this._escAttr(skill.skill_id)}">配置</button>
                     </td>
                 </tr>
@@ -936,8 +942,21 @@ const Admin = {
             tbody.querySelectorAll('[data-edit-skill]').forEach((btn, i) => {
                 btn.addEventListener('click', () => this.editSkillUpdateUrl(skills[i]));
             });
+            // P4.Pre.6: 技能启用/禁用开关
+            tbody.querySelectorAll('[data-toggle-skill]').forEach((cb, i) => {
+                cb.addEventListener('change', () => this.toggleSkillStatus(skills[i].skill_id, cb.checked ? 'active' : 'inactive'));
+            });
         } catch (e) {
-            tbody.innerHTML = `<tr><td colspan="5" style="color:var(--color-danger)">加载失败: ${this._esc(e.message)}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="color:var(--color-danger)">加载失败: ${this._esc(e.message)}</td></tr>`;
+        }
+    },
+
+    async toggleSkillStatus(skillId, status) {
+        try {
+            await API.toggleAdminSkill(skillId, { status });
+        } catch (e) {
+            alert('操作失败: ' + e.message);
+            this.loadSkills();  // 回滚 UI
         }
     },
 
