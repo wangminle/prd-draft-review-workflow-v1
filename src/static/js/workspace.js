@@ -1,7 +1,8 @@
-/* 团队空间页面 — P0.B.5 + P0.B.6 + P0.C.4 + P1.A.3 */
+/* 团队空间页面 — P0.B.5 + P0.B.6 + P0.C.4 + P1.A.3 + P5.A.1 个人资料 */
 const Workspace = {
     _initialized: false,
     _currentTab: 'sources',
+    _sourceScope: 'team', // P5.A.1: 'team' or 'personal'
     _workspaceId: null,
     _sourcesCache: [],
     _selectedSourceId: null,
@@ -14,6 +15,7 @@ const Workspace = {
         this._initialized = true;
         this._bindTabs();
         this._bindUpload();
+        this._bindSourceScopeToggle();
     },
 
     destroy() {
@@ -74,6 +76,29 @@ const Workspace = {
         if (tab === 'members') this._loadMembers();
     },
 
+    _bindSourceScopeToggle() {
+        /* P5.A.1: 团队资料/我的资料 切换按钮 */
+        document.addEventListener('click', (e) => {
+            const scopeBtn = e.target.closest('[data-source-scope]');
+            if (scopeBtn) {
+                const scope = scopeBtn.dataset.sourceScope;
+                if (scope === this._sourceScope) return;
+                this._sourceScope = scope;
+                // 更新按钮状态
+                document.querySelectorAll('[data-source-scope]').forEach(b => {
+                    b.classList.toggle('active', b.dataset.sourceScope === scope);
+                });
+                // 更新上传按钮文案
+                const uploadBtn = document.getElementById('ws-upload-btn');
+                if (uploadBtn) {
+                    uploadBtn.textContent = scope === 'personal' ? '+ 上传个人资料' : '+ 上传资料';
+                }
+                this._hideSourceDetail();
+                this._loadSources();
+            }
+        });
+    },
+
     async _getDefaultWorkspace() {
         if (this._workspaceId) return this._workspaceId;
         try {
@@ -92,18 +117,30 @@ const Workspace = {
         const listEl = document.getElementById('ws-sources-list');
         if (!listEl) return;
         try {
-            const wsId = await this._getDefaultWorkspace();
-            if (!wsId) {
-                listEl.innerHTML = this._renderEmpty('团队空间尚未初始化', '请联系管理员创建团队空间');
-                return;
+            if (this._sourceScope === 'personal') {
+                // P5.A.1: 加载个人私有资料
+                const sources = await API.getPersonalSources();
+                this._sourcesCache = sources || [];
+                if (this._sourcesCache.length === 0) {
+                    listEl.innerHTML = this._renderEmpty('还没有个人资料', '上传 DOCX/PDF/Markdown 文件作为您的私有知识库，仅您个人可访问');
+                    return;
+                }
+                listEl.innerHTML = this._renderSourceTable();
+            } else {
+                // 团队资料
+                const wsId = await this._getDefaultWorkspace();
+                if (!wsId) {
+                    listEl.innerHTML = this._renderEmpty('团队空间尚未初始化', '请联系管理员创建团队空间');
+                    return;
+                }
+                const sources = await API.getWorkspaceSources(wsId);
+                this._sourcesCache = sources || [];
+                if (this._sourcesCache.length === 0) {
+                    listEl.innerHTML = this._renderEmpty('还没有共享资料', '上传 DOCX/PDF/Markdown 文件，团队成员均可查看和引用');
+                    return;
+                }
+                listEl.innerHTML = this._renderSourceTable();
             }
-            const sources = await API.getWorkspaceSources(wsId);
-            this._sourcesCache = sources || [];
-            if (this._sourcesCache.length === 0) {
-                listEl.innerHTML = this._renderEmpty('还没有共享资料', '上传 DOCX/PDF/Markdown 文件，团队成员均可查看和引用');
-                return;
-            }
-            listEl.innerHTML = this._renderSourceTable();
         } catch (err) {
             console.error('加载资料失败:', err);
             listEl.innerHTML = this._renderEmpty('加载失败', err.message);
@@ -157,6 +194,7 @@ const Workspace = {
                 : '';
             const tags = (s.tags || []).map(t => `<span class="ws-tag-chip">${DOMPurify.sanitize(t)}</span>`).join('');
             const canManage = this._canManage;
+            const canDelete = this._sourceScope === 'personal' || canManage;
             return `<tr data-source-id="${s.id}">
                 <td>${typeIcons[s.source_type] || '📄'}</td>
                 <td class="ws-source-title-cell" data-action="view-source" data-source-id="${s.id}" style="cursor:pointer;color:var(--color-brand)">${DOMPurify.sanitize(s.title)}</td>
@@ -166,7 +204,7 @@ const Workspace = {
                 <td>${statusHtml}</td>
                 <td>
                     <button class="btn btn-ghost btn-sm ws-action-btn" data-action="view-source" data-source-id="${s.id}" title="查看详情">详情</button>
-                    ${canManage && s.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${s.id}" data-source-title="${DOMPurify.sanitize(s.title)}" title="删除资料">删除</button>` : ''}
+                    ${canDelete && s.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${s.id}" data-source-title="${DOMPurify.sanitize(s.title)}" title="删除资料">删除</button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -338,11 +376,6 @@ const Workspace = {
 
     async _handleUpload(files) {
         if (this._uploading) return;
-        const wsId = await this._getDefaultWorkspace();
-        if (!wsId) {
-            App._showToast('团队空间未初始化');
-            return;
-        }
         this._uploading = true;
         const uploadBtn = document.getElementById('ws-upload-btn');
         if (uploadBtn) uploadBtn.textContent = '上传中…';
@@ -350,20 +383,43 @@ const Workspace = {
         let successCount = 0;
         let failCount = 0;
 
-        for (const file of files) {
-            try {
-                const formData = new FormData();
-                formData.append('file', file);
-                await API.uploadWorkspaceSource(wsId, formData);
-                successCount++;
-            } catch (err) {
-                console.error('上传失败:', file.name, err);
-                failCount++;
+        if (this._sourceScope === 'personal') {
+            // P5.A.1: 上传个人资料
+            for (const file of files) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    await API.uploadPersonalSource(formData);
+                    successCount++;
+                } catch (err) {
+                    console.error('上传个人资料失败:', file.name, err);
+                    failCount++;
+                }
+            }
+        } else {
+            // 团队资料
+            const wsId = await this._getDefaultWorkspace();
+            if (!wsId) {
+                App._showToast('团队空间未初始化');
+                this._uploading = false;
+                if (uploadBtn) uploadBtn.textContent = '+ 上传资料';
+                return;
+            }
+            for (const file of files) {
+                try {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    await API.uploadWorkspaceSource(wsId, formData);
+                    successCount++;
+                } catch (err) {
+                    console.error('上传失败:', file.name, err);
+                    failCount++;
+                }
             }
         }
 
         this._uploading = false;
-        if (uploadBtn) uploadBtn.textContent = '+ 上传资料';
+        if (uploadBtn) uploadBtn.textContent = this._sourceScope === 'personal' ? '+ 上传个人资料' : '+ 上传资料';
 
         if (successCount > 0) {
             App._showToast(`成功上传 ${successCount} 个文件${failCount > 0 ? `，${failCount} 个失败` : ''}`);
@@ -377,11 +433,15 @@ const Workspace = {
         const confirmed = await this._confirmDelete(sourceTitle);
         if (!confirmed) return;
 
-        const wsId = await this._getDefaultWorkspace();
-        if (!wsId) return;
-
         try {
-            await API.deleteWorkspaceSource(wsId, sourceId);
+            if (this._sourceScope === 'personal') {
+                // P5.A.1: 删除个人资料
+                await API.deletePersonalSource(sourceId);
+            } else {
+                const wsId = await this._getDefaultWorkspace();
+                if (!wsId) return;
+                await API.deleteWorkspaceSource(wsId, sourceId);
+            }
             App._showToast('资料已删除');
             await this._loadSources();
             if (this._selectedSourceId === sourceId) {
@@ -434,8 +494,12 @@ const Workspace = {
 
         let source;
         try {
-            const wsId = await this._getDefaultWorkspace();
-            source = await API.getWorkspaceSourceDetail(wsId, sourceId);
+            if (this._sourceScope === 'personal') {
+                source = await API.getPersonalSourceDetail(sourceId);
+            } else {
+                const wsId = await this._getDefaultWorkspace();
+                source = await API.getWorkspaceSourceDetail(wsId, sourceId);
+            }
         } catch (err) {
             detailEl.innerHTML = `<p style="color:var(--red-6);padding:24px">加载失败: ${err.message}</p>`;
             return;
@@ -463,8 +527,8 @@ const Workspace = {
                     <p style="margin:4px 0 0;font-size:var(--fs-12);color:var(--color-text-muted)">v${source.version} · ${typeLabels[source.source_type] || source.source_type} · ${source.created_at ? new Date(source.created_at).toLocaleDateString('zh-CN') : ''}</p>
                 </div>
                 <div style="display:flex;gap:8px">
-                    ${source.file_id ? `<button class="btn btn-outline btn-sm" data-action="download-source" data-source-id="${source.id}">下载原文件</button>` : ''}
-                    ${canManage && source.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${source.id}" data-source-title="${DOMPurify.sanitize(source.title)}">删除</button>` : ''}
+                    ${source.file_id ? `<button class="btn btn-outline btn-sm" data-action="download-source" data-source-id="${source.id}" data-source-scope="${this._sourceScope}">下载原文件</button>` : ''}
+                    ${(this._sourceScope === 'personal' || canManage) && source.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${source.id}" data-source-title="${DOMPurify.sanitize(source.title)}">删除</button>` : ''}
                     <button class="btn btn-ghost btn-sm" id="ws-detail-close">返回列表</button>
                 </div>
             </div>
@@ -489,8 +553,17 @@ const Workspace = {
 
     async _downloadSource(sourceId) {
         try {
-            const wsId = await this._getDefaultWorkspace();
-            const { blob, filename } = await API.downloadWorkspaceSource(wsId, sourceId);
+            let blob, filename;
+            if (this._sourceScope === 'personal') {
+                const result = await API.downloadPersonalSource(sourceId);
+                blob = result.blob;
+                filename = result.filename;
+            } else {
+                const wsId = await this._getDefaultWorkspace();
+                const result = await API.downloadWorkspaceSource(wsId, sourceId);
+                blob = result.blob;
+                filename = result.filename;
+            }
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;

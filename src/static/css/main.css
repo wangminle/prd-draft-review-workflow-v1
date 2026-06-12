@@ -278,9 +278,11 @@ input::placeholder, textarea::placeholder {
     padding: var(--sp-9);
 }
 
-#login-form-block {
+.auth-card-inner {
+    width: 100%;
     position: relative;
 }
+
 
 .auth-card-title {
     font-size: var(--fs-24);
@@ -372,6 +374,54 @@ input::placeholder, textarea::placeholder {
     min-height: 20px;
     line-height: 20px;
     margin-top: 2px;
+}
+
+/* 密码可见性切换 */
+.field-password {
+    position: relative;
+}
+.field-password input {
+    padding-right: 44px;
+}
+.toggle-password {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--gray-5, #A9AEB8);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    transition: color 0.15s, background 0.15s;
+}
+.toggle-password:hover {
+    color: var(--gray-4, #C9CDD4);
+    background: var(--color-bg-hover, rgba(0,0,0,0.04));
+}
+/* 密码隐藏时：显示 eye-with-slash（浅灰） */
+.toggle-password .icon-eye {
+    display: none !important;
+}
+.toggle-password .icon-eye-off {
+    display: block !important;
+}
+/* 密码可见时：显示 plain eye（纯黑） */
+.toggle-password.showing {
+    color: var(--color-text, #1D2129);
+}
+.toggle-password.showing:hover {
+    color: var(--gray-8, #4E5969);
+}
+.toggle-password.showing .icon-eye {
+    display: block !important;
+}
+.toggle-password.showing .icon-eye-off {
+    display: none !important;
 }
 
 .auth-switch {
@@ -782,7 +832,7 @@ input::placeholder, textarea::placeholder {
 
     display: grid;
     grid-template-rows: minmax(0, 1fr);
-    grid-template-columns: var(--sidebar-width) minmax(520px, 1fr) var(--chat-context-width);
+    grid-template-columns: auto minmax(520px, 1fr) var(--chat-context-width);
     flex: 1;
     min-height: 0;
     overflow: hidden;
@@ -965,7 +1015,7 @@ input::placeholder, textarea::placeholder {
 
 @media (max-width: 1279px) {
     .chat-shell {
-        grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+        grid-template-columns: auto minmax(0, 1fr);
     }
 
     .chat-context-panel {
@@ -5097,6 +5147,33 @@ input::placeholder, textarea::placeholder {
     background: var(--color-bg-white);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
+}
+
+/* P5.A.1: 团队资料/我的资料 切换按钮 */
+.ws-scope-toggle {
+    display: inline-flex;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-default);
+    overflow: hidden;
+}
+.ws-scope-btn {
+    padding: 2px 12px;
+    font-size: var(--fs-13);
+    color: var(--color-text-secondary);
+    background: var(--color-bg-white);
+    border: none;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+}
+.ws-scope-btn + .ws-scope-btn {
+    border-left: 1px solid var(--color-border);
+}
+.ws-scope-btn.active {
+    background: var(--color-brand);
+    color: #fff;
+}
+.ws-scope-btn:hover:not(.active) {
+    background: var(--gray-1);
 }
 
 .ws-sources-table {

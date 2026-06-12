@@ -29,6 +29,7 @@ class AgentProfileUpdate(BaseModel):
     system_policy: Optional[str] = None
     allowed_tools: Optional[list[str]] = None  # will be serialized to JSON
     status: Optional[str] = None
+    default_scope_type: Optional[str] = None  # P5.A.2: personal/workspace
 
 
 class AuthorizationCreate(BaseModel):
@@ -80,6 +81,7 @@ def _serialize_profile(profile) -> dict:
         "system_policy": profile.system_policy,
         "allowed_tools": allowed_tools,
         "status": profile.status,
+        "default_scope_type": getattr(profile, "default_scope_type", "personal"),
         "version": profile.version,
         "created_at": profile.created_at.isoformat() if profile.created_at else None,
         "updated_at": profile.updated_at.isoformat() if profile.updated_at else None,
@@ -211,6 +213,10 @@ async def update_agent_profile(
         if req.status not in ("active", "disabled"):
             raise HTTPException(400, "status must be 'active' or 'disabled'")
         update_kwargs["status"] = req.status
+    if req.default_scope_type is not None:
+        if req.default_scope_type not in ("personal", "workspace"):
+            raise HTTPException(400, "default_scope_type must be 'personal' or 'workspace'")
+        update_kwargs["default_scope_type"] = req.default_scope_type
 
     if update_kwargs:
         profile = await repo.update(profile, **update_kwargs)

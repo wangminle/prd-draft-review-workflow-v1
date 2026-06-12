@@ -65,6 +65,8 @@ class VectorChunk:
     title: str
     section: str | None
     text: str
+    owner_id: int | None = None
+    visibility: str = "team"
 
 
 @dataclass
@@ -138,6 +140,8 @@ class KnowledgeVectorService:
                 "title": c.title,
                 "section": c.section or "",
                 "text": c.text,
+                "owner_id": c.owner_id or 0,
+                "visibility": c.visibility,
                 "vector": vectors[i],
             }
             for i, c in enumerate(chunks)
@@ -171,15 +175,19 @@ class KnowledgeVectorService:
     async def search(
         self,
         query_vec: list[float],
-        workspace_id: int,
+        workspace_id: int | None = None,
         top_k: int = 5,
+        user_id: int | None = None,
+        scope: str = "workspace",
     ) -> list[SearchResult]:
-        """向量检索，带 workspace prefilter 权限过滤。
+        """向量检索，带 workspace/personal prefilter 权限过滤。
 
         Args:
             query_vec: 查询向量
             workspace_id: 限制工作空间范围
             top_k: 返回条数
+            user_id: P5.A.1 personal scope 时按 owner_id 过滤
+            scope: "workspace"（默认，按 workspace_id 过滤）或 "personal"（按 owner_id 过滤）
 
         Returns:
             SearchResult 列表
@@ -198,11 +206,21 @@ class KnowledgeVectorService:
 
         query = np.array(query_vec)
 
-        # LanceDB search with prefilter（int 校验防止注入）
+        # P5.A.1: 根据 scope 构建 prefilter 条件
+        if scope == "personal" and user_id is not None:
+            where_clause = f"owner_id = {int(user_id)} AND visibility = 'private'"
+        elif workspace_id is not None:
+            where_clause = f"workspace_id = {int(workspace_id)}"
+        else:
+            # 无过滤条件，返回空（安全默认）
+            logger.warning("[VECTOR] search 缺少 workspace_id 或 user_id，返回空结果")
+            return []
+
+        # LanceDB search with prefilter
         try:
             results = (
                 table.search(query)
-                .where(f"workspace_id = {int(workspace_id)}", prefilter=True)
+                .where(where_clause, prefilter=True)
                 .limit(top_k)
                 .to_list()
             )

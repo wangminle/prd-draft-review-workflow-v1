@@ -216,3 +216,53 @@ class Artifact(Base):
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)
+
+
+# ── P6: 治理与运营 ──
+
+
+class CostDailySummary(Base):
+    """P6.A.1: 每日成本统计 — 从 LLM JSONL 日志聚合。"""
+    __tablename__ = "cost_daily_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), index=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="chat")  # chat/presentation/agent/review
+    date: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    call_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    embedding_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    total_elapsed_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+
+class QualityWeeklySummary(Base):
+    """P6.A.2: 每周质量统计 — 评分趋势、高频缺失章节等。"""
+    __tablename__ = "quality_weekly_summaries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id", ondelete="SET NULL"), index=True)
+    week_start: Mapped[str] = mapped_column(String(10), nullable=False, index=True)  # YYYY-MM-DD (Monday)
+    avg_score: Mapped[float | None] = mapped_column(Float)
+    total_reviews: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    high_freq_missing_sections: Mapped[str | None] = mapped_column(Text)  # JSON
+    high_freq_boundary_questions: Mapped[str | None] = mapped_column(Text)  # JSON
+    issue_close_rate: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+
+
+class WorkspaceBudget(Base):
+    """P6.C.1: Workspace 月度配额配置。"""
+    __tablename__ = "workspace_budgets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False, unique=True)
+    monthly_token_limit: Mapped[int | None] = mapped_column(Integer)
+    monthly_cost_limit: Mapped[float | None] = mapped_column(Float)
+    warning_threshold_pct: Mapped[float] = mapped_column(Float, nullable=False, default=80.0)
+    hard_limit_action: Mapped[str] = mapped_column(String(20), nullable=False, default="notify")  # notify/block
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn, onupdate=now_cn)

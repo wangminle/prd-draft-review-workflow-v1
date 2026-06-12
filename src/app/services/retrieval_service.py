@@ -76,9 +76,11 @@ class RetrievalService:
     async def retrieve(
         self,
         query: str,
-        workspace_id: int,
+        workspace_id: int | None = None,
         filters: dict[str, Any] | None = None,
         top_k: int = 5,
+        user_id: int | None = None,
+        scope: str = "workspace",
     ) -> RetrievalResponse:
         """执行检索：嵌入查询 → 向量检索 → 附加 confidence → 降级判断。
 
@@ -87,6 +89,8 @@ class RetrievalService:
             workspace_id: 限制工作空间范围
             filters: 附加过滤条件（预留）
             top_k: 返回条数
+            user_id: P5.A.1 personal scope 时按 owner_id 过滤
+            scope: "workspace"（默认，按 workspace_id 过滤）或 "personal"（按 owner_id 过滤）
 
         Returns:
             RetrievalResponse
@@ -101,6 +105,8 @@ class RetrievalService:
                 query, workspace_id, top_k,
                 fallback_reason="lancedb_unavailable",
                 start_time=start_time,
+                user_id=user_id,
+                scope=scope,
             )
 
         # Step 2: 嵌入查询
@@ -113,12 +119,15 @@ class RetrievalService:
                 query, workspace_id, top_k,
                 fallback_reason=f"embedding_failed: {str(e)[:100]}",
                 start_time=start_time,
+                user_id=user_id,
+                scope=scope,
             )
 
-        # Step 3: 向量检索
+        # Step 3: 向量检索（P5.A.1: 支持 personal scope）
         try:
             search_results = await self._vector_service.search(
-                query_vec, workspace_id, top_k=top_k
+                query_vec, workspace_id, top_k=top_k,
+                user_id=user_id, scope=scope,
             )
         except (ImportError, RuntimeError, OSError) as e:
             logger.warning(f"[RETRIEVE] LanceDB 检索失败，降级到 FTS5: {e}")
@@ -214,13 +223,26 @@ class RetrievalService:
     async def _fallback_fts(
         self,
         query: str,
-        workspace_id: int,
+        workspace_id: int | None,
         top_k: int,
         fallback_reason: str,
         start_time: float,
+        user_id: int | None = None,
+        scope: str = "workspace",
     ) -> RetrievalResponse:
         """FTS5 降级回退检索。"""
         from app.services.knowledge_ingestion import KnowledgeIngestionService
+
+        # P5.A.1: personal scope 暂不支持 FTS5 降级（个人资料量级小，向量检索优先）
+        if scope == "personal" and not workspace_id:
+            elapsed_ms = (time.monotonic() - start_time) * 1000
+            return RetrievalResponse(
+                results=[],
+                total=0,
+                latency_ms=round(elapsed_ms, 1),
+                fallback_reason=fallback_reason,
+                query=query,
+            )
 
         try:
             if self._db_session is not None:

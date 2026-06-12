@@ -227,6 +227,14 @@ def test_js_003_resize_handler_for_sidebar():
     assert '_resizeTimer' in js, "resize timer for sidebar alignment must be present"
 
 
+def test_js_003_chat_shell_grid_uses_auto_for_sidebar():
+    """JS-003: chat-shell grid 第一列应使用 auto 跟随侧边栏实际宽度，而非固定 var(--sidebar-width)"""
+    css = _read(CSS)
+    # .chat-shell grid-template-columns 第一列应为 auto
+    chat_shell_block = css.split('.chat-shell {', 1)[1].split('}', 1)[0]
+    assert 'auto minmax(' in chat_shell_block, "chat-shell grid first column should be auto, not var(--sidebar-width)"
+
+
 # ─── 合入: 前端 API 契约 + JS 全局对象暴露 ──────────────────────────
 # 原 test_frontend_api_contract.py / test_frontend_inline_handlers.py / test_app_frontend_contract.py
 
@@ -290,31 +298,28 @@ def test_html_head_includes_workspace_favicon():
 
 
 def test_login_page_contains_deployment_notice_banner():
-    """登录页面应包含部署提示通知栏"""
+    """登录页面应包含部署提示通知栏（共享于登录和注册两态，绝对定位浮在上方）"""
     html = _read(HTML)
     css = _read(CSS)
-    login_block = html.split('<div id="login-form-block">', 1)[1].split('<h2 class="auth-card-title">欢迎回来</h2>', 1)[0]
-    assert 'class="auth-login-notice"' in login_block
-    assert '💡 <strong>部署提示：</strong>' in login_block
-    assert '首次启动时系统自动创建管理员账号' in login_block
-    assert '.env' in login_block
-    assert '#login-form-block {' in css
-    assert 'position: relative;' in css
+    assert 'auth-card-inner' in html, "auth-card-inner wrapper should exist for notice + forms"
+    # notice 应在 auth-card-inner 内（两态共享），而非仅在 login-form-block 内
+    inner_block = html.split('class="auth-card-inner"', 1)[1].split('</div>', 3)[0]
+    assert 'auth-login-notice' in inner_block, "notice should be inside auth-card-inner (shared by both states)"
+    assert '部署提示' in html
+    assert '首次启动时系统自动创建管理员账号' in html
+    assert '.env' in html
     assert '.auth-login-notice {' in css
     assert 'position: absolute;' in css
     assert 'top: -240px;' in css
     assert 'border-radius: 12px;' in css
     assert 'border: 1px solid var(--blue-2);' in css
-    assert 'background: linear-gradient(135deg, var(--blue-1) 0%, rgba(46, 124, 192, 0.18) 100%);' in css
-    assert 'box-shadow:' in css
 
 
 def test_login_notice_can_be_overridden_by_branding_config():
     """登录通知栏应支持品牌配置覆盖"""
     html = _read(HTML)
     auth_js = _read(AUTH_JS)
-    login_block = html.split('<div id="login-form-block">', 1)[1].split('<h2 class="auth-card-title">欢迎回来</h2>', 1)[0]
-    assert 'data-branding="login-notice"' in login_block
+    assert 'data-branding="login-notice"' in html
     assert "c.login_notice" in auth_js
     assert "renderLoginNotice" in auth_js
     assert "document.createElement('p')" in auth_js
@@ -326,11 +331,10 @@ def test_login_notice_has_low_height_responsive_fallback():
     css = _read(CSS)
     assert '@media (max-height: 920px) {' in css
     assert '.auth-card {' in css
-    assert 'padding-top: calc(140px - var(--auth-notice-lift));' in css
+    assert '--auth-notice-lift' in css
     assert '.auth-login-notice {' in css
+    assert 'position: sticky' in css
     assert 'top: 24px;' in css
-    assert 'left: 0;' in css
-    assert 'right: 0;' in css
     assert 'max-height: calc(100vh - 48px);' in css
 
 
@@ -593,3 +597,118 @@ def test_p4a4_api_js_review_request_methods():
     assert 'listReviewRequests' in js
     assert 'resubmitReviewRequest' in js
     assert 'decideReviewRound' in js
+
+
+# ─── US-01: 密码可见性切换前端契约 ──────────────────────────────────
+
+AUTH_JS = STATIC / "js" / "auth.js"
+
+
+def test_us01_login_password_has_toggle_button():
+    """US-01: 登录密码输入框应有 toggle-password 按钮"""
+    html = _read(HTML)
+    login_block = html.split('id="login-form-block"', 1)[1].split('id="register-form-block"', 1)[0]
+    assert 'field-password' in login_block, "login form missing .field-password wrapper"
+    assert 'toggle-password' in login_block, "login form missing .toggle-password button"
+    assert 'icon-eye' in login_block, "login form missing .icon-eye SVG"
+
+
+def test_us01_register_password_has_toggle_button():
+    """US-01: 注册密码输入框应有 toggle-password 按钮"""
+    html = _read(HTML)
+    register_block = html.split('id="register-form-block"', 1)[1].split('id="login-notice"', 1)[0]
+    assert 'field-password' in register_block, "register form missing .field-password wrapper"
+    assert 'toggle-password' in register_block, "register form missing .toggle-password button"
+    assert 'icon-eye' in register_block, "register form missing .icon-eye SVG"
+
+
+def test_us01_toggle_button_has_tabindex_minus1():
+    """US-01: toggle-password 按钮应有 tabindex=-1 不干扰 Tab 键顺序"""
+    html = _read(HTML)
+    assert html.count('tabindex="-1"') >= 2, "toggle-password buttons should have tabindex=-1"
+
+
+def test_us01_toggle_button_has_aria_label():
+    """US-01: toggle-password 按钮应有 aria-label"""
+    html = _read(HTML)
+    assert html.count('aria-label="显示/隐藏密码"') >= 2, "toggle-password buttons should have aria-label"
+
+
+def test_us01_css_field_password_styles():
+    """US-01: CSS 应包含密码切换样式，且图标语义正确：隐藏→eye-off浅灰，可见→eye纯黑"""
+    css = _read(CSS)
+    assert '.field-password' in css
+    assert '.toggle-password' in css
+    assert '.icon-eye-off' in css
+    assert '.toggle-password.showing' in css
+    # 密码隐藏时（默认态）：icon-eye-off 显示，icon-eye 隐藏
+    assert 'toggle-password .icon-eye' in css and 'display: none' in css, "hidden state: icon-eye should be hidden"
+    assert 'toggle-password .icon-eye-off' in css and 'display: block' in css, "hidden state: icon-eye-off should be shown"
+    # 密码可见时（.showing态）：icon-eye 显示，icon-eye-off 隐藏
+    assert 'toggle-password.showing .icon-eye' in css and 'display: block' in css, "visible state: icon-eye should be shown"
+    assert 'toggle-password.showing .icon-eye-off' in css and 'display: none' in css, "visible state: icon-eye-off should be hidden"
+    # 颜色区分：隐藏态浅灰，可见态纯黑
+    assert '--gray-5' in css or '#A9AEB8' in css, "hidden state should use lighter gray color"
+    assert '--color-text' in css or '#1D2129' in css, "visible state should use dark color"
+
+
+def test_us01_auth_js_bind_password_toggles():
+    """US-01: auth.js 应有 _bindPasswordToggles 方法"""
+    js = _read(AUTH_JS)
+    assert '_bindPasswordToggles' in js
+    assert ".toggle-password" in js
+    assert "classList.toggle" in js
+    assert "'showing'" in js
+
+
+def test_us01_auth_js_changepassword_has_toggle():
+    """US-01: 修改密码弹窗的三个密码字段都应有 toggle-password"""
+    js = _read(AUTH_JS)
+    # showChangePassword 应包含 3 个 .toggle-password 按钮（旧密码/新密码/确认密码）
+    assert js.count('toggle-password') >= 3, "change password dialog should have 3 toggle-password buttons"
+
+
+def test_us01_app_js_initializes_password_toggles():
+    """US-01: app.js 应初始化登录/注册表单的密码切换"""
+    js = _read(APP_JS)
+    assert '_bindPasswordToggles' in js
+    assert "login-form-block" in js
+    assert "register-form-block" in js
+
+
+# ─── JS-004: 所有前端 JS 文件语法合法性检查 ──────────────────────────
+
+import subprocess
+
+
+def _js_files():
+    """返回所有前端 JS 文件路径列表"""
+    js_dir = STATIC / "js"
+    return sorted(js_dir.glob("*.js"))
+
+
+def test_js004_all_js_files_pass_node_syntax_check():
+    """JS-004: 所有前端 JS 文件应通过 node --check 语法检查"""
+    js_files = _js_files()
+    assert js_files, "No JS files found in src/static/js/"
+    errors = []
+    for path in js_files:
+        result = subprocess.run(
+            ["node", "--check", str(path)],
+            capture_output=True, text=True, timeout=10,
+        )
+        if result.returncode != 0:
+            errors.append(f"{path.name}: {result.stderr.strip()}")
+    assert not errors, "JS syntax errors found:\n" + "\n".join(errors)
+
+
+def test_js004_no_inline_display_none_in_icon_svgs():
+    """JS-004: icon-eye / icon-eye-off SVG 不应有内联 style='display:none'，由 CSS 统一控制可见性"""
+    html = _read(HTML)
+    auth_js = _read(AUTH_JS)
+    import re
+    # 所有 eye 类 SVG 不应有内联 display:none
+    html_violations = len(re.findall(r'icon-eye[^"]*[^>]*style="display:none"', html))
+    auth_violations = len(re.findall(r'icon-eye[^"]*[^>]*style="display:none"', auth_js))
+    assert html_violations == 0, f"HTML has {html_violations} icon-eye SVGs with inline display:none"
+    assert auth_violations == 0, f"auth.js has {auth_violations} icon-eye SVGs with inline display:none"

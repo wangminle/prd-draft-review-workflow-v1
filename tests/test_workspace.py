@@ -300,9 +300,9 @@ class TestKnowledgeSourceModel:
 
     async def test_list_by_workspace(self, db_session, default_workspace, admin_user):
         repo = KnowledgeSourceRepository(db_session)
-        await repo.create(default_workspace.id, "upload", "文档1", owner_id=admin_user.id)
-        await repo.create(default_workspace.id, "upload", "文档2", owner_id=admin_user.id)
-        await repo.create(default_workspace.id, "lark_url", "飞书文档", owner_id=admin_user.id)
+        await repo.create("upload", "文档1", workspace_id=default_workspace.id, owner_id=admin_user.id)
+        await repo.create("upload", "文档2", workspace_id=default_workspace.id, owner_id=admin_user.id)
+        await repo.create("lark_url", "飞书文档", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         all_sources = await repo.list_by_workspace(default_workspace.id)
         assert len(all_sources) == 3
@@ -314,7 +314,7 @@ class TestKnowledgeSourceModel:
     async def test_list_by_workspace_pagination(self, db_session, default_workspace, admin_user):
         repo = KnowledgeSourceRepository(db_session)
         for i in range(5):
-            await repo.create(default_workspace.id, "upload", f"文档{i}", owner_id=admin_user.id)
+            await repo.create("upload", f"文档{i}", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         page1 = await repo.list_by_workspace(default_workspace.id, limit=2, offset=0)
         page2 = await repo.list_by_workspace(default_workspace.id, limit=2, offset=2)
@@ -323,14 +323,14 @@ class TestKnowledgeSourceModel:
 
     async def test_count_by_workspace(self, db_session, default_workspace, admin_user):
         repo = KnowledgeSourceRepository(db_session)
-        await repo.create(default_workspace.id, "upload", "文档1", owner_id=admin_user.id)
-        await repo.create(default_workspace.id, "upload", "文档2", owner_id=admin_user.id)
+        await repo.create("upload", "文档1", workspace_id=default_workspace.id, owner_id=admin_user.id)
+        await repo.create("upload", "文档2", workspace_id=default_workspace.id, owner_id=admin_user.id)
         count = await repo.count_by_workspace(default_workspace.id)
         assert count == 2
 
     async def test_archive_source(self, db_session, default_workspace, admin_user):
         repo = KnowledgeSourceRepository(db_session)
-        source = await repo.create(default_workspace.id, "upload", "待归档", owner_id=admin_user.id)
+        source = await repo.create("upload", "待归档", workspace_id=default_workspace.id, owner_id=admin_user.id)
         archived = await repo.archive(source.id)
         assert archived.status == "archived"
 
@@ -344,7 +344,7 @@ class TestKnowledgeSourceModel:
 
     async def test_set_status(self, db_session, default_workspace, admin_user):
         repo = KnowledgeSourceRepository(db_session)
-        source = await repo.create(default_workspace.id, "upload", "处理中", owner_id=admin_user.id)
+        source = await repo.create("upload", "处理中", workspace_id=default_workspace.id, owner_id=admin_user.id)
         processing = await repo.set_status(source.id, "processing")
         assert processing.status == "processing"
 
@@ -404,7 +404,7 @@ class TestProjectSourceRef:
 
     async def test_add_ref(self, db_session, default_workspace, admin_user):
         ks_repo = KnowledgeSourceRepository(db_session)
-        source = await ks_repo.create(default_workspace.id, "upload", "资料", owner_id=admin_user.id)
+        source = await ks_repo.create("upload", "资料", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         project = ReviewProject(name="项目", created_by=admin_user.id, workspace_id=default_workspace.id)
         db_session.add(project)
@@ -422,9 +422,9 @@ class TestProjectSourceRef:
     async def test_ref_types(self, db_session, default_workspace, admin_user):
         """context / reference / background 三种引用类型。"""
         ks_repo = KnowledgeSourceRepository(db_session)
-        s1 = await ks_repo.create(default_workspace.id, "upload", "资料1", owner_id=admin_user.id)
-        s2 = await ks_repo.create(default_workspace.id, "upload", "资料2", owner_id=admin_user.id)
-        s3 = await ks_repo.create(default_workspace.id, "upload", "资料3", owner_id=admin_user.id)
+        s1 = await ks_repo.create("upload", "资料1", workspace_id=default_workspace.id, owner_id=admin_user.id)
+        s2 = await ks_repo.create("upload", "资料2", workspace_id=default_workspace.id, owner_id=admin_user.id)
+        s3 = await ks_repo.create("upload", "资料3", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         project = ReviewProject(name="项目", created_by=admin_user.id, workspace_id=default_workspace.id)
         db_session.add(project)
@@ -442,7 +442,7 @@ class TestProjectSourceRef:
 
     async def test_remove_ref(self, db_session, default_workspace, admin_user):
         ks_repo = KnowledgeSourceRepository(db_session)
-        source = await ks_repo.create(default_workspace.id, "upload", "资料", owner_id=admin_user.id)
+        source = await ks_repo.create("upload", "资料", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         project = ReviewProject(name="项目", created_by=admin_user.id, workspace_id=default_workspace.id)
         db_session.add(project)
@@ -461,7 +461,7 @@ class TestProjectSourceRef:
     async def test_freeze_snapshot(self, db_session, default_workspace, admin_user):
         """审查启动时冻结引用资料的 snapshot_version。"""
         ks_repo = KnowledgeSourceRepository(db_session)
-        source = await ks_repo.create(default_workspace.id, "upload", "资料", content_hash="h1", owner_id=admin_user.id)
+        source = await ks_repo.create("upload", "资料", workspace_id=default_workspace.id, content_hash="h1", owner_id=admin_user.id)
         await ks_repo.update_version(source.id, content_hash="h2")
         # source 现在是 v2
 
@@ -481,7 +481,7 @@ class TestProjectSourceRef:
     async def test_freeze_snapshot_idempotent(self, db_session, default_workspace, admin_user):
         """已有 snapshot_version 的引用不再覆盖。"""
         ks_repo = KnowledgeSourceRepository(db_session)
-        source = await ks_repo.create(default_workspace.id, "upload", "资料", owner_id=admin_user.id)
+        source = await ks_repo.create("upload", "资料", workspace_id=default_workspace.id, owner_id=admin_user.id)
 
         project = ReviewProject(name="项目", created_by=admin_user.id, workspace_id=default_workspace.id)
         db_session.add(project)

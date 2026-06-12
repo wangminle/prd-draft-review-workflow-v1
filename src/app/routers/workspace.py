@@ -35,6 +35,8 @@ def _source_to_info(source):
     return {
         "id": source.id,
         "workspace_id": source.workspace_id,
+        "owner_type": source.owner_type,
+        "visibility": source.visibility,
         "source_type": source.source_type,
         "title": source.title,
         "filename": source.filename,
@@ -264,11 +266,14 @@ async def list_sources(
     source_type: str | None = None,
     status: str | None = None,
     tag: str | None = None,
+    owner_type: str | None = None,
+    visibility: str | None = None,
     offset: int = 0,
     limit: int = 50,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    """P0.B.2 + P5.A.1: 列出资料，支持 owner_type/visibility 过滤"""
     repo = WorkspaceRepository(db)
     ws = await repo.get_by_id(workspace_id)
     if ws is None:
@@ -278,7 +283,16 @@ async def list_sources(
     require_action(member, "read", "查看资料")
 
     ks_repo = KnowledgeSourceRepository(db)
-    sources = await ks_repo.list_by_workspace(workspace_id, source_type=source_type, status=status, tag=tag, offset=offset, limit=limit)
+    sources = await ks_repo.list_by_workspace(
+        workspace_id,
+        source_type=source_type,
+        status=status,
+        tag=tag,
+        owner_type=owner_type,
+        visibility=visibility,
+        offset=offset,
+        limit=limit,
+    )
     return [_source_to_info(s) for s in sources]
 
 
@@ -290,18 +304,26 @@ async def delete_source(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    ws_repo = WorkspaceRepository(db)
-    ws = await ws_repo.get_by_id(workspace_id)
-    if ws is None:
-        raise HTTPException(404, "空间不存在")
-
-    member = await ws_repo.get_member(workspace_id, user.id)
-    require_action(member, "manage", "删除资料")
-
+    """P0.B.3 + P5.A.1: 删除资料（软删除）——团队资料需 manage 权限，个人资料需 owner 本人"""
     ks_repo = KnowledgeSourceRepository(db)
     source = await ks_repo.get_by_id(source_id)
-    if source is None or source.workspace_id != workspace_id:
+    if source is None:
         raise HTTPException(404, "资料不存在")
+
+    # P5.A.1: 个人资料权限判断
+    if source.owner_type == "user":
+        if source.owner_id != user.id:
+            raise HTTPException(403, "只能删除自己的个人资料")
+    else:
+        # 团队资料需要 manage 权限
+        if source.workspace_id != workspace_id:
+            raise HTTPException(404, "资料不存在")
+        ws_repo = WorkspaceRepository(db)
+        ws = await ws_repo.get_by_id(workspace_id)
+        if ws is None:
+            raise HTTPException(404, "空间不存在")
+        member = await ws_repo.get_member(workspace_id, user.id)
+        require_action(member, "manage", "删除资料")
 
     result = await ks_repo.archive(source_id)
     if result is None:
@@ -384,19 +406,30 @@ async def update_source_tags(
 @router.post("/workspace/{workspace_id}/sources")
 async def upload_source(
     workspace_id: int,
+    visibility: str = "team",
     file: UploadFile = File(...),
     request: Request = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """P0.B.1: 上传文件到团队资料库，解析为 KnowledgeSource"""
+    """P0.B.1 + P5.A.1: 上传文件到资料库，支持 visibility=team/private"""
+    from app.models.workspace import VALID_VISIBILITIES
+    if visibility not in VALID_VISIBILITIES:
+        raise HTTPException(422, f"无效 visibility，允许值: {', '.join(VALID_VISIBILITIES)}")
+
     ws_repo = WorkspaceRepository(db)
     ws = await ws_repo.get_by_id(workspace_id)
     if ws is None:
         raise HTTPException(404, "空间不存在")
 
-    member = await ws_repo.get_member(workspace_id, user.id)
-    require_action(member, "write", "上传资料")
+    # visibility=private 不需要 write 权限（个人资料），但仍需是成员
+    if visibility == "team":
+        member = await ws_repo.get_member(workspace_id, user.id)
+        require_action(member, "write", "上传团队资料")
+    else:
+        # private: 只需是团队成员即可
+        member = await ws_repo.get_member(workspace_id, user.id)
+        require_action(member, "read", "上传个人资料")
 
     content = await file.read()
     max_size = 20 * 1024 * 1024
@@ -407,6 +440,7 @@ async def upload_source(
     stored = _knowledge_storage.save_upload(filename=filename, content=content)
 
     ks_repo = KnowledgeSourceRepository(db)
+    owner_type = "user" if visibility == "private" else "workspace"
     source = await ks_repo.create(
         workspace_id=workspace_id,
         source_type="upload",
@@ -416,6 +450,8 @@ async def upload_source(
         content_hash=stored.content_hash,
         extracted_text=stored.extracted_text,
         owner_id=user.id,
+        owner_type=owner_type,
+        visibility=visibility,
     )
 
     # P2.A.3: 上传后同步完成解析正文的切块与 FTS5 索引；向量索引可由后续 embedding 流程补齐。
@@ -642,4 +678,232 @@ async def ingest_source(
         "doc_id": doc.id,
         "content_hash": doc.content_hash,
         "version": doc.version,
+    }
+
+
+# ---------- P5.A.1: 个人私有知识作用域 API ----------
+
+
+@router.get("/personal/sources")
+async def list_personal_sources(
+    source_type: str | None = None,
+    status: str | None = None,
+    tag: str | None = None,
+    offset: int = 0,
+    limit: int = 50,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 列出当前用户的个人私有资料"""
+    ks_repo = KnowledgeSourceRepository(db)
+    sources = await ks_repo.list_personal_sources(
+        user_id=user.id,
+        source_type=source_type,
+        status=status,
+        tag=tag,
+        offset=offset,
+        limit=limit,
+    )
+    return [_source_to_info(s) for s in sources]
+
+
+@router.post("/personal/sources")
+async def upload_personal_source(
+    file: UploadFile = File(...),
+    request: Request = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 上传文件到个人私有资料库（owner_type=user, visibility=private）"""
+    content = await file.read()
+    max_size = 20 * 1024 * 1024
+    if len(content) > max_size:
+        raise HTTPException(413, "文件过大，最大允许 20MB")
+
+    filename = file.filename or "upload"
+    stored = _knowledge_storage.save_upload(filename=filename, content=content)
+
+    ks_repo = KnowledgeSourceRepository(db)
+    # 关联到默认 workspace 以便 FTS5 检索，但 visibility=private
+    ws_repo = WorkspaceRepository(db)
+    ws = await ws_repo.get_default()
+    workspace_id = ws.id if ws else None
+
+    source = await ks_repo.create(
+        workspace_id=workspace_id,
+        source_type="upload",
+        title=filename,
+        filename=stored.original_filename,
+        file_id=stored.file_id,
+        content_hash=stored.content_hash,
+        extracted_text=stored.extracted_text,
+        owner_id=user.id,
+        owner_type="user",
+        visibility="private",
+    )
+
+    # 自动入库
+    if stored.extracted_text and stored.extracted_text.strip():
+        try:
+            from app.services.knowledge_ingestion import KnowledgeIngestionService
+            await KnowledgeIngestionService(db).ingest_source(source.id)
+        except Exception as e:
+            logger.error(f"[INGEST] 个人资料上传后自动入库失败 source_id={source.id}: {e}")
+            source.status = "failed"
+            await db.commit()
+            raise HTTPException(500, "资料上传成功但入库失败，请稍后重试")
+
+    await db.commit()
+
+    _audit_log_writer.write(
+        "source.upload_personal",
+        actor=user,
+        request=request,
+        target_type="knowledge_source",
+        target_id=source.id,
+        detail={"source_id": source.id, "title": filename, "visibility": "private"},
+    )
+
+    info = _source_to_info(source)
+    info["extracted_text"] = source.extracted_text
+    return info
+
+
+@router.get("/personal/sources/{source_id}")
+async def get_personal_source_detail(
+    source_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 获取个人私有资料详情"""
+    ks_repo = KnowledgeSourceRepository(db)
+    source = await ks_repo.get_by_id(source_id)
+    if source is None:
+        raise HTTPException(404, "资料不存在")
+    if source.owner_type != "user" or source.owner_id != user.id:
+        raise HTTPException(403, "无权访问此资料")
+
+    info = _source_to_info(source)
+    info["extracted_text"] = source.extracted_text
+
+    from app.repositories.knowledge_source_repository import ProjectSourceRefRepository
+    ref_repo = ProjectSourceRefRepository(db)
+    refs = await ref_repo.list_by_source(source_id)
+    info["project_refs"] = [
+        {"project_id": r.project_id, "ref_type": r.ref_type, "snapshot_version": r.snapshot_version}
+        for r in refs
+    ]
+
+    return info
+
+
+@router.delete("/personal/sources/{source_id}")
+async def delete_personal_source(
+    source_id: int,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 删除个人私有资料"""
+    ks_repo = KnowledgeSourceRepository(db)
+    source = await ks_repo.get_by_id(source_id)
+    if source is None:
+        raise HTTPException(404, "资料不存在")
+    if source.owner_type != "user" or source.owner_id != user.id:
+        raise HTTPException(403, "只能删除自己的个人资料")
+
+    result = await ks_repo.archive(source_id)
+    if result is None:
+        raise HTTPException(404, "资料不存在")
+
+    try:
+        from app.services.knowledge_vector_service import get_knowledge_vector_service
+        from app.services.knowledge_ingestion import KnowledgeIngestionService
+        await get_knowledge_vector_service().delete_by_source(source_id)
+        await KnowledgeIngestionService(db)._cleanup_fts_entries(source_id)
+    except Exception as e:
+        logger.warning(f"[SOURCE] 清理个人资料检索索引失败 source_id={source_id}: {e}")
+
+    await db.commit()
+    _audit_log_writer.write(
+        "source.delete_personal",
+        actor=user,
+        request=request,
+        target_type="knowledge_source",
+        target_id=source_id,
+        detail={"source_id": source_id, "title": source.title},
+    )
+    return {"message": "已删除"}
+
+
+@router.get("/personal/sources/{source_id}/download")
+async def download_personal_source(
+    source_id: int,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 下载个人私有资料原文件。"""
+    ks_repo = KnowledgeSourceRepository(db)
+    source = await ks_repo.get_by_id(source_id)
+    if source is None:
+        raise HTTPException(404, "资料不存在")
+    if source.owner_type != "user" or source.owner_id != user.id:
+        raise HTTPException(403, "无权访问此资料")
+
+    if not source.file_id:
+        raise HTTPException(404, "资料没有可下载的文件")
+
+    content = _knowledge_storage.read_file(source.file_id)
+    if content is None:
+        raise HTTPException(404, "文件不存在或已被删除")
+
+    from fastapi.responses import Response
+    safe_filename = (source.filename or source.file_id).replace('"', '_').replace('\r', '').replace('\n', '')
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={"Content-Disposition": f'attachment; filename="{safe_filename}"'},
+    )
+
+
+@router.post("/personal/retrieve")
+async def retrieve_personal_knowledge(
+    body: RetrieveRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.A.1: 检索个人私有知识库"""
+    from app.services.retrieval_service import RetrievalService
+    try:
+        retrieval = RetrievalService(db_session=db)
+        response = await retrieval.retrieve(
+            query=body.query,
+            workspace_id=None,
+            filters=body.filters,
+            top_k=body.top_k,
+            user_id=user.id,
+            scope="personal",
+        )
+    except Exception as e:
+        logger.error(f"[RETRIEVE] 个人知识检索失败: {e}")
+        raise HTTPException(500, "检索服务暂时不可用")
+
+    return {
+        "query": response.query,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "source_id": r.source_id,
+                "section": r.section,
+                "text_snippet": r.text_snippet,
+                "distance": r._distance,
+                "confidence": r.confidence,
+                "rejected": r.rejected,
+            }
+            for r in response.results
+        ],
+        "total": response.total,
+        "latency_ms": response.latency_ms,
+        "fallback_reason": response.fallback_reason,
     }

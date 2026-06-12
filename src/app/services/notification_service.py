@@ -290,6 +290,53 @@ class NotificationService:
 
         return notification.id
 
+    async def notify_agent_conversation(
+        self,
+        target_user_id: int,
+        actor_user_id: int,
+        agent_profile_id: int,
+        conversation_id: int,
+        summary: str,
+    ) -> int:
+        """P5.A.3: 他人与你的 Agent 对话后，通知你有人提问，需确认/回复。
+
+        Args:
+            target_user_id: Agent 所有者（被通知人）
+            actor_user_id: 向 Agent 提问的人
+            agent_profile_id: 被调用的 Agent Profile ID
+            conversation_id: 对话 ID
+            summary: 提问摘要
+
+        Returns:
+            notification.id
+        """
+        title = "Agent 对话请求"
+        body = f"有人向您的 Agent 提问了：{summary[:100]}"
+        notification = await self._repo.create(
+            recipient_id=target_user_id,
+            actor_id=actor_user_id,
+            object_type="agent_conversation",
+            object_id=conversation_id,
+            type="agent_conversation",
+            title=title,
+            body=body,
+        )
+
+        self._push_event(target_user_id, NotificationEvent(
+            type="new_notification",
+            notification_id=notification.id,
+            data={
+                "id": notification.id,
+                "type": "agent_conversation",
+                "title": title,
+                "body": body,
+                "object_type": "agent_conversation",
+                "object_id": conversation_id,
+            },
+        ))
+
+        return notification.id
+
     def _push_event(self, recipient_id: int, event: NotificationEvent) -> None:
         """将通知事件推送到用户的 SSE channel。"""
         channel = get_notification_channel(recipient_id)

@@ -12,6 +12,8 @@ VALID_MEMBER_ROLES = ("owner", "admin", "member", "viewer")
 VALID_WORKSPACE_STATUSES = ("active", "archived")
 VALID_SOURCE_TYPES = ("upload", "lark_url", "api")
 VALID_SOURCE_STATUSES = ("active", "archived", "processing", "failed")
+VALID_OWNER_TYPES = ("workspace", "user")
+VALID_VISIBILITIES = ("team", "private")
 
 
 class Workspace(Base):
@@ -48,7 +50,9 @@ class KnowledgeSource(Base):
     __tablename__ = "knowledge_sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=False)
+    workspace_id: Mapped[int | None] = mapped_column(ForeignKey("workspaces.id", ondelete="CASCADE"), nullable=True)
+    owner_type: Mapped[str] = mapped_column(String(20), nullable=False, default="workspace")  # workspace / user
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="team")  # team / private
     source_type: Mapped[str] = mapped_column(String(20), nullable=False, default="upload")
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     filename: Mapped[str | None] = mapped_column(String(200))

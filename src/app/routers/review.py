@@ -547,6 +547,20 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
     for doc in docs:
         await _review_file_storage.delete_document_files(doc.id, file_path=doc.file_path, md_path=doc.md_path)
 
+    # P4: 删除关联的协作审查子记录（review_requests 级联删除）
+    # SQLAlchemy 不会自动执行 ON DELETE CASCADE，需手动删除子记录
+    from app.models.review import ReviewRequest, ReviewRound, ReviewParticipant
+    req_result = await db.execute(select(ReviewRequest).where(ReviewRequest.project_id == project_id))
+    for req in req_result.scalars().all():
+        # 删除轮次和参与者
+        round_result = await db.execute(select(ReviewRound).where(ReviewRound.request_id == req.id))
+        for rnd in round_result.scalars().all():
+            await db.execute(
+                ReviewParticipant.__table__.delete().where(ReviewParticipant.request_id == req.id)
+            )
+            await db.delete(rnd)
+        await db.delete(req)
+
     await db.delete(p)
     await db.commit()
     _audit_log_writer.write(

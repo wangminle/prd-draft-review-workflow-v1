@@ -67,6 +67,77 @@ const App = {
         }, duration);
     },
 
+    /* P5.A.4: 个人 Agent 设置模态框 */
+    async _showAgentSettingsModal() {
+        const overlay = document.getElementById('modal-overlay');
+        const content = document.getElementById('modal-content');
+        if (!overlay || !content) return;
+
+        content.innerHTML = '<div style="padding:24px;text-align:center;color:var(--color-text-muted)">加载中…</div>';
+        overlay.style.display = 'flex';
+
+        try {
+            const profile = await API.getAgentProfile();
+            const name = profile?.name || 'My Agent';
+            const status = profile?.status || 'active';
+            const scopeType = profile?.default_scope_type || 'personal';
+            const allowedTools = profile?.allowed_tools || [];
+
+            content.innerHTML = `
+                <div style="padding:24px">
+                    <h3 style="margin:0 0 16px;font-size:var(--fs-16);font-weight:var(--fw-semibold)">个人 Agent 设置</h3>
+                    <div style="display:flex;flex-direction:column;gap:12px">
+                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
+                            Agent 名称
+                            <input id="agent-name-input" type="text" value="${DOMPurify.sanitize(name)}" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
+                        </label>
+                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
+                            默认访问范围
+                            <select id="agent-scope-select" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
+                                <option value="personal" ${scopeType === 'personal' ? 'selected' : ''}>仅个人授权资料</option>
+                                <option value="workspace" ${scopeType === 'workspace' ? 'selected' : ''}>团队资料</option>
+                            </select>
+                        </label>
+                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
+                            状态
+                            <select id="agent-status-select" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
+                                <option value="active" ${status === 'active' ? 'selected' : ''}>启用</option>
+                                <option value="disabled" ${status === 'disabled' ? 'selected' : ''}>禁用</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+                        <button id="agent-settings-cancel" class="btn btn-ghost">关闭</button>
+                        <button id="agent-settings-save" class="btn btn-primary">保存</button>
+                    </div>
+                </div>`;
+
+            const cleanup = () => { overlay.style.display = 'none'; };
+            document.getElementById('agent-settings-cancel').onclick = cleanup;
+            overlay.onclick = (e) => { if (e.target === overlay) cleanup(); };
+
+            document.getElementById('agent-settings-save').onclick = async () => {
+                const newName = document.getElementById('agent-name-input').value.trim();
+                const newScope = document.getElementById('agent-scope-select').value;
+                const newStatus = document.getElementById('agent-status-select').value;
+                try {
+                    await API.updateAgentProfile({
+                        name: newName,
+                        default_scope_type: newScope,
+                        status: newStatus,
+                    });
+                    this._showToast('Agent 设置已保存');
+                    cleanup();
+                } catch (err) {
+                    this._showToast('保存失败: ' + (err.message || '未知错误'));
+                }
+            };
+        } catch (err) {
+            content.innerHTML = `<div style="padding:24px;color:var(--red-6)">加载 Agent 设置失败: ${err.message}</div>
+                <div style="padding:0 24px 24px;text-align:right"><button class="btn btn-ghost" onclick="document.getElementById('modal-overlay').style.display='none'">关闭</button></div>`;
+        }
+    },
+
     _resetSessionState() {
         if (window.Review && typeof Review.resetState === 'function') {
             Review.resetState();
@@ -254,6 +325,10 @@ const App = {
             document.getElementById('register-form-block').style.display = 'none';
             document.getElementById('login-form-block').style.display = '';
         });
+
+        // 密码可见性切换（登录/注册）
+        Auth._bindPasswordToggles(document.getElementById('login-form-block'));
+        Auth._bindPasswordToggles(document.getElementById('register-form-block'));
     },
 
     /* ── 导航 ── */
@@ -319,6 +394,12 @@ const App = {
         document.getElementById('change-password-btn').addEventListener('click', () => {
             document.getElementById('user-menu-dropdown').style.display = 'none';
             Auth.showChangePassword();
+        });
+
+        // P5.A.4: Agent settings
+        document.getElementById('agent-settings-btn')?.addEventListener('click', () => {
+            document.getElementById('user-menu-dropdown').style.display = 'none';
+            this._showAgentSettingsModal();
         });
 
         // Go to admin (from chat page topbar)
@@ -474,3 +555,4 @@ window.addEventListener('resize', () => {
     clearTimeout(_resizeTimer);
     _resizeTimer = setTimeout(() => App._alignSidebarToDivider(), 150);
 });
+

@@ -141,7 +141,7 @@ WHITELIST = {
     },
     "workspace.py": {
         "db_add": 1,      # RetrievalLog in retrieve endpoint
-        "db_commit": 8,   # delete source + update tags + upload source + upload ingest failure + update default workspace + update member + retrieve log + ingest
+        "db_commit": 11,  # P5.A.1: +upload_personal +delete_personal +upload_personal_ingest_failure
         "db_flush": 1,   # update member status
         "builtin_open": 0,
         "os_makedirs": 0,

@@ -265,11 +265,16 @@ const Notification = {
             if (typeof Admin._showAgentApprovals === 'function') {
                 Admin._showAgentApprovals();
             }
+        } else if (objectType === 'agent_conversation') {
+            // P5.A.3: 跳转到智能对话页
+            App._showUserPage();
         } else if (objectType === 'artifact') {
             App._showReviewPage();
             if (typeof Review._showArtifactDetail === 'function') {
                 Review._showArtifactDetail(objectId);
             }
+        } else if (objectType === 'comment') {
+            App._showReviewPage();
         }
     },
 

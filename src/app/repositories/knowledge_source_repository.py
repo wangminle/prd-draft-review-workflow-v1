@@ -1,9 +1,10 @@
 """KnowledgeSource 数据查询与写入层。"""
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.workspace import KnowledgeSource, ProjectSourceRef
+from app.models.workspace import KnowledgeSource, ProjectSourceRef, VALID_OWNER_TYPES, VALID_VISIBILITIES
 
 
 class KnowledgeSourceRepository:
@@ -20,11 +21,48 @@ class KnowledgeSourceRepository:
         source_type: str | None = None,
         status: str | None = None,
         tag: str | None = None,
+        owner_type: str | None = None,
+        visibility: str | None = None,
         offset: int = 0,
         limit: int = 50,
     ) -> list[KnowledgeSource]:
-        query = select(KnowledgeSource).where(
+        """列出团队资料（owner_type=workspace, visibility=team）。"""
+        query = select(KnowledgeSource).options(
+            selectinload(KnowledgeSource.owner)
+        ).where(
             KnowledgeSource.workspace_id == workspace_id,
+        ).order_by(KnowledgeSource.updated_at.desc())
+        if status:
+            query = query.where(KnowledgeSource.status == status)
+        else:
+            query = query.where(KnowledgeSource.status == "active")
+        if source_type:
+            query = query.where(KnowledgeSource.source_type == source_type)
+        if tag:
+            query = query.where(KnowledgeSource.metadata_json.contains(tag))
+        if owner_type:
+            query = query.where(KnowledgeSource.owner_type == owner_type)
+        if visibility:
+            query = query.where(KnowledgeSource.visibility == visibility)
+        query = query.offset(offset).limit(limit)
+        result = await self._db.execute(query)
+        return list(result.scalars().all())
+
+    async def list_personal_sources(
+        self,
+        user_id: int,
+        source_type: str | None = None,
+        status: str | None = None,
+        tag: str | None = None,
+        offset: int = 0,
+        limit: int = 50,
+    ) -> list[KnowledgeSource]:
+        """列出个人私有资料（owner_type=user, owner_id=user_id）。"""
+        query = select(KnowledgeSource).options(
+            selectinload(KnowledgeSource.owner)
+        ).where(
+            KnowledgeSource.owner_type == "user",
+            KnowledgeSource.owner_id == user_id,
         ).order_by(KnowledgeSource.updated_at.desc())
         if status:
             query = query.where(KnowledgeSource.status == status)
@@ -38,9 +76,23 @@ class KnowledgeSourceRepository:
         result = await self._db.execute(query)
         return list(result.scalars().all())
 
-    async def count_by_workspace(self, workspace_id: int, status: str | None = None) -> int:
+    async def count_by_workspace(self, workspace_id: int, status: str | None = None, owner_type: str | None = None, visibility: str | None = None) -> int:
         query = select(func.count()).select_from(KnowledgeSource).where(
             KnowledgeSource.workspace_id == workspace_id,
+            KnowledgeSource.status == (status or "active"),
+        )
+        if owner_type:
+            query = query.where(KnowledgeSource.owner_type == owner_type)
+        if visibility:
+            query = query.where(KnowledgeSource.visibility == visibility)
+        result = await self._db.execute(query)
+        return result.scalar_one()
+
+    async def count_personal(self, user_id: int, status: str | None = None) -> int:
+        """统计个人私有资料数量。"""
+        query = select(func.count()).select_from(KnowledgeSource).where(
+            KnowledgeSource.owner_type == "user",
+            KnowledgeSource.owner_id == user_id,
             KnowledgeSource.status == (status or "active"),
         )
         result = await self._db.execute(query)
@@ -48,9 +100,11 @@ class KnowledgeSourceRepository:
 
     async def create(
         self,
-        workspace_id: int,
         source_type: str,
         title: str,
+        workspace_id: int | None = None,
+        owner_type: str = "workspace",
+        visibility: str = "team",
         filename: str | None = None,
         file_id: str | None = None,
         content_hash: str | None = None,
@@ -58,8 +112,14 @@ class KnowledgeSourceRepository:
         owner_id: int | None = None,
         metadata_json: str | None = None,
     ) -> KnowledgeSource:
+        if owner_type not in VALID_OWNER_TYPES:
+            raise ValueError(f"Invalid owner_type: {owner_type}, expected one of {VALID_OWNER_TYPES}")
+        if visibility not in VALID_VISIBILITIES:
+            raise ValueError(f"Invalid visibility: {visibility}, expected one of {VALID_VISIBILITIES}")
         source = KnowledgeSource(
             workspace_id=workspace_id,
+            owner_type=owner_type,
+            visibility=visibility,
             source_type=source_type,
             title=title,
             filename=filename,

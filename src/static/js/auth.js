@@ -56,17 +56,29 @@ const Auth = {
     showChangePassword() {
         Admin.showModal(`
             <h3>修改密码</h3>
-            <div class="field">
+            <div class="field field-password">
                 <label>旧密码</label>
                 <input type="password" id="old-password" placeholder="输入当前密码">
+                <button type="button" class="toggle-password" aria-label="显示/隐藏密码" tabindex="-1">
+                    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
+                </button>
             </div>
-            <div class="field">
+            <div class="field field-password">
                 <label>新密码</label>
                 <input type="password" id="new-password" placeholder="输入新密码（至少6位）">
+                <button type="button" class="toggle-password" aria-label="显示/隐藏密码" tabindex="-1">
+                    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
+                </button>
             </div>
-            <div class="field">
+            <div class="field field-password">
                 <label>确认新密码</label>
                 <input type="password" id="confirm-password" placeholder="再次输入新密码">
+                <button type="button" class="toggle-password" aria-label="显示/隐藏密码" tabindex="-1">
+                    <svg class="icon-eye" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+                    <svg class="icon-eye-off" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/></svg>
+                </button>
             </div>
             <div id="change-password-error" class="field-error"></div>
             <div class="btn-row">
@@ -74,6 +86,8 @@ const Auth = {
                 <button class="btn btn-primary btn-sm" onclick="Auth.savePassword()">保存</button>
             </div>
         `);
+        // 绑定弹窗内的密码可见性切换
+        this._bindPasswordToggles(document.getElementById('modal-content'));
     },
 
     async savePassword() {
@@ -102,6 +116,22 @@ const Auth = {
         } catch (e) {
             errEl.textContent = e.message || '修改失败';
         }
+    },
+
+    /* 密码可见性切换：点击按钮切换 input type + 图标 */
+    _bindPasswordToggles(root) {
+        const container = root || document;
+        container.querySelectorAll('.toggle-password').forEach(btn => {
+            if (btn._bound) return;
+            btn._bound = true;
+            btn.addEventListener('click', () => {
+                const input = btn.parentElement.querySelector('input');
+                if (!input) return;
+                const showing = input.type === 'text';
+                input.type = showing ? 'password' : 'text';
+                btn.classList.toggle('showing', !showing);
+            });
+        });
     },
 };
 

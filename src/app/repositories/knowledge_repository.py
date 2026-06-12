@@ -133,7 +133,7 @@ class KnowledgeChunkRepository:
         document_id: int,
         chunks_data: list[dict],
     ) -> list[KnowledgeChunk]:
-        """批量创建 chunks。chunks_data 为 dict 列表，每个含 chunk_no/text/section/source_ref/metadata_json。"""
+        """批量创建 chunks。chunks_data 为 dict 列表，每个含 chunk_no/text/section/source_ref/metadata_json/visibility。"""
         chunks: list[KnowledgeChunk] = []
         for cd in chunks_data:
             chunk = KnowledgeChunk(
@@ -142,6 +142,7 @@ class KnowledgeChunkRepository:
                 text=cd["text"],
                 section=cd.get("section"),
                 source_ref=cd.get("source_ref"),
+                visibility=cd.get("visibility", "team"),
                 embedding_status="pending",
                 metadata_json=cd.get("metadata_json"),
             )

@@ -63,6 +63,7 @@ class KnowledgeChunk(Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     section: Mapped[str | None] = mapped_column(String(200))
     source_ref: Mapped[str | None] = mapped_column(String(200))
+    visibility: Mapped[str] = mapped_column(String(20), nullable=False, default="team")  # team / private
     embedding_status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending", index=True
     )

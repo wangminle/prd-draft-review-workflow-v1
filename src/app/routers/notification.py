@@ -58,6 +58,9 @@ def _serialize_comment(c) -> dict:
         "author_id": c.author_id,
         "body": c.body,
         "parent_id": c.parent_id,
+        "resolved": getattr(c, "resolved", False),
+        "resolution": getattr(c, "resolution", None),
+        "resolved_by": getattr(c, "resolved_by", None),
         "created_at": c.created_at.isoformat() if c.created_at else None,
     }
 
@@ -288,3 +291,40 @@ async def delete_comment(
     await repo.delete(comment)
     await db.commit()
     return {"status": "ok"}
+
+
+@router.put("/comments/{comment_id}/resolve")
+async def resolve_comment(
+    comment_id: int,
+    body: dict,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """P5.C.2: 标记评论为已解决（resolved/forced_pass）。"""
+    repo = CommentRepository(db)
+    comment = await repo.get_by_id(comment_id)
+    if not comment:
+        raise HTTPException(404, "评论不存在")
+
+    resolution = body.get("resolution", "resolved")
+    if resolution not in ("resolved", "forced_pass"):
+        raise HTTPException(422, "resolution 必须是 'resolved' 或 'forced_pass'")
+
+    comment.resolved = True
+    comment.resolution = resolution
+    comment.resolved_by = user.id
+    await db.commit()
+
+    # 通知评论作者
+    if comment.author_id != user.id:
+        from app.services.notification_service import NotificationService
+        notif_service = NotificationService(db)
+        await notif_service.notify_comment_reply(
+            comment_id=comment.id,
+            object_type=comment.object_type,
+            object_id=comment.object_id,
+            author_id=user.id,
+            parent_author_id=comment.author_id,
+        )
+
+    return _serialize_comment(comment)

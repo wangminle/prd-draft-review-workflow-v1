@@ -176,6 +176,47 @@ const API = {
     deleteWorkspaceSource(wsId, sourceId) { return this.request('DELETE', `/api/workspace/${wsId}/sources/${sourceId}`); },
     updateSourceTags(wsId, sourceId, tags) { return this.request('PUT', `/api/workspace/${wsId}/sources/${sourceId}/tags`, { tags }); },
 
+    // P5.A.1: 个人私有资料 API
+    getPersonalSources(params) {
+        let url = '/api/personal/sources';
+        if (params) {
+            const qs = new URLSearchParams(params).toString();
+            if (qs) url += '?' + qs;
+        }
+        return this.request('GET', url);
+    },
+    getPersonalSourceDetail(sourceId) { return this.request('GET', `/api/personal/sources/${sourceId}`); },
+    deletePersonalSource(sourceId) { return this.request('DELETE', `/api/personal/sources/${sourceId}`); },
+    async downloadPersonalSource(sourceId) {
+        const headers = {};
+        if (this.getToken()) {
+            headers['Authorization'] = `Bearer ${this.getToken()}`;
+        }
+        const resp = await fetch(`/api/personal/sources/${sourceId}/download`, { method: 'GET', headers });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+        }
+        const disposition = resp.headers.get('Content-Disposition') || '';
+        const match = disposition.match(/filename="([^"]+)"/);
+        return {
+            blob: await resp.blob(),
+            filename: match ? match[1] : `source-${sourceId}`,
+        };
+    },
+    async uploadPersonalSource(formData) {
+        const headers = {};
+        if (this.getToken()) {
+            headers['Authorization'] = `Bearer ${this.getToken()}`;
+        }
+        const resp = await fetch('/api/personal/sources', { method: 'POST', headers, body: formData });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+        }
+        return resp.json();
+    },
+
     async downloadWorkspaceSource(wsId, sourceId) {
         const headers = {};
         if (this.getToken()) {

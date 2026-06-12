@@ -659,7 +659,7 @@ def test_chat_shell_css_grid_rules():
     assert ".chat-shell" in CSS
     shell_block = CSS.split(".chat-shell {", 1)[1].split("}", 1)[0]
     assert "grid-template-columns" in shell_block
-    assert "var(--sidebar-width)" in shell_block
+    assert "auto minmax(" in shell_block  # 第一列 auto 跟随侧边栏实际宽度
     assert "var(--chat-context-width)" in shell_block
 
 

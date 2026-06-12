@@ -124,7 +124,8 @@ class KnowledgeIngestionService:
             logger.info(f"[INGEST] source_id={source_id} 切块结果为空")
             return doc
 
-        # 6. 批量创建 chunks
+        # 6. 批量创建 chunks（继承 source 的 visibility）
+        visibility = source.visibility or "team"
         chunks_data = [
             {
                 "chunk_no": cr.chunk_no,
@@ -132,6 +133,7 @@ class KnowledgeIngestionService:
                 "section": cr.section,
                 "source_ref": cr.source_ref,
                 "metadata_json": cr.metadata_json,
+                "visibility": visibility,
             }
             for cr in chunk_results
         ]

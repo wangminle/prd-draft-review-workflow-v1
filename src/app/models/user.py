@@ -201,6 +201,7 @@ class AgentProfile(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="My Agent")
     system_policy: Mapped[str | None] = mapped_column(Text)  # system prompt for this agent
     allowed_tools_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["search", "rag", "skill_runner", "artifact"]
+    default_scope_type: Mapped[str] = mapped_column(String(20), nullable=False, default="personal")  # P5.A.2: personal/workspace — 只访问个人授权资料 + 已授权项目资料
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active/disabled
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
@@ -342,9 +343,9 @@ class Notification(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     recipient_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
     actor_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
-    object_type: Mapped[str] = mapped_column(String(30), nullable=False)  # review_request/review_round/agent_approval/artifact/comment
+    object_type: Mapped[str] = mapped_column(String(30), nullable=False)  # review_request/review_round/agent_approval/artifact/comment/agent_conversation
     object_id: Mapped[int] = mapped_column(Integer, nullable=False)
-    type: Mapped[str] = mapped_column(String(50), nullable=False)  # review_request_created/review_round_approved/review_round_rejected/artifact_confirmed/agent_approval/comment_reply/mention
+    type: Mapped[str] = mapped_column(String(50), nullable=False)  # review_request_created/review_round_approved/review_round_rejected/artifact_confirmed/agent_approval/comment_reply/mention/agent_conversation
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="unread")  # unread/read/archived
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     body: Mapped[str | None] = mapped_column(Text)
@@ -352,7 +353,7 @@ class Notification(Base):
 
 
 class Comment(Base):
-    """P4.D.2: 评论 — 审查任务/产物页的评论，支持回复和 @提及。"""
+    """P4.D.2: 评论 — 审查任务/产物页的评论，支持回复、@提及和 resolve。"""
     __tablename__ = "comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -361,4 +362,7 @@ class Comment(Base):
     author_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("comments.id", ondelete="SET NULL"))  # 回复
+    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)  # P5.C.2: 是否已解决
+    resolution: Mapped[str | None] = mapped_column(String(20))  # P5.C.2: resolved / forced_pass
+    resolved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"))  # P5.C.2: 解决人
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)

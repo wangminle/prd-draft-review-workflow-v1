@@ -34,6 +34,9 @@ from app.models.review import (  # noqa: F401 — ensure review tables are regis
     ReviewParticipant,
     KnowledgeSnapshot,
     Artifact,
+    CostDailySummary,
+    QualityWeeklySummary,
+    WorkspaceBudget,
 )
 
 _settings = get_settings()
@@ -69,6 +72,9 @@ async def init_db():
         await _migrate_skill_config_status_version(conn)
         await _migrate_message_anchor_fields(conn)
         await _migrate_conversation_mode_project(conn)
+        await _migrate_source_owner_type_visibility(conn)
+        await _migrate_agent_profile_default_scope(conn)
+        await _migrate_comment_resolve_fields(conn)
 
     # FTS5 虚拟表
     await _ensure_fts5()
@@ -710,3 +716,80 @@ async def _migrate_conversation_mode_project(conn):
         if col_name not in existing_cols:
             await conn.execute(text(f"ALTER TABLE conversations ADD COLUMN {col_name} {col_type}"))
             logger.info("[MIGRATE] conversations 新增列: %s", col_name)
+
+
+async def _migrate_source_owner_type_visibility(conn):
+    """P5.A.1: knowledge_sources 新增 owner_type/visibility 列，workspace_id 改为 nullable；
+    knowledge_chunks 新增 visibility 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_sources'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(knowledge_sources)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    new_columns = {
+        "owner_type": "VARCHAR(20) NOT NULL DEFAULT 'workspace'",
+        "visibility": "VARCHAR(20) NOT NULL DEFAULT 'team'",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE knowledge_sources ADD COLUMN {col_name} {col_type}"))
+            logger.info("[MIGRATE] knowledge_sources 新增列: %s", col_name)
+
+    # workspace_id 改为 nullable：SQLite 不支持 ALTER COLUMN，但现有数据兼容
+    # 新创建的个人资料 workspace_id 将为 NULL，已有数据保持不变
+
+    # knowledge_chunks 新增 visibility
+    chunk_result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='knowledge_chunks'"
+    ))
+    if chunk_result.fetchone():
+        chunk_cols = await conn.execute(text("PRAGMA table_info(knowledge_chunks)"))
+        chunk_existing = {row[1] for row in chunk_cols.fetchall()}
+        if "visibility" not in chunk_existing:
+            await conn.execute(text(
+                "ALTER TABLE knowledge_chunks ADD COLUMN visibility VARCHAR(20) NOT NULL DEFAULT 'team'"
+            ))
+            logger.info("[MIGRATE] knowledge_chunks 新增列: visibility")
+
+
+async def _migrate_agent_profile_default_scope(conn):
+    """P5.A.2: agent_profiles 新增 default_scope_type 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_profiles'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(agent_profiles)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+    if "default_scope_type" not in existing_cols:
+        await conn.execute(text(
+            "ALTER TABLE agent_profiles ADD COLUMN default_scope_type VARCHAR(20) NOT NULL DEFAULT 'personal'"
+        ))
+        logger.info("[MIGRATE] agent_profiles 新增列: default_scope_type")
+
+
+async def _migrate_comment_resolve_fields(conn):
+    """P5.C.2: comments 新增 resolved/resolution/resolved_by 列。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='comments'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(comments)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    new_columns = {
+        "resolved": "BOOLEAN NOT NULL DEFAULT 0",
+        "resolution": "VARCHAR(20)",
+        "resolved_by": "INTEGER REFERENCES users(id)",
+    }
+    for col_name, col_type in new_columns.items():
+        if col_name not in existing_cols:
+            await conn.execute(text(f"ALTER TABLE comments ADD COLUMN {col_name} {col_type}"))
+            logger.info(f"[MIGRATE] comments 新增列: {col_name}")
