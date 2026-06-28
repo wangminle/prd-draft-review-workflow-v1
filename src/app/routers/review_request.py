@@ -100,14 +100,21 @@ async def create_review_request(
     db: AsyncSession = Depends(get_db),
 ):
     """P4.A.4: 发起协作审查请求（阶段A通过后）。"""
-    # 验证项目存在且用户是创建者或 workspace admin
+    # 验证项目存在
     project_repo = ReviewProjectRepository(db)
     project = await project_repo.get_project(req.project_id)
     if not project:
         raise HTTPException(404, "项目不存在")
-    # 权限校验：用户必须是项目创建者
+
+    # 权限校验：用户必须是项目创建者（先于业务参数校验，
+    # 否则无权用户会因为缺少 approver_ids 收到 422 而非 403，
+    # 既泄露接口存在性，也与越权拦截语义不一致）
     if project.created_by != user.id:
         raise HTTPException(403, "只有项目创建者可以发起协作审查")
+
+    # BUG-084：协作审查必须至少指定一名审批人，否则创建后无人可决策
+    if not req.approver_ids:
+        raise HTTPException(422, "至少指定一名审批人")
 
     # 创建 ReviewRequest
     request_repo = ReviewRequestRepository(db)
@@ -165,14 +172,22 @@ async def list_review_requests(
     """列出协作审查请求（按项目或当前用户过滤）。"""
     request_repo = ReviewRequestRepository(db)
     if project_id:
-        # 权限校验：按项目查询时，需验证项目归属
+        # 权限校验：按项目查询时，需验证用户可访问该项目
         project_repo = ReviewProjectRepository(db)
-        project = await project_repo.get_project(project_id)
+        project = await project_repo.get_project_if_accessible(project_id, user.id)
         if not project:
-            raise HTTPException(404, "项目不存在")
-        if project.created_by != user.id:
             raise HTTPException(403, "无权查看该项目的协作审查")
-        requests = await request_repo.list_by_project(project_id)
+        all_requests = await request_repo.list_by_project(project_id)
+        # 非项目创建者仅能看到自己参与的请求
+        if project.created_by != user.id:
+            participant_repo = ReviewParticipantRepository(db)
+            accessible = []
+            for req_item in all_requests:
+                if await _can_access_request(db, req_item, user.id):
+                    accessible.append(req_item)
+            requests = accessible
+        else:
+            requests = all_requests
     else:
         requests = await request_repo.list_by_initiator(user.id)
     return [_serialize_request(r) for r in requests]

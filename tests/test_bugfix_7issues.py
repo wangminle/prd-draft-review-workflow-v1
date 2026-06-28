@@ -31,8 +31,13 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    # Windows 下必须先关闭 engine 连接池，否则文件被占用无法删除
+    await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 async def _auth_header(client):
@@ -135,7 +140,7 @@ async def test_bug2_get_request_requires_access(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "Bug2b测试"},
+        json={"project_id": project_id, "approver_ids": [1], "goal": "Bug2b测试"},
         headers=admin_h,
     )
     request_id = req_resp.json()["id"]
@@ -169,7 +174,7 @@ async def test_bug2_add_participant_requires_initiator(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "Bug2d测试"},
+        json={"project_id": project_id, "approver_ids": [1], "goal": "Bug2d测试"},
         headers=admin_h,
     )
     request_id = req_resp.json()["id"]

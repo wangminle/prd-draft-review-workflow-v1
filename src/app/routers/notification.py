@@ -118,10 +118,16 @@ async def list_notifications(
     status: str | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    page: int | None = Query(default=None, ge=1),
+    page_size: int | None = Query(default=None, ge=1, le=200),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     """列出当前用户的通知。"""
+    if page is not None:
+        effective_page_size = page_size or 20
+        offset = (page - 1) * effective_page_size
+        limit = effective_page_size
     repo = NotificationRepository(db)
     notifications = await repo.list_by_recipient(
         user.id, status=status, limit=limit, offset=offset,

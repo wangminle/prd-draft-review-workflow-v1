@@ -26,11 +26,21 @@ class KnowledgeSourceRepository:
         offset: int = 0,
         limit: int = 50,
     ) -> list[KnowledgeSource]:
-        """列出团队资料（owner_type=workspace, visibility=team）。"""
+        """列出团队资料（默认只返回 owner_type=workspace, visibility=team 的团队可见资料）。
+
+        个人私有资料（owner_type=user, visibility=private）只能通过 list_personal_sources 访问，
+        不会在此方法中返回，防止同 workspace 成员看到他人的私有资料。
+        """
+        # BUG-078 修复：默认只返回团队可见资料，防止私有资料泄露
+        effective_owner_type = owner_type if owner_type is not None else "workspace"
+        effective_visibility = visibility if visibility is not None else "team"
+
         query = select(KnowledgeSource).options(
             selectinload(KnowledgeSource.owner)
         ).where(
             KnowledgeSource.workspace_id == workspace_id,
+            KnowledgeSource.owner_type == effective_owner_type,
+            KnowledgeSource.visibility == effective_visibility,
         ).order_by(KnowledgeSource.updated_at.desc())
         if status:
             query = query.where(KnowledgeSource.status == status)
@@ -40,10 +50,6 @@ class KnowledgeSourceRepository:
             query = query.where(KnowledgeSource.source_type == source_type)
         if tag:
             query = query.where(KnowledgeSource.metadata_json.contains(tag))
-        if owner_type:
-            query = query.where(KnowledgeSource.owner_type == owner_type)
-        if visibility:
-            query = query.where(KnowledgeSource.visibility == visibility)
         query = query.offset(offset).limit(limit)
         result = await self._db.execute(query)
         return list(result.scalars().all())
@@ -77,14 +83,15 @@ class KnowledgeSourceRepository:
         return list(result.scalars().all())
 
     async def count_by_workspace(self, workspace_id: int, status: str | None = None, owner_type: str | None = None, visibility: str | None = None) -> int:
+        # BUG-078 修复：默认只统计团队可见资料
+        effective_owner_type = owner_type if owner_type is not None else "workspace"
+        effective_visibility = visibility if visibility is not None else "team"
         query = select(func.count()).select_from(KnowledgeSource).where(
             KnowledgeSource.workspace_id == workspace_id,
             KnowledgeSource.status == (status or "active"),
+            KnowledgeSource.owner_type == effective_owner_type,
+            KnowledgeSource.visibility == effective_visibility,
         )
-        if owner_type:
-            query = query.where(KnowledgeSource.owner_type == owner_type)
-        if visibility:
-            query = query.where(KnowledgeSource.visibility == visibility)
         result = await self._db.execute(query)
         return result.scalar_one()
 

@@ -79,11 +79,45 @@ class ReviewProjectRepository:
         return result.scalar_one_or_none()
 
     async def get_project_with_owner_check(self, project_id: int, user_id: int) -> ReviewProject | None:
+        """兼容旧名：按 workspace 可见性规则校验项目访问权。"""
+        return await self.get_project_if_accessible(project_id, user_id)
+
+    @staticmethod
+    def user_can_access_project(
+        project: ReviewProject,
+        user_id: int,
+        member_role: str | None,
+    ) -> bool:
+        """与 list_projects 一致：owner/admin 可见 workspace 内全部项目，member/viewer 仅自己创建的。"""
+        if member_role in ("owner", "admin"):
+            return True
+        return project.created_by == user_id
+
+    async def get_project_if_accessible(
+        self,
+        project_id: int,
+        user_id: int,
+        *,
+        member_role: str | None = None,
+    ) -> ReviewProject | None:
         result = await self._db.execute(
             select(ReviewProject).where(ReviewProject.id == project_id)
         )
         project = result.scalar_one_or_none()
-        if project is None or project.created_by != user_id:
+        if project is None:
+            return None
+        if member_role is None:
+            from app.repositories.workspace_repository import WorkspaceRepository
+            ws_repo = WorkspaceRepository(self._db)
+            workspace_id = project.workspace_id
+            if workspace_id is None:
+                default_ws = await ws_repo.get_default()
+                workspace_id = default_ws.id if default_ws else None
+            if workspace_id is None:
+                return None
+            member = await ws_repo.get_member(workspace_id, user_id)
+            member_role = member.role if member and member.status == "active" else None
+        if not self.user_can_access_project(project, user_id, member_role):
             return None
         return project
 

@@ -84,7 +84,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.0</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.1</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -334,7 +334,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.0</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.1</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -671,7 +671,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.0</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.1</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -774,7 +774,7 @@
                         <div class="brand-dot" data-branding="topbar-logo"><svg viewBox="0 0 28 28" width="28" height="28" fill="none" aria-hidden="true"><rect width="28" height="28" rx="6" fill="#005AAA"/><path d="M8 7h2v5h8V7h2v14h-2v-6H10v6H8V7z" fill="#fff"/></svg></div>
                         <div class="topbar-brand-text">
                             <span class="topbar-title" data-branding="topbar-title">AI产品需求初审</span>
-                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.0</span>
+                            <span class="topbar-version" data-branding="app-version">Ver. 0.3.1</span>
                         </div>
                     </div>
                     <div class="topbar-divider"></div>
@@ -815,6 +815,10 @@
                         <button class="admin-nav-item active" data-tab="stats">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
                             系统统计
+                        </button>
+                        <button class="admin-nav-item" data-tab="governance">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                            治理与运营
                         </button>
                         <button class="admin-nav-item" data-tab="users">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
@@ -880,6 +884,20 @@
                                 </table>
                             </div>
                         </section>
+                    </div>
+
+                    <!-- 治理与运营 (P6) -->
+                    <div id="tab-governance" class="admin-panel">
+                        <div class="panel-head">
+                            <div>
+                                <h3 class="panel-title">治理与运营</h3>
+                                <p style="margin:4px 0 0;color:var(--color-text-muted);font-size:var(--fs-13)">成本统计、团队配额、质量趋势、Skill 治理与权限审计。</p>
+                            </div>
+                            <button id="gov-refresh-btn" class="btn btn-ghost btn-sm" type="button">刷新</button>
+                        </div>
+                        <div id="governance-area">
+                            <p style="color:var(--color-text-muted)">加载中…</p>
+                        </div>
                     </div>
 
                     <!-- 用户管理 -->

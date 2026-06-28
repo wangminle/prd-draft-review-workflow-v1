@@ -342,3 +342,19 @@ def test_conversation_repo_create_accepts_mode_project_id():
     sig = inspect.signature(ConversationRepository.create_conversation)
     assert "mode" in sig.parameters
     assert "project_id" in sig.parameters
+
+
+def test_agent_mode_streams_run_before_fetching_result():
+    """BUG-079: Agent 模式必须先调用 stream 端点启动 Pi 子进程，再拉取 run 详情"""
+    agent_block = CHAT_JS.split("if (this._agentMode)", 1)[1].split("if (this._streamCtrl)", 1)[0]
+    assert "API.createAgentRun" in agent_block
+    assert "API.agentStream" in agent_block
+    assert "API.getAgentRun" in agent_block
+    assert agent_block.index("agentStream") < agent_block.index("getAgentRun")
+    assert "agentStream(runId)" in API_JS
+    assert "/api/agent/runs/${runId}/stream" in API_JS
+    assert "_buildAgentRunHtml" in CHAT_JS
+    assert "result.status === 'failed'" in agent_block
+    assert "_renderMermaidOnStreamEnd(contentEl)" in agent_block
+    assert "tool_blocked" in agent_block
+    assert "step_limit_exceeded" in agent_block

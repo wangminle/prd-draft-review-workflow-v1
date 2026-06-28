@@ -161,7 +161,11 @@ class TestModelConfigThinkingAPI:
                 ac.headers["Authorization"] = f"Bearer {token}"
                 yield ac
         finally:
-            os.unlink(db_path)
+            await engine.dispose()
+            try:
+                os.unlink(db_path)
+            except PermissionError:
+                pass
 
     async def _create_and_get_model(self, client, model_id, **extra):
         resp = await client.post("/api/admin/models", json={
@@ -316,7 +320,11 @@ class TestDBMigration:
                 ac.headers["Authorization"] = f"Bearer {token}"
                 yield ac
         finally:
-            os.unlink(db_path)
+            await engine.dispose()
+            try:
+                os.unlink(db_path)
+            except PermissionError:
+                pass
 
     async def test_migration_columns_exist(self, client):
         resp = await client.get("/api/admin/models")

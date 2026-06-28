@@ -156,6 +156,49 @@ const API = {
     /* 管理 — 统计 */
     getStats() { return this.request('GET', '/api/admin/stats'); },
 
+    /* 管理 — 治理与运营 (P6) */
+    getGovernanceCostDaily(startDate = null, endDate = null) {
+        let url = '/api/governance/cost/daily';
+        const params = new URLSearchParams();
+        if (startDate) params.set('start_date', startDate);
+        if (endDate) params.set('end_date', endDate);
+        const qs = params.toString();
+        if (qs) url += '?' + qs;
+        return this.request('GET', url);
+    },
+    getGovernanceCostTotal() { return this.request('GET', '/api/governance/cost/total'); },
+    aggregateGovernanceCost(dateStr = null) {
+        let url = '/api/governance/cost/aggregate';
+        if (dateStr) url += `?date_str=${encodeURIComponent(dateStr)}`;
+        return this.request('POST', url);
+    },
+    getGovernanceQualityWeekly(startWeek = null, endWeek = null) {
+        let url = '/api/governance/quality/weekly';
+        const params = new URLSearchParams();
+        if (startWeek) params.set('start_week', startWeek);
+        if (endWeek) params.set('end_week', endWeek);
+        const qs = params.toString();
+        if (qs) url += '?' + qs;
+        return this.request('GET', url);
+    },
+    listGovernanceSkills() { return this.request('GET', '/api/governance/skills'); },
+    updateGovernanceSkillStatus(skillDbId, status) {
+        return this.request('PUT', `/api/governance/skills/${skillDbId}/status`, { status });
+    },
+    listGovernanceAgents(status = null) {
+        let url = '/api/governance/agents';
+        if (status) url += `?status=${encodeURIComponent(status)}`;
+        return this.request('GET', url);
+    },
+    archiveGovernanceAgent(agentId) {
+        return this.request('PUT', `/api/governance/agent/${agentId}/archive`);
+    },
+    getGovernancePermissionsAudit() { return this.request('GET', '/api/governance/permissions/audit'); },
+    getGovernanceBudget(workspaceId) { return this.request('GET', `/api/governance/budget/${workspaceId}`); },
+    updateGovernanceBudget(workspaceId, data) {
+        return this.request('PUT', `/api/governance/budget/${workspaceId}`, data);
+    },
+
     /* ── 团队空间 ── */
 
     getWorkspaces() { return this.request('GET', '/api/workspace'); },
@@ -398,6 +441,21 @@ const API = {
     createAgentAuthorization(data) { return this.request('POST', '/api/agent/profile/authorizations', data); },
     revokeAgentAuthorization(authId) { return this.request('DELETE', `/api/agent/profile/authorizations/${authId}`); },
     createAgentRun(data) { return this.request('POST', '/api/agent/runs', data); },
+    async agentStream(runId) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.getToken()) {
+            headers['Authorization'] = `Bearer ${this.getToken()}`;
+        }
+        const resp = await fetch(`/api/agent/runs/${runId}/stream`, {
+            method: 'POST',
+            headers,
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({ detail: resp.statusText }));
+            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+        }
+        return resp.body.getReader();
+    },
     getAgentRun(runId) { return this.request('GET', `/api/agent/runs/${runId}`); },
     listAgentRuns() { return this.request('GET', '/api/agent/runs'); },
     listPendingApprovals() { return this.request('GET', '/api/agent/approvals'); },
@@ -409,8 +467,9 @@ const API = {
 
     /* ── P4.D: 通知 ── */
 
-    listNotifications(status = null, page = 1) {
-        let url = `/api/notifications?page=${page}&page_size=20`;
+    listNotifications(status = null, page = 1, pageSize = 20) {
+        const offset = (page - 1) * pageSize;
+        let url = `/api/notifications?limit=${pageSize}&offset=${offset}`;
         if (status) url += `&status=${status}`;
         return this.request('GET', url);
     },

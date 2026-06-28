@@ -22,8 +22,12 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 async def _auth_header(client):
@@ -58,7 +62,7 @@ async def test_create_review_request(client):
 
     resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "协作审查测试"},
+        json={"project_id": project_id, "goal": "协作审查测试", "approver_ids": [1]},
         headers=headers,
     )
     assert resp.status_code == 200
@@ -73,7 +77,7 @@ async def test_create_review_request_nonexistent_project(client):
     headers = await _auth_header(client)
     resp = await client.post(
         "/api/review/requests",
-        json={"project_id": 99999},
+        json={"project_id": 99999, "approver_ids": [1]},
         headers=headers,
     )
     assert resp.status_code == 404
@@ -87,7 +91,7 @@ async def test_list_review_requests_by_project(client):
     # 创建请求
     await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
 
@@ -178,7 +182,7 @@ async def test_resubmit_only_for_rejected(client):
 
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = create_resp.json()["id"]

@@ -347,7 +347,11 @@ async def test_bug056_get_or_create_returns_single_row():
             assert len(rows) == 1, \
                 f"BUG-056: Expected exactly 1 row, got {len(rows)}"
     finally:
-        os.unlink(db_path)
+        await engine.dispose()
+        try:
+            os.unlink(db_path)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -388,4 +392,8 @@ async def test_bug056_singleton_key_unique_constraint():
                 f"BUG-056: Expected 1 row after duplicate insert, got {len(rows)}"
             assert rows[0].llm_provider == "deepseek"
     finally:
-        os.unlink(db_path)
+        await engine.dispose()
+        try:
+            os.unlink(db_path)
+        except PermissionError:
+            pass

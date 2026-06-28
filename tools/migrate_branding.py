@@ -588,7 +588,8 @@ def _check_write_path_allowed(target_dir: Path, write_path: Path) -> bool:
     """检查写入路径是否在允许的目录白名单内，防止误写业务数据。"""
     try:
         rel = write_path.resolve().relative_to(target_dir.resolve())
-        rel_str = str(rel)
+        # 统一为正斜杠比较，避免 Windows 反斜杠导致 startswith 失配
+        rel_str = str(rel).replace("\\", "/")
         for allowed in _WRITE_ALLOWED_DIRS:
             if rel_str.startswith(allowed):
                 return True

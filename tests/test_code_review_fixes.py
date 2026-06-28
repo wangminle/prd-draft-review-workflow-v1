@@ -36,8 +36,12 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest_asyncio.fixture
@@ -241,23 +245,27 @@ def test_review_file_storage_default_upload_root():
 
 def test_review_file_storage_injected_upload_dir():
     """注入绝对路径时，_resolve_upload_root 直接返回该路径。"""
+    import tempfile
     from app.storage.review_file_storage import ReviewFileStorage
 
-    custom_dir = "/tmp/custom_review_uploads"
+    # 用平台无关的绝对路径（Windows 上 /tmp 不是绝对路径）
+    custom_dir = os.path.join(tempfile.gettempdir(), "custom_review_uploads")
     storage = ReviewFileStorage(upload_dir=custom_dir)
     assert storage._resolve_upload_root() == custom_dir
 
 
 def test_review_file_storage_config_upload_dir(monkeypatch):
     """配置中有 review.upload.upload_dir 时，_resolve_upload_root 使用配置值。"""
+    import tempfile
     from app.storage.review_file_storage import ReviewFileStorage
 
     storage = ReviewFileStorage()
 
+    cfg_dir = os.path.join(tempfile.gettempdir(), "config_review_uploads")
     monkeypatch.setattr("app.config.get_settings", lambda: {
-        "review": {"upload": {"upload_dir": "/tmp/config_review_uploads"}},
+        "review": {"upload": {"upload_dir": cfg_dir}},
     })
-    assert storage._resolve_upload_root() == "/tmp/config_review_uploads"
+    assert storage._resolve_upload_root() == cfg_dir
 
 
 def test_review_file_storage_relative_config_upload_dir(monkeypatch):

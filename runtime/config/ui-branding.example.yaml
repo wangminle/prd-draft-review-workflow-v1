@@ -1,0 +1,33 @@
+# 品牌与本地个性化配置示例
+# 将此文件复制为 runtime/config/ui-branding.yaml 并修改配置值。
+# 缺少此文件时系统自动使用通用默认品牌。
+#
+# 优先级：runtime/config/ui-branding.yaml > src/config.yaml ui_branding 段 > 代码默认值
+# 资产文件放在 runtime/assets/branding/ 目录下，配置中只填文件名或相对路径。
+# 不允许绝对路径、.. 穿越或外部 URL。
+
+app_title: "AI产品需求初审"
+app_version: "0.3.1"
+login_title: "AI产品需求初审"
+login_subtitle: "AI 驱动的需求审查工作流平台"
+# 登录页提示，留空则使用代码默认提示；需要多行时使用 YAML block string。
+login_notice: ""
+# login_notice: |
+#   💡 温馨提示：
+#   1. 当前环境用于内部试用体验。
+#   2. 如需体验账号，请联系项目管理员。
+#   3. 欢迎反馈使用感受和改进建议。
+topbar_title: "AI产品需求初审"
+review_workspace_label: "需求审查工作台"
+admin_label: "管理后台"
+
+# 主题色
+theme:
+  primary: "#005AAA"
+  primary_hover: "#2E7CC0"
+  accent: "#23C343"
+
+# Logo / favicon — 放在 runtime/assets/branding/ 目录下，只填文件名
+login_logo: ""
+topbar_logo: ""
+favicon: ""

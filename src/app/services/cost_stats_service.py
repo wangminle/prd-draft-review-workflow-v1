@@ -21,6 +21,27 @@ from app.utils import now_cn
 logger = logging.getLogger(__name__)
 
 
+def infer_mode_from_model(model: str) -> str:
+    """从 model ID 推断调用模式（JSONL 暂无 mode 字段时的兜底）。
+
+    使用较精确的规则，避免 ``pipeline`` 等名称因包含 ``pi`` 被误判为 agent。
+    """
+    model_lower = (model or "").lower()
+    if "review" in model_lower or "per-analysis" in model_lower:
+        return "review"
+    if "agent" in model_lower:
+        return "agent"
+    if (
+        "pi-agent" in model_lower
+        or model_lower.startswith("pi-")
+        or model_lower.endswith("-pi")
+        or "/pi-" in model_lower
+        or "-pi-" in model_lower
+    ):
+        return "agent"
+    return "chat"
+
+
 class CostStatsService:
     """P6.A.1: 成本统计服务。"""
 
@@ -70,8 +91,9 @@ class CostStatsService:
                     input_tokens = usage.get("prompt_tokens", 0) or 0
                     output_tokens = usage.get("completion_tokens", 0) or 0
 
-                    # 简化分组：不区分 workspace/user（JSONL 中无此信息）
-                    key = (None, None, "chat", model)
+                    # BUG-077：JSONL 暂无 workspace_id/user_id/mode，mode 由 model ID 推断
+                    entry_mode = infer_mode_from_model(model)
+                    key = (None, None, entry_mode, model)
                     if key not in agg:
                         agg[key] = {
                             "call_count": 0,

@@ -321,6 +321,7 @@ class ChatApplicationService:
                 query=query,
                 workspace_id=workspace_id,
                 top_k=top_k,
+                user_id=user_id,
             )
         except Exception as e:
             logger.error(f"[KNOWLEDGE] 知识检索失败: {e}")

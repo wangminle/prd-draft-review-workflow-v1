@@ -17,7 +17,7 @@ import logging
 import re
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeChunk
@@ -201,11 +201,34 @@ class KnowledgeIngestionService:
             })
         await self._db.flush()
 
+    async def _allowed_source_ids_for_user(
+        self,
+        source_ids: list[int],
+        user_id: int,
+    ) -> set[int]:
+        """返回 user 可读的 source_id 集合（team 或本人 private）。"""
+        if not source_ids:
+            return set()
+        result = await self._db.execute(
+            select(KnowledgeSource.id).where(
+                KnowledgeSource.id.in_(source_ids),
+                or_(
+                    KnowledgeSource.visibility == "team",
+                    and_(
+                        KnowledgeSource.visibility == "private",
+                        KnowledgeSource.owner_id == user_id,
+                    ),
+                ),
+            )
+        )
+        return {row[0] for row in result.fetchall()}
+
     async def search_fts(
         self,
         query: str,
         workspace_id: int,
         limit: int = 10,
+        user_id: int | None = None,
     ) -> list[dict]:
         """FTS5 关键词检索（LanceDB 降级回退时使用）。
 
@@ -248,6 +271,14 @@ class KnowledgeIngestionService:
         """), {"query": sanitized, "workspace_id": int(workspace_id), "limit": limit})
 
         rows = result.fetchall()
+        if not rows:
+            return []
+
+        if user_id is not None:
+            source_ids = list({row[5] for row in rows})
+            allowed = await self._allowed_source_ids_for_user(source_ids, user_id)
+            rows = [row for row in rows if row[5] in allowed]
+
         return [
             {
                 "id": row[0],

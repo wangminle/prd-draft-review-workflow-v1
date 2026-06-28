@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.0。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.1。
 
 ### 架构设计
 
@@ -68,12 +68,12 @@ flowchart LR
 - OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
 - Agent 对话与工具注册：支持通过 Pi Agent（方案A：RPC 子进程桥接）进行自主工具调用对话；AgentProfile/AgentRun 管理身份与运行记录；ToolRegistry schema 声明可用工具；高风险工具调用触发人工审批流程；MCP 适配器支持外部工具服务连接；前端提供 Agent 模式开关和审批面板。
 - 个人知识与个人 Agent（P5）：个人私有知识作用域，支持"团队资料/我的资料"子视图切换；个人 Agent 默认行为配置（默认范围、名称、状态）；Agent 间对话通知；消息中心完善（批量已读/归档）；评论 @提及和 resolve 功能。
-- 治理与运营（P6）：成本统计服务（从 JSONL 日志聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget 模型 + 读写 API）。
+- 治理与运营（P6）：成本统计服务（从 JSONL 日志聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget 模型 + 读写 API + BudgetGuard 硬限制拦截，超额阻断对话）。
 - 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。版本号通过 `app_version` 字段配置。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
 - 实时任务体验：评审流程支持流式进度反馈，适合长流程 AI 审查任务。
-- 内网部署友好：SQLite + runtime 目录隔离，部署简单，便于迁移和备份。
+- 内网部署友好：SQLite + runtime 目录隔离，部署简单，便于迁移和备份；跨平台支持 Linux 与 Windows（路径分隔符归一化、aiosqlite 连接释放兼容文件锁）。
 
 ### 后台管理功能
 
@@ -113,9 +113,9 @@ cp .env.example .env
 ```text
 src/main.py                 FastAPI 入口与静态站点挂载
 src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance）
-src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService、CostStatsService、QualityStatsService
+src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService、CostStatsService、QualityStatsService、BudgetGuard
 src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact）
-src/app/storage/            文档与运行时文件存储（含 KnowledgeFileStorage）
+src/app/storage/            文档与运行时文件存储归口（ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage）
 src/app/log_writers/        审计、前端、LLM 会话日志
 src/static/                 前端 SPA（含 workspace.js 资料库、notification.js 通知模块）
 skills/                     需求评审技能链
@@ -144,7 +144,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.0.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.1.
 
 ### Architecture
 
@@ -203,11 +203,11 @@ Supported review modes:
 - Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
 - Agent conversation and tool registration: autonomous tool-calling conversations via Pi Agent (Architecture A: RPC subprocess bridging); AgentProfile/AgentRun for identity and run tracking; ToolRegistry schema for available tools; high-risk tool calls trigger human approval; MCP adapter for external tool service connections; frontend Agent mode toggle and approval panel.
 - Personal knowledge and personal Agent (P5): personal private knowledge scope with "Team / Mine" sub-view toggle; personal Agent default behavior configuration (default scope, name, status); inter-Agent conversation notifications; enhanced message center (batch read/archive); comment @mention and resolve features.
-- Governance and operations (P6): cost statistics service (aggregation from JSONL logs, daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget model + read/write API).
+- Governance and operations (P6): cost statistics service (aggregation from JSONL logs, daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget model + read/write API + BudgetGuard hard-limit enforcement that blocks conversations on overrun).
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
 - Streaming progress for long-running AI review tasks.
-- Deployment-friendly runtime isolation using SQLite and a dedicated runtime directory.
+- Deployment-friendly runtime isolation using SQLite and a dedicated runtime directory; cross-platform support for Linux and Windows (path separator normalization, aiosqlite connection release for file-lock compatibility).
 
 ### Admin Console
 
@@ -247,9 +247,9 @@ The default server port is 17957.
 ```text
 src/main.py                 FastAPI entry point and static site mount
 src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance)
-src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService, CostStatsService, QualityStatsService
+src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService, CostStatsService, QualityStatsService, BudgetGuard
 src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact)
-src/app/storage/            Runtime file storage (incl. KnowledgeFileStorage)
+src/app/storage/            Runtime file storage consolidation (ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage)
 src/app/log_writers/        Audit, frontend, and LLM session logs
 src/static/                 Frontend SPA (incl. workspace.js knowledge library, notification.js notification module)
 skills/                     Review skill chain

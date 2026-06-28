@@ -33,6 +33,7 @@ const Admin = {
             skills: 'loadSkills',
             'pi-agent': 'loadPiAgentConfig',
             agent: 'loadAgentSettings',
+            governance: 'loadGovernance',
             stats: 'loadStats',
         };
         const fn = tabMap[tab];
@@ -1050,6 +1051,316 @@ const Admin = {
         }
     },
 
+    _govFmtNum(n) {
+        if (n == null || Number.isNaN(Number(n))) return '-';
+        return Number(n).toLocaleString('zh-CN');
+    },
+
+    _govTodayStr() {
+        return this._govDateStr(new Date());
+    },
+
+    _govDaysAgoStr(days) {
+        const d = new Date();
+        d.setDate(d.getDate() - days);
+        return this._govDateStr(d);
+    },
+
+    /* 后端成本统计按 YYYY-MM-DD 过滤，用 Intl.DateTimeFormat 生成后再归一化为连字符分隔 */
+    _govDateStr(date) {
+        const parts = new Intl.DateTimeFormat('zh-CN', {
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+        }).formatToParts(date);
+        const get = (t) => (parts.find((p) => p.type === t) || {}).value || '';
+        return `${get('year')}-${get('month')}-${get('day')}`;
+    },
+
+    async loadGovernance() {
+        const area = document.getElementById('governance-area');
+        if (!area) return;
+        area.innerHTML = '<p style="color:var(--color-text-muted)">加载中…</p>';
+
+        const endDate = this._govTodayStr();
+        const startDate = this._govDaysAgoStr(30);
+
+        try {
+            const ws = await API.getDefaultWorkspace();
+            const wsId = ws.id;
+            const [
+                costTotal,
+                costDaily,
+                budget,
+                qualityWeekly,
+                govSkills,
+                disabledAgents,
+                audit,
+            ] = await Promise.all([
+                API.getGovernanceCostTotal(),
+                API.getGovernanceCostDaily(startDate, endDate),
+                API.getGovernanceBudget(wsId),
+                API.getGovernanceQualityWeekly(),
+                API.listGovernanceSkills(),
+                API.listGovernanceAgents('disabled'),
+                API.getGovernancePermissionsAudit(),
+            ]);
+
+            this._govWorkspaceId = wsId;
+            this._govCostDaily = costDaily || [];
+            this._govAudit = audit;
+
+            const tokenLimit = budget.monthly_token_limit;
+            const usedTokens = budget.current_month_tokens || 0;
+            const usagePct = tokenLimit ? Math.min(100, Math.round((usedTokens / tokenLimit) * 100)) : null;
+            let usageBarColor = 'var(--blue-6)';
+            if (usagePct != null && usagePct >= (budget.warning_threshold_pct || 80)) {
+                usageBarColor = 'var(--orange-6)';
+            }
+            if (usagePct != null && usagePct >= 100) {
+                usageBarColor = 'var(--red-6)';
+            }
+
+            const costRows = (costDaily || []).map(r => `
+                <tr>
+                    <td>${this._esc(r.date)}</td>
+                    <td>${this._esc(r.mode)}</td>
+                    <td>${this._esc(r.model_id)}</td>
+                    <td>${this._govFmtNum(r.call_count)}</td>
+                    <td>${this._govFmtNum(r.input_tokens)}</td>
+                    <td>${this._govFmtNum(r.output_tokens)}</td>
+                    <td>${this._govFmtNum(r.total_elapsed_ms)}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="7" style="color:var(--color-text-muted)">暂无聚合数据，请点击「聚合昨日成本」</td></tr>';
+
+            const qualityRows = (qualityWeekly || []).map(q => `
+                <tr>
+                    <td>${this._esc(q.week_start)}</td>
+                    <td>${q.avg_score != null ? Number(q.avg_score).toFixed(1) : '-'}</td>
+                    <td>${this._govFmtNum(q.total_reviews)}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="3" style="color:var(--color-text-muted)">暂无质量统计数据</td></tr>';
+
+            const skillRows = (govSkills || []).map(s => `
+                <tr>
+                    <td>${this._esc(s.skill_id)}</td>
+                    <td>${this._esc(s.name)}</td>
+                    <td>${this._esc(s.version || '-')}</td>
+                    <td>
+                        <select class="gov-skill-status-select" data-skill-db-id="${s.id}" style="font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--color-border)">
+                            ${['active', 'inactive', 'published', 'draft', 'deprecated'].map(st => `
+                                <option value="${st}" ${s.status === st ? 'selected' : ''}>${st}</option>
+                            `).join('')}
+                        </select>
+                    </td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" style="color:var(--color-text-muted)">暂无 Skill</td></tr>';
+
+            const agentRows = (disabledAgents || []).map(a => `
+                <tr>
+                    <td>#${a.id}</td>
+                    <td>${this._esc(a.name || '-')}</td>
+                    <td>${this._esc(a.owner_type)} #${a.owner_id}</td>
+                    <td><span class="pi-agent-status-badge badge-warn">${this._esc(a.status)}</span></td>
+                    <td><button type="button" class="btn btn-outline btn-xs gov-archive-agent-btn" data-agent-id="${a.id}">退役归档</button></td>
+                </tr>
+            `).join('') || '<tr><td colspan="5" style="color:var(--color-text-muted)">暂无 disabled 状态的 Agent</td></tr>';
+
+            area.innerHTML = `
+                <div class="pi-agent-sections">
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h4>成本概览</h4>
+                            <div style="display:flex;gap:8px;flex-wrap:wrap">
+                                <button type="button" class="btn btn-ghost btn-xs" id="gov-aggregate-yesterday-btn">聚合昨日成本</button>
+                            </div>
+                        </div>
+                        <div class="stats-grid" style="margin-bottom:12px">
+                            <div class="stat-card"><div class="stat-value">${this._govFmtNum(costTotal.total_calls)}</div><div class="stat-label">总调用次数</div></div>
+                            <div class="stat-card"><div class="stat-value">${this._govFmtNum(costTotal.total_input_tokens)}</div><div class="stat-label">输入 Token</div></div>
+                            <div class="stat-card"><div class="stat-value">${this._govFmtNum(costTotal.total_output_tokens)}</div><div class="stat-label">输出 Token</div></div>
+                            <div class="stat-card"><div class="stat-value">${this._govFmtNum(costTotal.total_elapsed_ms)}</div><div class="stat-label">总耗时(ms)</div></div>
+                        </div>
+                        <p class="pi-agent-section-desc">近 30 日明细（${startDate} ~ ${endDate}）</p>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr>
+                                    <th>日期</th><th>模式</th><th>模型</th><th>调用</th><th>输入Token</th><th>输出Token</th><th>耗时(ms)</th>
+                                </tr></thead>
+                                <tbody>${costRows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h4>团队配额 — ${this._esc(ws.name || '默认空间')}</h4>
+                            <button type="button" class="btn btn-primary btn-sm" id="gov-save-budget-btn">保存配额</button>
+                        </div>
+                        ${tokenLimit ? `
+                            <div style="margin-bottom:12px">
+                                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:4px">
+                                    <span>本月 Token 用量</span>
+                                    <span>${this._govFmtNum(usedTokens)} / ${this._govFmtNum(tokenLimit)} (${usagePct}%)</span>
+                                </div>
+                                <div style="height:8px;background:var(--gray-3);border-radius:4px;overflow:hidden">
+                                    <div style="width:${usagePct}%;height:100%;background:${usageBarColor}"></div>
+                                </div>
+                            </div>
+                        ` : `<p class="pi-agent-section-desc">未设置月度 Token 上限（不拦截）</p>`}
+                        <div class="pi-agent-fields">
+                            <div class="pi-field">
+                                <label>月度 Token 上限（留空=不限）</label>
+                                <input type="number" id="gov-budget-token-limit" min="0" placeholder="例如 1000000"
+                                    value="${budget.monthly_token_limit != null ? budget.monthly_token_limit : ''}">
+                            </div>
+                            <div class="pi-field">
+                                <label>月度成本上限（留空=不限）</label>
+                                <input type="number" id="gov-budget-cost-limit" min="0" step="0.01" placeholder="可选"
+                                    value="${budget.monthly_cost_limit != null ? budget.monthly_cost_limit : ''}">
+                            </div>
+                            <div class="pi-field">
+                                <label>预警阈值 (%)</label>
+                                <input type="number" id="gov-budget-warning-pct" min="0" max="100"
+                                    value="${budget.warning_threshold_pct != null ? budget.warning_threshold_pct : 80}">
+                            </div>
+                            <div class="pi-field">
+                                <label>超限动作</label>
+                                <select id="gov-budget-hard-action" style="height:36px;padding:0 12px;border:1px solid var(--color-border);border-radius:8px">
+                                    <option value="notify" ${budget.hard_limit_action === 'notify' ? 'selected' : ''}>仅通知 (notify)</option>
+                                    <option value="block" ${budget.hard_limit_action === 'block' ? 'selected' : ''}>拦截调用 (block)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <p id="gov-budget-msg" class="field-error" style="min-height:18px;margin-top:8px"></p>
+                    </section>
+
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head"><h4>质量趋势（按周）</h4></div>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr><th>周起始</th><th>平均分</th><th>审查数</th></tr></thead>
+                                <tbody>${qualityRows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head"><h4>Skill 包治理</h4></div>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr><th>Skill ID</th><th>名称</th><th>版本</th><th>状态</th></tr></thead>
+                                <tbody>${skillRows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h4>Agent 退役</h4>
+                            <span class="pi-agent-section-desc">仅 disabled 状态可归档</span>
+                        </div>
+                        <div class="table-wrap">
+                            <table class="table">
+                                <thead><tr><th>ID</th><th>名称</th><th>归属</th><th>状态</th><th>操作</th></tr></thead>
+                                <tbody>${agentRows}</tbody>
+                            </table>
+                        </div>
+                    </section>
+
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head">
+                            <h4>权限审计</h4>
+                            <button type="button" class="btn btn-ghost btn-xs" id="gov-export-audit-btn">复制 JSON</button>
+                        </div>
+                        <pre id="gov-audit-preview" style="max-height:240px;overflow:auto;font-size:12px;background:var(--gray-1);padding:12px;border-radius:8px;margin:0">${this._esc(JSON.stringify(audit, null, 2))}</pre>
+                    </section>
+                </div>
+            `;
+
+            area.querySelector('#gov-aggregate-yesterday-btn')?.addEventListener('click', () => this._govAggregateYesterday());
+            area.querySelector('#gov-save-budget-btn')?.addEventListener('click', () => this._govSaveBudget());
+            area.querySelector('#gov-export-audit-btn')?.addEventListener('click', () => this._govExportAudit());
+            area.querySelectorAll('.gov-skill-status-select').forEach(sel => {
+                sel.addEventListener('change', () => this._govUpdateSkillStatus(sel));
+            });
+            area.querySelectorAll('.gov-archive-agent-btn').forEach(btn => {
+                btn.addEventListener('click', () => this._govArchiveAgent(Number(btn.dataset.agentId)));
+            });
+        } catch (e) {
+            area.innerHTML = `<p style="color:var(--color-danger)">加载失败: ${this._esc(e.message)}</p>`;
+        }
+    },
+
+    async _govAggregateYesterday() {
+        const yesterday = this._govDaysAgoStr(1);
+        try {
+            const res = await API.aggregateGovernanceCost(yesterday);
+            App._showToast(`已聚合 ${yesterday} 成本：${res.rows || 0} 行`);
+            await this.loadGovernance();
+        } catch (e) {
+            App._showToast('聚合失败: ' + (e.message || ''));
+        }
+    },
+
+    async _govSaveBudget() {
+        const msgEl = document.getElementById('gov-budget-msg');
+        const tokenRaw = document.getElementById('gov-budget-token-limit')?.value?.trim();
+        const costRaw = document.getElementById('gov-budget-cost-limit')?.value?.trim();
+        const warningPct = parseFloat(document.getElementById('gov-budget-warning-pct')?.value || '80');
+        const hardAction = document.getElementById('gov-budget-hard-action')?.value || 'notify';
+
+        const payload = {
+            monthly_token_limit: tokenRaw === '' ? null : parseInt(tokenRaw, 10),
+            monthly_cost_limit: costRaw === '' ? null : parseFloat(costRaw),
+            warning_threshold_pct: warningPct,
+            hard_limit_action: hardAction,
+        };
+
+        try {
+            await API.updateGovernanceBudget(this._govWorkspaceId, payload);
+            if (msgEl) msgEl.textContent = '';
+            App._showToast('配额已保存');
+            await this.loadGovernance();
+        } catch (e) {
+            if (msgEl) msgEl.textContent = e.message || '保存失败';
+        }
+    },
+
+    async _govUpdateSkillStatus(selectEl) {
+        const skillDbId = Number(selectEl.dataset.skillDbId);
+        const status = selectEl.value;
+        const prev = selectEl.dataset.prevStatus || selectEl.value;
+        selectEl.dataset.prevStatus = status;
+        try {
+            await API.updateGovernanceSkillStatus(skillDbId, status);
+            App._showToast(`Skill #${skillDbId} 状态已更新为 ${status}`);
+        } catch (e) {
+            selectEl.value = prev;
+            App._showToast('更新失败: ' + (e.message || ''));
+        }
+    },
+
+    async _govArchiveAgent(agentId) {
+        if (!confirm(`确认将 Agent #${agentId} 退役归档？`)) return;
+        try {
+            await API.archiveGovernanceAgent(agentId);
+            App._showToast(`Agent #${agentId} 已归档`);
+            await this.loadGovernance();
+        } catch (e) {
+            App._showToast('退役失败: ' + (e.message || ''));
+        }
+    },
+
+    _govExportAudit() {
+        const text = JSON.stringify(this._govAudit || {}, null, 2);
+        navigator.clipboard.writeText(text).then(() => {
+            App._showToast('审计报告 JSON 已复制到剪贴板');
+        }).catch(() => {
+            App._showToast('复制失败，请手动选择审计区域内容');
+        });
+    },
+
     /* ── 评审风格Prompt管理 ── */
     async loadReviewPrompts() {
         const tbody = document.getElementById('review-prompt-table-body');
@@ -1529,6 +1840,21 @@ const Admin = {
     },
 
     /* ── Agent 设置 (P3.A.4) ── */
+    async _showAgentApprovals() {
+        if (typeof App !== 'undefined' && App._showAdminPage) {
+            App._showAdminPage();
+        }
+        this._lastTab = 'agent';
+        localStorage.setItem('admin-active-tab', 'agent');
+        document.querySelectorAll('.admin-nav-item').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+        const nav = document.querySelector('.admin-nav-item[data-tab="agent"]');
+        const panel = document.getElementById('tab-agent');
+        if (nav) nav.classList.add('active');
+        if (panel) panel.classList.add('active');
+        await this.loadAgentSettings();
+    },
+
     async loadAgentSettings() {
         const area = document.getElementById('agent-settings-area');
         if (!area) return;
@@ -1745,14 +2071,19 @@ window.Admin = Admin;
 /* ── Tab 切换 ── */
 document.addEventListener('click', (e) => {
     const tab = e.target.closest('.admin-nav-item');
-    if (!tab) return;
+    if (tab) {
+        const tabName = tab.dataset.tab;
+        document.querySelectorAll('.admin-nav-item').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
+        tab.classList.add('active');
+        document.getElementById(`tab-${tabName}`).classList.add('active');
 
-    const tabName = tab.dataset.tab;
-    document.querySelectorAll('.admin-nav-item').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.admin-panel').forEach(p => p.classList.remove('active'));
-    tab.classList.add('active');
-    document.getElementById(`tab-${tabName}`).classList.add('active');
+        Admin.saveActiveTab(tabName);
+        Admin._loadActiveTab(tabName);
+        return;
+    }
 
-    Admin.saveActiveTab(tabName);
-    Admin._loadActiveTab(tabName);
+    if (e.target.closest('#gov-refresh-btn')) {
+        Admin.loadGovernance();
+    }
 });

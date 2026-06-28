@@ -226,3 +226,25 @@ def test_admin_topbar_right_items_are_vertically_aligned():
     assert 'display: inline-flex;' in css
     assert 'align-items: center;' in css
     assert '.topbar-user-wrap {' in css
+
+
+def test_admin_has_governance_tab():
+    assert 'data-tab="governance"' in INDEX_HTML
+    assert 'id="tab-governance"' in INDEX_HTML
+    assert 'id="governance-area"' in INDEX_HTML
+    assert 'id="gov-refresh-btn"' in INDEX_HTML
+    assert '治理与运营' in INDEX_HTML
+
+    tab_map_block = ADMIN_JS.split("const tabMap = {", 1)[1].split("};", 1)[0]
+    assert "governance: 'loadGovernance'" in tab_map_block
+    assert "async loadGovernance()" in ADMIN_JS
+    assert "getGovernanceCostTotal()" in ADMIN_JS
+    assert "listGovernanceAgents('disabled')" in ADMIN_JS
+    assert "gov-refresh-btn" in ADMIN_JS
+    assert "Admin.loadGovernance()" in ADMIN_JS
+
+    assert "getGovernanceCostDaily(" in API_JS
+    assert "getGovernanceBudget(workspaceId)" in API_JS
+    assert "listGovernanceAgents(status" in API_JS
+    assert "archiveGovernanceAgent(agentId)" in API_JS
+    assert "getGovernancePermissionsAudit()" in API_JS

@@ -56,8 +56,12 @@ def test_update_script_is_executable_and_syntax_valid():
     script_path = ROOT / "update.sh"
 
     assert script_path.exists()
-    assert os.stat(script_path).st_mode & stat.S_IXUSR
-    subprocess.run(["bash", "-n", str(script_path)], check=True)
+    # Unix 权限位与 bash 语法检查仅在 POSIX 系统上可靠：
+    # Windows/NTFS 不保留可执行位，且 subprocess 调用 bash 可能命中
+    # WSL（路径转换不兼容），因此非 POSIX 系统只验证文件存在
+    if os.name == "posix":
+        assert os.stat(script_path).st_mode & stat.S_IXUSR
+        subprocess.run(["bash", "-n", str(script_path)], check=True)
 
 
 def test_update_script_never_auto_applies_branding_migration():

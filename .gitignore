@@ -1,10 +1,10 @@
 # Runtime data — dynamic, clearable (data/code separation)
-# Keep README.md and ui-branding.example.yaml as templates, ignore all other runtime data
+# Keep README.md and ui-branding.example.yaml as templates; ignore all other runtime data
 runtime/*
 !runtime/README.md
 !runtime/config/
+runtime/config/*
 !runtime/config/ui-branding.example.yaml
-# Re-ignore runtime config files that should never be committed
 runtime/config/ui-branding.yaml
 runtime/config/ui-branding.scan-report.md
 # Runtime backups (runtime.bak.* directories created during migration)
@@ -14,18 +14,34 @@ runtime.bak.*/
 **/__pycache__/
 *.py[cod]
 
-# Test cache
+# Test cache & coverage
 .pytest_cache/
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
 
-# IDE & OS
+# Static analysis caches
+.mypy_cache/
+.ruff_cache/
+
+# IDE, editor & OS
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
+*~
 .DS_Store
+
+# Agent / assistant local settings (may contain secrets or machine paths)
+.claude/settings.local.json
+.claude/*.local.json
 
 # Environment & secrets
 .env
+.env.*
+!.env.example
 .venv/
 
 # Logs
@@ -33,9 +49,23 @@ runtime.bak.*/
 
 # Distribution & build artifacts
 dist/
+build/
 *.egg-info/
 *.egg
 *.whl
+
+# Database & pid files (fallback outside runtime/)
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.pid
+
+# Editor / merge conflict scratch files
+*.bak
+*.md_[0-9]*
 
 # Node.js dependencies (npm install output)
 node_modules/

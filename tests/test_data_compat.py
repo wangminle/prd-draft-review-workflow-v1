@@ -447,7 +447,9 @@ class TestPathResolution:
 
     def test_absolute_path_preserved(self):
         """绝对路径应直接返回不修改"""
-        abs_path = "/tmp/some/absolute/path.docx"
+        # 使用平台原生的绝对路径（Windows 上 /tmp/... 不是绝对路径）
+        import tempfile
+        abs_path = os.path.join(tempfile.gettempdir(), "some", "absolute", "path.docx")
         result = _resolve_stored_file_path(abs_path)
         assert result == abs_path
 

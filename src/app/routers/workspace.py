@@ -24,6 +24,13 @@ _knowledge_storage = KnowledgeFileStorage()
 logger = logging.getLogger(__name__)
 
 
+def _assert_team_source_readable(source, user: User) -> None:
+    """BUG-086: 团队资料 API 不可读取他人 private 资料。"""
+    if source.visibility == "private" and source.owner_type == "user":
+        if source.owner_id != user.id:
+            raise HTTPException(404, "资料不存在")
+
+
 def _source_to_info(source):
     tags = []
     if source.metadata_json:
@@ -314,6 +321,9 @@ async def delete_source(
     if source.owner_type == "user":
         if source.owner_id != user.id:
             raise HTTPException(403, "只能删除自己的个人资料")
+        # BUG-076 修复：校验 workspace_id 归属，确保审计日志上下文正确
+        if source.workspace_id is not None and source.workspace_id != workspace_id:
+            raise HTTPException(404, "资料不存在")
     else:
         # 团队资料需要 manage 权限
         if source.workspace_id != workspace_id:
@@ -501,6 +511,8 @@ async def get_source_detail(
     if source is None or source.workspace_id != workspace_id:
         raise HTTPException(404, "资料不存在")
 
+    _assert_team_source_readable(source, user)
+
     info = _source_to_info(source)
     info["extracted_text"] = source.extracted_text
 
@@ -534,6 +546,8 @@ async def download_source_file(
     source = await ks_repo.get_by_id(source_id)
     if source is None or source.workspace_id != workspace_id:
         raise HTTPException(404, "资料不存在")
+
+    _assert_team_source_readable(source, user)
 
     if not source.file_id:
         raise HTTPException(404, "资料没有可下载的文件")

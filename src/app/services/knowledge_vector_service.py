@@ -210,7 +210,15 @@ class KnowledgeVectorService:
         if scope == "personal" and user_id is not None:
             where_clause = f"owner_id = {int(user_id)} AND visibility = 'private'"
         elif workspace_id is not None:
-            where_clause = f"workspace_id = {int(workspace_id)}"
+            if user_id is not None:
+                uid = int(user_id)
+                wid = int(workspace_id)
+                where_clause = (
+                    f"workspace_id = {wid} AND "
+                    f"(visibility = 'team' OR (visibility = 'private' AND owner_id = {uid}))"
+                )
+            else:
+                where_clause = f"workspace_id = {int(workspace_id)} AND visibility = 'team'"
         else:
             # 无过滤条件，返回空（安全默认）
             logger.warning("[VECTOR] search 缺少 workspace_id 或 user_id，返回空结果")

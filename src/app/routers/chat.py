@@ -64,6 +64,15 @@ async def chat(
             raise HTTPException(status_code=404, detail="对话不存在")
         raise HTTPException(status_code=400, detail=f"模型不存在或已禁用: {req.model_id}")
 
+    from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.budget_guard import ensure_workspace_llm_allowed
+    ws_id = req.knowledge_workspace_id
+    if ws_id is None:
+        ws_repo = WorkspaceRepository(db)
+        default_ws = await ws_repo.get_default()
+        ws_id = default_ws.id if default_ws else None
+    await ensure_workspace_llm_allowed(db, ws_id)
+
     await db.commit()
     conv_id = session.conversation_id
     model_cfg = session.model_cfg

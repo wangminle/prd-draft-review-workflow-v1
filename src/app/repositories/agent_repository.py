@@ -94,11 +94,14 @@ class AgentAuthorizationRepository:
         await self._db.refresh(auth)
         return auth
 
-    async def revoke(self, auth_id: int) -> bool:
+    async def get_by_id(self, auth_id: int) -> Optional[AgentAuthorization]:
         result = await self._db.execute(
             select(AgentAuthorization).where(AgentAuthorization.id == auth_id)
         )
-        auth = result.scalar_one_or_none()
+        return result.scalar_one_or_none()
+
+    async def revoke(self, auth_id: int) -> bool:
+        auth = await self.get_by_id(auth_id)
         if not auth:
             return False
         await self._db.delete(auth)

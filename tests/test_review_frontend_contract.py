@@ -763,3 +763,22 @@ def test_app_pending_source_detail_handler():
     """P2.C.3: app.js 有 _pendingSourceDetail 跳转处理"""
     assert "_pendingSourceDetail" in APP_JS
     assert "Workspace._showSourceDetail" in APP_JS
+
+
+def test_review_collab_requires_approver_and_decide_ui():
+    """BUG-084: 协作审查发起需指定审批人，详情支持决策"""
+    assert "approver_ids" in REVIEW_JS
+    assert "decideReviewRound" in REVIEW_JS
+    assert "_decideCollabRound" in REVIEW_JS
+    assert "collab-approver-select" in REVIEW_JS
+
+
+def test_admin_has_show_agent_approvals():
+    """BUG-091: 通知 deep link 可跳转 Agent 审批"""
+    admin_js = (ROOT / "src/static/js/admin.js").read_text(encoding="utf-8")
+    assert "_showAgentApprovals" in admin_js
+
+
+def test_api_notifications_uses_limit_offset():
+    """BUG-091: 通知分页与后端 limit/offset 对齐"""
+    assert "limit=${pageSize}&offset=${offset}" in API_JS

@@ -135,6 +135,8 @@ class RetrievalService:
                 query, workspace_id, top_k,
                 fallback_reason=f"lancedb_unavailable: {str(e)[:100]}",
                 start_time=start_time,
+                user_id=user_id,
+                scope=scope,
             )
 
         if not search_results:
@@ -143,6 +145,8 @@ class RetrievalService:
                 query, workspace_id, top_k,
                 fallback_reason="lancedb_empty_results",
                 start_time=start_time,
+                user_id=user_id,
+                scope=scope,
             )
 
         # Step 4: 附加 confidence（拒答策略）
@@ -248,13 +252,17 @@ class RetrievalService:
             if self._db_session is not None:
                 # 使用注入的 db session（测试场景）
                 ingestion = KnowledgeIngestionService(self._db_session)
-                fts_results = await ingestion.search_fts(query, workspace_id, limit=top_k)
+                fts_results = await ingestion.search_fts(
+                    query, workspace_id, limit=top_k, user_id=user_id,
+                )
             else:
                 # 生产环境：从全局 session 工厂获取
                 from app.database import async_session
                 async with async_session() as db:
                     ingestion = KnowledgeIngestionService(db)
-                    fts_results = await ingestion.search_fts(query, workspace_id, limit=top_k)
+                    fts_results = await ingestion.search_fts(
+                        query, workspace_id, limit=top_k, user_id=user_id,
+                    )
 
             results: list[RetrievalResult] = []
             for r in fts_results:

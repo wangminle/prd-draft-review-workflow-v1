@@ -383,7 +383,7 @@ async def _save_project_documents(
 
 async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int) -> ReviewProject:
     repo = ReviewProjectRepository(db)
-    project = await repo.get_project_with_owner_check(project_id, user_id)
+    project = await repo.get_project(project_id)
     if project is None:
         raise HTTPException(status_code=404, detail="项目不存在或无权访问")
 
@@ -401,6 +401,11 @@ async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int)
 
     member = await ws_repo.get_member(workspace_id, user_id)
     require_action(member, "read", "访问项目")
+
+    # BUG-085: 与 list_projects 可见性规则对齐
+    member_role = member.role if member else None
+    if not repo.user_can_access_project(project, user_id, member_role):
+        raise HTTPException(status_code=404, detail="项目不存在或无权访问")
 
     return project
 

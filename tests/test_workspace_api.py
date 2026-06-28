@@ -28,7 +28,10 @@ async def client():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 def _auth_headers(token):
@@ -97,7 +100,10 @@ async def test_upload_source_success():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -174,7 +180,10 @@ async def test_upload_source_non_member_blocked():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -214,7 +223,10 @@ async def test_get_source_detail():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0.B.3: 删除资料 API ──
@@ -306,7 +318,10 @@ async def test_delete_source_success():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -333,7 +348,10 @@ async def test_delete_source_not_found():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -395,7 +413,10 @@ async def test_delete_source_wrong_workspace():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0.B.4: 更新标签 API ──
@@ -476,7 +497,10 @@ async def test_update_source_tags():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -528,7 +552,10 @@ async def test_update_source_tags_invalid_type():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0.C.1: 项目引用资料 API ──
@@ -619,7 +646,10 @@ async def test_add_project_source_ref():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -682,7 +712,10 @@ async def test_add_project_source_ref_not_owner():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -738,7 +771,10 @@ async def test_add_project_source_ref_invalid_type():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 # ── P0.E.1: 权限校验回归测试 ──
 
@@ -811,7 +847,10 @@ async def test_delete_source_member_role_blocked():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 
@@ -864,7 +903,10 @@ async def test_register_auto_join_default_workspace():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -904,7 +946,10 @@ async def test_register_auto_join_idempotent():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0.D.1: 角色权限区分 ──
@@ -977,7 +1022,10 @@ async def test_update_tags_member_role_blocked():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1039,7 +1087,10 @@ async def test_viewer_cannot_upload():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0.C.3: 审查启动时冻结资料快照 ──
@@ -1109,7 +1160,10 @@ async def test_freeze_snapshot_on_pipeline_start():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P0 验收补充测试 ──
@@ -1135,7 +1189,10 @@ async def test_create_review_project_writes_workspace_id():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1186,7 +1243,10 @@ async def test_add_source_ref_cross_workspace_blocked():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1226,7 +1286,10 @@ async def test_add_source_ref_archived_blocked():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1272,7 +1335,10 @@ async def test_list_sources_tag_and_status_filter():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1320,7 +1386,10 @@ async def test_source_detail_returns_extracted_text_and_project_refs():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 @pytest.mark.asyncio
@@ -1355,7 +1424,10 @@ async def test_source_download_endpoint():
 
     await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 # ── P1.A.1: GET/PUT /api/workspace/default + is_default 字段 ──
@@ -1458,7 +1530,10 @@ class TestDefaultWorkspaceEndpoints:
 
         await engine.dispose()
         if os.path.exists(tmp_db):
-            os.unlink(tmp_db)
+            try:
+                os.unlink(tmp_db)
+            except PermissionError:
+                pass
 
 
 # ── P1.A.2: 成员管理 API（角色变更 + 停用/恢复） ──

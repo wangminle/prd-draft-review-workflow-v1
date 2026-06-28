@@ -3361,45 +3361,99 @@ const Review = {
     },
 
     _showCollabDetail(requestId) {
-        API.getReviewRequest(requestId).then(req => {
-            API.listReviewRounds(requestId).then(rounds => {
-                API.listReviewParticipants(requestId).then(participants => {
-                    const roundsHtml = (rounds || []).map(r => `
-                        <div style="padding:8px 12px;background:var(--gray-1);border-radius:8px;margin-bottom:6px">
-                            <span style="font-weight:600">第 ${r.round_no} 轮</span>
-                            <span style="color:var(--color-text-muted);font-size:12px;margin-left:8px">${r.decision || '待决策'}</span>
-                            ${r.decision_comment ? `<span style="font-size:12px;color:var(--color-text-secondary);margin-left:8px">${this._esc(r.decision_comment)}</span>` : ''}
-                        </div>
-                    `).join('');
-                    const participantsHtml = (participants || []).map(p => `
-                        <span style="display:inline-flex;padding:2px 8px;border-radius:12px;background:var(--gray-2);font-size:12px;margin-right:4px">${p.role} #${p.user_id}</span>
-                    `).join('');
-                    Admin.showModal(`
-                        <h3>协作审查详情</h3>
-                        <div style="margin-top:12px">
-                            <p style="font-size:13px"><strong>目标:</strong> ${this._esc(req.goal || '')}</p>
-                            <p style="font-size:13px;margin-top:4px"><strong>状态:</strong> ${req.status} · 第 ${req.current_round} 轮</p>
-                        </div>
-                        <div style="margin-top:16px">
-                            <h4 style="font-size:14px;font-weight:600">参与者</h4>
-                            <div style="margin-top:6px">${participantsHtml || '<span style="color:var(--color-text-muted)">暂无</span>'}</div>
-                        </div>
-                        <div style="margin-top:16px">
-                            <h4 style="font-size:14px;font-weight:600">审查轮次</h4>
-                            <div style="margin-top:6px">${roundsHtml || '<span style="color:var(--color-text-muted)">暂无轮次</span>'}</div>
-                        </div>
-                        <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
-                            <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">关闭</button>
-                        </div>
-                    `);
-                });
-            });
+        const me = Auth.currentUser;
+        Promise.all([
+            API.getReviewRequest(requestId),
+            API.listReviewRounds(requestId),
+            API.listReviewParticipants(requestId),
+        ]).then(([req, rounds, participants]) => {
+            const pendingRound = (rounds || []).find(r => !r.decision || r.decision === 'pending');
+            const isApprover = (participants || []).some(
+                p => p.user_id === me?.id && p.role === 'Approver' && p.status === 'active',
+            );
+            const canDecide = req.status === 'pending_approval' && pendingRound && (
+                pendingRound.approver_id === me?.id
+                || (isApprover && !pendingRound.approver_id)
+            );
+            const roundsHtml = (rounds || []).map(r => `
+                <div style="padding:8px 12px;background:var(--gray-1);border-radius:8px;margin-bottom:6px">
+                    <span style="font-weight:600">第 ${r.round_no} 轮</span>
+                    <span style="color:var(--color-text-muted);font-size:12px;margin-left:8px">${r.decision || '待决策'}</span>
+                    ${r.decision_comment ? `<span style="font-size:12px;color:var(--color-text-secondary);margin-left:8px">${this._esc(r.decision_comment)}</span>` : ''}
+                </div>
+            `).join('');
+            const participantsHtml = (participants || []).map(p => `
+                <span style="display:inline-flex;padding:2px 8px;border-radius:12px;background:var(--gray-2);font-size:12px;margin-right:4px">${p.role} #${p.user_id}</span>
+            `).join('');
+            const decideHtml = canDecide ? `
+                <div style="margin-top:16px">
+                    <h4 style="font-size:14px;font-weight:600">审批决策</h4>
+                    <textarea id="collab-decision-comment" rows="2" style="width:100%;margin-top:6px;padding:8px;border:1px solid var(--color-border);border-radius:8px;font-size:13px" placeholder="可选：填写审批意见"></textarea>
+                    <div class="btn-row" style="margin-top:10px;justify-content:flex-end">
+                        <button class="btn btn-ghost btn-sm" onclick="Review._decideCollabRound(${pendingRound.id}, 'rejected')">驳回</button>
+                        <button class="btn btn-primary btn-sm" onclick="Review._decideCollabRound(${pendingRound.id}, 'approved')">通过</button>
+                    </div>
+                </div>
+            ` : '';
+            Admin.showModal(`
+                <h3>协作审查详情</h3>
+                <div style="margin-top:12px">
+                    <p style="font-size:13px"><strong>目标:</strong> ${this._esc(req.goal || '')}</p>
+                    <p style="font-size:13px;margin-top:4px"><strong>状态:</strong> ${req.status} · 第 ${req.current_round} 轮</p>
+                </div>
+                <div style="margin-top:16px">
+                    <h4 style="font-size:14px;font-weight:600">参与者</h4>
+                    <div style="margin-top:6px">${participantsHtml || '<span style="color:var(--color-text-muted)">暂无</span>'}</div>
+                </div>
+                <div style="margin-top:16px">
+                    <h4 style="font-size:14px;font-weight:600">审查轮次</h4>
+                    <div style="margin-top:6px">${roundsHtml || '<span style="color:var(--color-text-muted)">暂无轮次</span>'}</div>
+                </div>
+                ${decideHtml}
+                <div style="margin-top:16px;display:flex;gap:8px;justify-content:flex-end">
+                    <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">关闭</button>
+                </div>
+            `);
         }).catch(e => App._showToast('加载失败: ' + (e.message || '')));
     },
 
-    _showInitiateCollabDialog() {
+    async _decideCollabRound(roundId, decision) {
+        const commentEl = document.getElementById('collab-decision-comment');
+        const comment = commentEl ? commentEl.value.trim() : '';
+        try {
+            await API.decideReviewRound(roundId, decision, comment);
+            Admin.closeModal();
+            App._showToast(decision === 'approved' ? '协作审查已通过' : '协作审查已驳回');
+            if (this.currentProjectId) {
+                this._loadCollabRequests(this.currentProjectId);
+            }
+        } catch (e) {
+            App._showToast('决策失败: ' + (e.message || ''));
+        }
+    },
+
+    async _showInitiateCollabDialog() {
         if (!this.currentProjectId) {
             App._showToast('请先选择项目');
+            return;
+        }
+        let memberOptions = '';
+        try {
+            const members = await API.getDefaultWorkspaceMembers();
+            const me = Auth.currentUser || await Auth.getUser();
+            const candidates = (members || []).filter(
+                m => m.status === 'active' && m.user_id !== me?.id,
+            );
+            if (!candidates.length) {
+                App._showToast('无可选审批人，请先添加其他团队成员');
+                return;
+            }
+            memberOptions = candidates.map(m => {
+                const label = m.username || `用户 #${m.user_id}`;
+                return `<option value="${m.user_id}">${this._esc(label)} (${m.role})</option>`;
+            }).join('');
+        } catch (e) {
+            App._showToast('加载团队成员失败');
             return;
         }
         Admin.showModal(`
@@ -3407,6 +3461,13 @@ const Review = {
             <div class="field">
                 <label style="font-size:13px;font-weight:600;margin-bottom:4px;display:block">审查目标</label>
                 <input id="collab-goal-input" type="text" style="width:100%;height:36px;padding:0 12px;border:1px solid var(--color-border);border-radius:8px;font-size:14px" placeholder="请输入本次协作审查的目标">
+            </div>
+            <div class="field" style="margin-top:12px">
+                <label style="font-size:13px;font-weight:600;margin-bottom:4px;display:block">审批人（至少 1 人）</label>
+                <select id="collab-approver-select" multiple size="4" style="width:100%;padding:8px;border:1px solid var(--color-border);border-radius:8px;font-size:13px">
+                    ${memberOptions}
+                </select>
+                <p style="font-size:12px;color:var(--color-text-muted);margin-top:4px">按住 Ctrl/⌘ 可多选</p>
             </div>
             <div id="collab-create-error" class="field-error"></div>
             <div class="btn-row" style="margin-top:16px">
@@ -3419,14 +3480,23 @@ const Review = {
     async _createCollabSubmit() {
         const goal = document.getElementById('collab-goal-input').value.trim();
         const errEl = document.getElementById('collab-create-error');
+        const selectEl = document.getElementById('collab-approver-select');
+        const approverIds = selectEl
+            ? Array.from(selectEl.selectedOptions).map(o => parseInt(o.value, 10)).filter(Boolean)
+            : [];
         if (!goal) {
             errEl.textContent = '请输入审查目标';
+            return;
+        }
+        if (!approverIds.length) {
+            errEl.textContent = '请至少选择一名审批人';
             return;
         }
         try {
             await API.createReviewRequest({
                 project_id: this.currentProjectId,
                 goal,
+                approver_ids: approverIds,
             });
             Admin.closeModal();
             App._showToast('协作审查已发起');

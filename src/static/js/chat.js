@@ -321,41 +321,76 @@ const Chat = {
                 try {
                     const run = await API.createAgentRun({ goal: text, conversation_id: this._currentConvId });
                     this._agentRunId = run.id;
-                    const result = await API.getAgentRun(run.id);
-                    // 显示 Agent 运行结果
-                    let agentHtml = '';
-                    // 工具调用轨迹
-                    if (result.traces && result.traces.length > 0) {
-                        agentHtml += '<div class="agent-trace">';
-                        agentHtml += '<div class="agent-trace-header">🔧 工具调用轨迹</div>';
-                        for (const trace of result.traces) {
-                            const statusIcon = trace.status === 'completed' ? '✅' : trace.status === 'blocked' ? '🚫' : '⏳';
-                            const riskBadge = trace.risk_level === 'high' ? '<span class="agent-risk-high">高风险</span>' : '';
-                            agentHtml += `<div class="agent-trace-item">${statusIcon} <strong>${trace.tool_name}</strong> ${riskBadge} <span class="agent-trace-status">${trace.status}</span>${trace.latency_ms ? ` <span class="agent-trace-latency">${trace.latency_ms}ms</span>` : ''}</div>`;
-                            if (trace.output_ref) {
-                                let outputText = trace.output_ref;
-                                try { outputText = JSON.stringify(JSON.parse(trace.output_ref), null, 2); } catch(e) {}
-                                agentHtml += `<div class="agent-trace-output"><pre>${this._esc(outputText).slice(0, 500)}</pre></div>`;
+                    const reader = await API.agentStream(run.id);
+                    let agentText = '';
+                    let hadAgentError = false;
+                    const decoder = new TextDecoder();
+                    let sseBuffer = '';
+
+                    const processAgentSseLine = (rawLine) => {
+                        const line = rawLine.endsWith('\r') ? rawLine.slice(0, -1) : rawLine;
+                        if (!line.startsWith('data: ')) return false;
+                        try {
+                            const data = JSON.parse(line.slice(6));
+                            if (data.type === 'error' || data.type === 'step_limit_exceeded') {
+                                contentEl.innerHTML = `<span class="msg-error">Agent 错误: ${this._esc(data.message || '未知错误')}</span>`;
+                                return true;
+                            }
+                            if (data.type === 'tool_blocked') {
+                                const dots = contentEl.querySelector('.typing-dots');
+                                if (dots) dots.remove();
+                                agentText += `\n\n> ⚠️ 工具调用被拦截: ${data.message || '高风险操作需审批'}\n`;
+                                contentEl.innerHTML = this._renderMarkdown(agentText);
+                                this._scrollBottom();
+                                return false;
+                            }
+                            if (data.type === 'message_update' && data.text) {
+                                const dots = contentEl.querySelector('.typing-dots');
+                                if (dots) dots.remove();
+                                agentText += data.text;
+                                contentEl.innerHTML = this._renderMarkdown(agentText);
+                                this._scrollBottom();
+                            }
+                        } catch (e) { /* ignore malformed SSE */ }
+                        return false;
+                    };
+
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+
+                        sseBuffer += decoder.decode(value, { stream: true });
+                        const lines = sseBuffer.split('\n');
+                        sseBuffer = lines.pop() || '';
+
+                        for (const rawLine of lines) {
+                            if (processAgentSseLine(rawLine)) {
+                                hadAgentError = true;
+                                break;
                             }
                         }
-                        agentHtml += '</div>';
+                        if (hadAgentError) break;
                     }
-                    // Agent 步骤
-                    if (result.steps && result.steps.length > 0) {
-                        agentHtml += '<div class="agent-steps">';
-                        agentHtml += '<div class="agent-steps-header">📋 执行步骤</div>';
-                        for (const step of result.steps) {
-                            const typeIcon = { plan: '🧠', tool: '🔧', observe: '👁', respond: '💬' }[step.step_type] || '▶';
-                            agentHtml += `<div class="agent-step-item">${typeIcon} [${step.step_type}] ${step.tool_name || ''} ${step.status === 'completed' ? '✅' : '❌'}${step.latency_ms ? ` ${step.latency_ms}ms` : ''}</div>`;
+
+                    if (!hadAgentError && sseBuffer.trim()) {
+                        hadAgentError = processAgentSseLine(sseBuffer);
+                    }
+
+                    if (!hadAgentError) {
+                        const result = await API.getAgentRun(run.id);
+                        if (result.status === 'failed') {
+                            contentEl.innerHTML = `<span class="msg-error">Agent 执行失败: ${this._esc(result.error_message || '未知错误')}</span>`;
+                        } else {
+                            const agentHtml = this._buildAgentRunHtml(result, agentText);
+                            contentEl.innerHTML = agentHtml || this._renderMarkdown(agentText) || 'Agent 已执行，无输出。';
+                            this._renderMermaidOnStreamEnd(contentEl);
                         }
-                        agentHtml += '</div>';
                     }
-                    this._appendMessage('assistant', agentHtml || 'Agent 已执行，无工具调用。', { isHtml: true });
                     this._sending = false;
                     this._updateSendBtn();
                     return;
                 } catch (e) {
-                    this._appendMessage('assistant', `Agent 执行失败: ${e.message}`);
+                    contentEl.innerHTML = `<span class="msg-error">Agent 执行失败: ${this._esc(e.message)}</span>`;
                     this._sending = false;
                     this._updateSendBtn();
                     return;
@@ -524,6 +559,35 @@ const Chat = {
         this._renderMermaidOnStreamEnd(div);
         this._scrollBottom();
         return div;
+    },
+
+    _buildAgentRunHtml(result, replyText = '') {
+        let agentHtml = replyText ? this._renderMarkdown(replyText) : '';
+        if (result.traces && result.traces.length > 0) {
+            agentHtml += '<div class="agent-trace">';
+            agentHtml += '<div class="agent-trace-header">🔧 工具调用轨迹</div>';
+            for (const trace of result.traces) {
+                const statusIcon = trace.status === 'completed' ? '✅' : trace.status === 'blocked' ? '🚫' : '⏳';
+                const riskBadge = trace.risk_level === 'high' ? '<span class="agent-risk-high">高风险</span>' : '';
+                agentHtml += `<div class="agent-trace-item">${statusIcon} <strong>${trace.tool_name}</strong> ${riskBadge} <span class="agent-trace-status">${trace.status}</span>${trace.latency_ms ? ` <span class="agent-trace-latency">${trace.latency_ms}ms</span>` : ''}</div>`;
+                if (trace.output_ref) {
+                    let outputText = trace.output_ref;
+                    try { outputText = JSON.stringify(JSON.parse(trace.output_ref), null, 2); } catch (e) {}
+                    agentHtml += `<div class="agent-trace-output"><pre>${this._esc(outputText).slice(0, 500)}</pre></div>`;
+                }
+            }
+            agentHtml += '</div>';
+        }
+        if (result.steps && result.steps.length > 0) {
+            agentHtml += '<div class="agent-steps">';
+            agentHtml += '<div class="agent-steps-header">📋 执行步骤</div>';
+            for (const step of result.steps) {
+                const typeIcon = { plan: '🧠', tool: '🔧', observe: '👁', respond: '💬' }[step.step_type] || '▶';
+                agentHtml += `<div class="agent-step-item">${typeIcon} [${step.step_type}] ${step.tool_name || ''} ${step.status === 'completed' ? '✅' : '❌'}${step.latency_ms ? ` ${step.latency_ms}ms` : ''}</div>`;
+            }
+            agentHtml += '</div>';
+        }
+        return agentHtml;
     },
 
     _renderMarkdown(text) {

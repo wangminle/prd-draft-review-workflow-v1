@@ -22,8 +22,13 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac
+    # Windows 下必须先关闭 engine 连接池，否则文件被占用无法删除
+    await engine.dispose()
     if os.path.exists(tmp_db):
-        os.unlink(tmp_db)
+        try:
+            os.unlink(tmp_db)
+        except PermissionError:
+            pass
 
 
 async def _auth_header(client):
@@ -62,7 +67,7 @@ async def test_create_artifact(client):
     # 先创建 ReviewRequest
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "测试物料"},
+        json={"project_id": project_id, "approver_ids": [1], "goal": "测试物料"},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -165,7 +170,7 @@ async def test_update_confirmed_artifact_fails(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -201,7 +206,7 @@ async def test_list_artifacts_by_object(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -360,7 +365,7 @@ async def test_create_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -388,7 +393,7 @@ async def test_reply_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -427,7 +432,7 @@ async def test_list_comments(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -458,7 +463,7 @@ async def test_delete_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id},
+        json={"project_id": project_id, "approver_ids": [1]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]

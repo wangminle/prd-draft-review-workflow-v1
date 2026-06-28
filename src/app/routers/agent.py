@@ -270,7 +270,16 @@ async def revoke_authorization(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    profile_repo = AgentProfileRepository(db)
+    profile = await profile_repo.get_by_owner("user", user.id)
+    if not profile:
+        raise HTTPException(404, "Authorization not found")
+
     auth_repo = AgentAuthorizationRepository(db)
+    auth = await auth_repo.get_by_id(auth_id)
+    if not auth or auth.agent_id != profile.id:
+        raise HTTPException(404, "Authorization not found")
+
     ok = await auth_repo.revoke(auth_id)
     if not ok:
         raise HTTPException(404, "Authorization not found")
@@ -291,6 +300,12 @@ async def create_agent_run(
         profile = await profile_repo.create("user", user.id)
     if profile.status != "active":
         raise HTTPException(400, "Agent is disabled")
+
+    from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.budget_guard import ensure_workspace_llm_allowed
+    ws_repo = WorkspaceRepository(db)
+    default_ws = await ws_repo.get_default()
+    await ensure_workspace_llm_allowed(db, default_ws.id if default_ws else None)
 
     run_repo = AgentRunRepository(db)
     run = await run_repo.create(
@@ -386,6 +401,12 @@ async def stream_agent_run(
     if not profile:
         raise HTTPException(404, "Agent profile not found")
 
+    from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.budget_guard import ensure_workspace_llm_allowed
+    ws_repo = WorkspaceRepository(db)
+    default_ws = await ws_repo.get_default()
+    await ensure_workspace_llm_allowed(db, default_ws.id if default_ws else None)
+
     svc = AgentApplicationService(db)
 
     async def event_generator():
@@ -446,6 +467,8 @@ async def decide_approval(
         raise HTTPException(404, "Approval request not found")
     if approval.status != "pending":
         raise HTTPException(400, f"Already {approval.status}")
+    if approval.approver_id != user.id:
+        raise HTTPException(403, "只有指定的审批人可以决策")
 
     approval = await repo.decide(approval, user.id, req.decision, req.comment)
     return _serialize_approval(approval)

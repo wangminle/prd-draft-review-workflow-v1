@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BRANDING: dict = {
     "app_title": "AI产品需求初审",
-    "app_version": "0.3.0",
+    "app_version": "0.3.1",
     "login_title": "AI产品需求初审",
     "login_subtitle": "AI 驱动的需求审查工作流平台",
     "login_notice": "",
@@ -77,7 +77,10 @@ def _validate_asset_path(path_str: str) -> str | None:
     p = Path(path_str)
 
     # 拒绝绝对路径
-    if p.is_absolute():
+    # 注意：Path("/etc/passwd").is_absolute() 在 Windows 上返回 False（无盘符），
+    # 因此必须额外检查以 / 或 \ 开头的 Unix 风格绝对路径，否则跨平台行为不一致
+    # （与 tools/migrate_branding._validate_asset_path_safe 保持同等约束）
+    if p.is_absolute() or path_str.startswith(("/", "\\")):
         logger.warning("branding asset path rejected: absolute path not allowed (%s)", path_str)
         return None
 
