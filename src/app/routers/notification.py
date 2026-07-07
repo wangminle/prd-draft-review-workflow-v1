@@ -100,7 +100,7 @@ async def notification_stream(
         except asyncio.CancelledError:
             pass
         finally:
-            clear_channel(user_id)
+            clear_channel(user_id, channel)
 
     return StreamingResponse(
         event_generator(),

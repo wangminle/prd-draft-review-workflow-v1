@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +20,7 @@ from app.repositories.review_request_repository import (
 from app.repositories.review_project_repository import ReviewProjectRepository
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 # ─── Schemas ──────────────────────────────────────────────────
@@ -338,17 +341,18 @@ async def resubmit_review_request(
     # P4.D.3: 通知审批人重新提交
     if prev_approver_id:
         try:
-            from app.services.notification_service import NotificationService
-            notif_service = NotificationService(db)
-            await notif_service.notify_review_request_created(
-                request_id=review_req.id,
-                project_id=review_req.project_id,
-                initiator_id=user.id,
-                approver_ids=[prev_approver_id],
-                goal=review_req.goal,
-            )
-        except Exception:
-            pass  # 通知失败不影响主流程
+            async with db.begin_nested():
+                from app.services.notification_service import NotificationService
+                notif_service = NotificationService(db)
+                await notif_service.notify_review_request_created(
+                    request_id=review_req.id,
+                    project_id=review_req.project_id,
+                    initiator_id=user.id,
+                    approver_ids=[prev_approver_id],
+                    goal=review_req.goal,
+                )
+        except Exception as exc:
+            logger.warning("review request resubmit notification failed: %s", exc)
 
     await db.commit()
     await db.refresh(review_req)

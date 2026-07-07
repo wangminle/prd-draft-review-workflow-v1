@@ -111,6 +111,13 @@
 | BUG-096 | 修复 | `migrate_branding._check_write_path_allowed` 用 `str(rel).startswith(allowed)` 匹配白名单，Windows 上相对路径用反斜杠（`assets\branding\...`）与白名单正斜杠（`assets/branding`）不匹配，导致合法 branding 资产写入被误拒 | 2026-06-28 09:00 | 2026-06-28 09:20 | 已修复 | 比较前统一 `rel_str.replace("\\", "/")` 归一化路径分隔符 |
 | BUG-097 | 修复 | Windows 平台测试 teardown 文件锁定：16 个测试文件 fixture/内联 teardown 在 `os.unlink(tmp_db)` 前未 `await engine.dispose()`，aiosqlite 连接未释放导致 WinError 32，产生 158 个 error/failed 噪声（不影响 Linux 生产） | 2026-06-28 09:00 | 2026-06-28 09:20 | 已修复 | 全部 fixture teardown 增加 `await engine.dispose()` + `try/except PermissionError`；内联 teardown 同步包裹；跨平台测试路径改用 `tempfile.gettempdir()`；`test_update_script` 在非 POSIX 跳过 +x/bash 检查 |
 | BUG-098 | 文档 | CHK 审查记录：`governance.archive_agent` 声称用 `with_for_update()` 消除 TOCTOU（BUG-089），但 SQLite/aiosqlite 忽略 `FOR UPDATE` 不产生行锁，并发归档仍有竞态窗口；属低风险（SQLite 写串行 + 单机场景） | 2026-06-28 09:00 | 2026-06-28 09:20 | 已关闭 | 当前 SQLite 单机部署下实际风险低；若迁移到 PostgreSQL 等支持行锁的库则 `with_for_update()` 自然生效；暂不改动，记录为已知限制 |
+| BUG-099 | 修复 | 评审进度 SSE 端点权限校验仍使用 `created_by==user`，与项目详情/上传/审查等 `_verify_project_owner()` 的 workspace 可见性规则不一致，owner/admin 无法跟踪成员项目进度 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | `review_progress_sse()` 改用 `_verify_project_owner()`；新增 `tests/test_bugfix_099_104.py` 覆盖 workspace owner 访问成员项目 SSE |
+| BUG-100 | 修复 | chat 流式对话 finish chunk 已有真实 usage，但未写入 `log_llm_session`，导致成本统计和 BudgetGuard 对 chat 流量不可见，前端 token_count 也使用 chunk 数 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | `chat.py` 在 finish 分支记录 `llm_sessions.jsonl`，写入 response/usage/elapsed_ms/reasoning_content；SSE done token_count 与 assistant message token_count 改用真实 usage |
+| BUG-101 | 修复 | MCP 工具策略 `allowed_roles_json` 解析失败时被吞掉并按空列表处理，导致损坏策略 fail-open 放行所有角色 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | `mcp_adapter.check_policy()` 对 JSON 解析失败或非 list 结构 fail-closed；新增损坏 JSON 策略拒绝测试 |
+| BUG-102 | 修复 | 通知 SSE 按 user_id 共享单个 list，任一连接断开会 `pop` 全局 channel，破坏同用户多标签页/多端实时通知 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | 通知 channel 改为每连接独立 list，`clear_channel(user_id, channel)` 只移除当前连接，推送时广播到该用户所有在线连接 |
+| BUG-103 | 修复 | `resubmit_review_request` 的通知失败复用主 `AsyncSession` 且吞异常不回滚，可能提交半应用通知或污染主事务 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | 复提交通知包裹在 `db.begin_nested()` savepoint 中，通知异常只回滚通知写入并记录 warning，主流程继续提交 |
+| BUG-104 | 修复 | 协作审查发起人同时出现在 `approver_ids` 时会插入重复 `ReviewParticipant`，同一用户出现 Reviewer/Approver 两条记录 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | `ReviewParticipantRepository.add_participant()` 按 `(request_id,user_id)` 幂等写入并按角色优先级升级；参与者查询改为稳定取首条；旧参与者测试改为真实双用户场景 |
+| BUG-105 | 修复 | `cost_stats_service.aggregate_daily` upsert 查询缺 workspace/user 维度，可能覆盖同 date/model/mode 的 workspace 专属统计行或多行时报错 | 2026-07-07 15:18 | 2026-07-07 15:18 | 已修复 | upsert 查询补 `workspace_id` 与 `user_id` 过滤（含 NULL 维度）；新增全局聚合不覆盖 workspace 专属行测试；验证：新增回归 7 passed、相邻回归 71 passed、全量 `pytest -q` 1074 passed |
 
 ## 调整事项
 
@@ -282,6 +289,8 @@
 | DOC-050 | 文档 | task-list.md 二次标准化：诊断报告、统计摘要、空备注补全 | 2026-06-24 19:27 | 2026-06-24 19:27 | 已完成 | CLI `check` 通过（301 条）；生成 `docs/task-list-standardize-report.md`；补全 DEV-047/CHK-066 空备注；15 条仅日期记录统一补 `00:00`；文件头补充 extended profile 与时间格式说明；写入「统计摘要」分区（301/301 完成）；CHK-078 更新为 1060 passed；CLAUDE.md 对齐 canonical 维护规则标题 |
 | DOC-051 | 文档 | V0.3.1 用户故事与 E2E 测试用例图（52 条 + 5 张用例图 + 18 项 TC 矩阵） | 2026-06-26 00:00 | 2026-06-26 00:00 | 已完成 | 新建 `docs/3-design/用户故事与E2E测试用例图-V0.3.1.md`；合并 P0~P6 旧清单为 US-01~52；区分 5 类 Actor；P6 升级为治理 UI；拆分 Agent 设置（US-21/44）；附 E2E-Smoke/Core/Full 三阶段建议与 8 条待讨论问题 |
 | DOC-052 | 文档 | V0.3.1 版本号全量同步 + README 治理能力补全 + BUG-098 状态标准化 | 2026-06-29 00:00 | 2026-06-29 00:00 | 已完成 | (1) 全代码版本号 0.3.0→0.3.1：main.py(2处)、branding_config.py、mcp_adapter.py、index.html(4处)、conftest.py、update.sh(NEW_VERSION)、package.json、package-lock.json(顶层2处)、ui-branding.example.yaml(0.2.13→0.3.1)、README.md(2处)、用户故事清单-P0到P4/P5到P6(各1处)；test_runtime_config.py 的 0.2.8 和 test_router_persistence_scan.py 的 WBS 0.2.1 为测试夹具/注释引用保留不动；(2) README.md 中英文补全 V0.3.1 能力：治理与运营新增 BudgetGuard 硬限制拦截、services 目录补 BudgetGuard、storage 目录改为三模块归口（Chat/Knowledge/ReviewFileStorage）、内网部署新增 Linux/Windows 跨平台支持；(3) BUG-098 状态「待观察」→「已关闭」（已评估为已知 SQLite 限制，单机低风险），完成时间补齐；(4) 验证：前端契约+API+runtime_config 106 passed、bugfix_7issues+gitignore_contract 15 passed |
+| DOC-053 | 文档 | 新增「打包与部署指南」文档，README 增补打包部署小节与根脚本目录说明（配合 OPS-002 的 package.sh） | 2026-07-07 16:12 | 2026-07-07 16:12 | 已完成 | 新建 `docs/4-deployment/2026-07-07-打包与部署指南.md`（8 章：三套脚本分工 / 打包 / 首次部署 / 版本更新 / 运行时数据迁移 / 常见问题 / 验收清单，内容与 package.sh + update.sh 实际行为逐项对齐）；README.md 中英文各增「打包与部署 / Packaging and Deployment」小节并补充 `start.sh / update.sh / package.sh` 目录说明，链接指向 4-deployment 两篇文档（已验证目标文件存在）；中英标题结构与 License 前后顺序校验通过 |
+| DOC-054 | 文档 | README 与「打包与部署指南」同步 package.sh 默认 zip 的变更（配合 OPS-004） | 2026-07-07 16:40 | 2026-07-07 16:47 | 已完成 | README.md 中英文「打包与部署 / Packaging and Deployment」代码块更新为默认 zip + `--format tar.gz` 备选；部署指南：流程图改为 zip（默认）/tar.gz 双分支、3.1 用法补充 --format 选项与默认 zip 说明、3.4 自检清单新增 macOS AppleDouble（._*）拦截项、4.2 首次部署解压命令由 tar -xzf 改为 unzip（保留 tar.gz 备选） |
 
 ## 功能开发
 
@@ -375,6 +384,9 @@
 | ID | 动作 | 事项 | 发现时间 | 完成时间 | 状态 | 备注 |
 | --- | --- | --- | --- | --- | --- | --- |
 | OPS-001 | 运维 | .gitignore 增加 SQLite 附属文件忽略规则（*.db-wal / *.db-shm / *.db-journal），完善 runtime/ 之外的 DB 文件兜底覆盖 | 2026-06-29 | 2026-06-29 | 已完成 | 检查确认：runtime/ 全量 ignore 正确，仅 README.md 与 config/ui-branding.example.yaml 作为模板入库；品牌资产 Haier.White.logo.png 未入库（符合开源合规原则）；package-lock.json / runtime/server.pid 已正确 ignore；新增 3 条 sidecar 模式并经 git check-ignore 验证生效 |
+| OPS-002 | 运维 | 新增 package.sh 代码-配置打包脚本，生成符合 update.sh 校验规则的 *-code-config.tar.gz 分发包，支撑跨服务器部署/迁移 | 2026-07-07 16:05 | 2026-07-07 16:05 | 已完成 | 打包成员与 update.sh copy_versioned_files 对齐（src/tools/tests/docs/skills + start.sh/update.sh/requirements.txt/pyproject.toml/package.json/README.md/CLAUDE.md/LICENSE/.env.example + runtime/config/ui-branding.example.yaml），排除 node_modules/.git/.env(密钥)/__pycache__/runtime 业务数据/poc-*/eval；内置自检复刻 validate_update_package 规则（含 src/main.py、无危险路径、无业务数据目录、无 .env/node_modules/.git）；实跑产出 v0.3.1-build202607071605 包(4.5M/320 文件)，自检 + 独立交叉验证通过（应当存在的依赖文件均为 1，敏感/业务数据均为 0）；dist/ 已 git-ignored 不入库 |
+| OPS-003 | 运维 | 按部署交付需求生成 zip 格式分发包（与 package.sh 同清单），输出到项目上级目录 | 2026-07-07 16:22 | 2026-07-07 16:22 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.1-build202607071622.zip`（4.6M/321 文件，含最新 README 与「打包与部署指南」），位于项目上级目录（项目外，不入库）；成员清单与 package.sh 一致（src/tools/tests/docs/skills + 根脚本 + 配置模板），排除 node_modules/.git/.env(密钥)/__pycache__/*.pyc/runtime 业务数据/POC/eval；直接 `unzip -l \| grep` 逐项验证：main.py/start.sh/update.sh/requirements.txt/package.json/.env.example/ui-branding.example.yaml 均在，危险项（node_modules/.git/__pycache__/*.pyc/runtime:data·uploads/裸 .env/真实 ui-branding.yaml）全为 0 |
+| OPS-004 | 优化 | package.sh 增强：默认输出 zip 格式、新增 --format 选项；zip 改用 Python zipfile 打包以设置 UTF-8 文件名标志位；tar.gz 加 COPYFILE_DISABLE=1 消除 macOS AppleDouble 垃圾文件 | 2026-07-07 16:30 | 2026-07-07 16:47 | 已完成 | 默认格式由 tar.gz 改为 zip（`--format tar.gz`/`both` 可选）；zip 打包从 Info-ZIP CLI 改为 Python zipfile——macOS Info-ZIP 不支持 -UN=u、无法设 UTF-8 标志，导致 zipinfo 显示乱码且 Windows 解压中文乱码，Python zipfile 自动设 bit 11 UTF-8 标志实现跨平台正确；发现并修复 tar.gz 含 ._ AppleDouble 垃圾文件的老问题（bsdtar 默认行为，加 `COPYFILE_DISABLE=1` + `--exclude='._*'`，自检新增 `._` 拦截）；三种模式实跑通过自检，Python 校验：zip 与 tar.gz 文件清单 265=265 完全一致、29 个非 ASCII 条目全部设 UTF-8 标志、无 ._ 文件；已用新脚本重新生成正式 zip 到项目上级目录并删除旧的 build202607071622.zip（旧 Info-ZIP 版无 UTF-8 标志） |
 
 ## 规划事项
 
@@ -390,14 +402,14 @@
 
 | 分类 | 总数 | 已完成 | 待开发/待修复 | 完成率 |
 | --- | --- | --- | --- | --- |
-| 代码 Bug | 98 | 98 | 0 | 100% |
+| 代码 Bug | 105 | 105 | 0 | 100% |
 | 调整事项 | 18 | 18 | 0 | 100% |
 | 检查事项 | 80 | 80 | 0 | 100% |
 | 测试数据 | 1 | 1 | 0 | 100% |
-| 文档维护 | 52 | 52 | 0 | 100% |
+| 文档维护 | 54 | 54 | 0 | 100% |
 | 功能开发 | 75 | 75 | 0 | 100% |
 | 调研事项 | 2 | 2 | 0 | 100% |
-| 配置运维 | 1 | 1 | 0 | 100% |
+| 配置运维 | 4 | 4 | 0 | 100% |
 | 规划事项 | 0 | 0 | 0 | 0% |
 | 优化事项 | 0 | 0 | 0 | 0% |
-| **总计** | 327 | 327 | 0 | 100% |
+| **总计** | 339 | 339 | 0 | 100% |

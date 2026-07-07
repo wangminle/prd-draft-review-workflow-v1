@@ -19,21 +19,35 @@ from app.repositories.notification_repository import NotificationRepository
 
 logger = logging.getLogger(__name__)
 
-# 内存通知 channel：recipient_id → list[str]（JSON 事件）
-# 每个 SSE 连接会订阅自己的 channel
-_notification_channels: dict[int, list[str]] = {}
+# 内存通知 channel：recipient_id → 每个 SSE 连接各自的 list[str]（JSON 事件）
+_notification_channels: dict[int, list[list[str]]] = {}
 
 
 def get_notification_channel(recipient_id: int) -> list[str]:
-    """获取用户的通知 channel（用于 SSE 推送）。"""
-    if recipient_id not in _notification_channels:
-        _notification_channels[recipient_id] = []
-    return _notification_channels[recipient_id]
+    """为一个 SSE 连接注册并返回独立通知 channel。"""
+    channel: list[str] = []
+    _notification_channels.setdefault(recipient_id, []).append(channel)
+    return channel
 
 
-def clear_channel(recipient_id: int) -> None:
-    """清理用户的通知 channel。"""
-    _notification_channels.pop(recipient_id, None)
+def clear_channel(recipient_id: int, channel: list[str] | None = None) -> None:
+    """清理通知 channel。
+
+    channel 为 None 时清理该用户全部连接；否则仅移除当前连接。
+    """
+    if channel is None:
+        _notification_channels.pop(recipient_id, None)
+        return
+
+    channels = _notification_channels.get(recipient_id)
+    if not channels:
+        return
+    try:
+        channels.remove(channel)
+    except ValueError:
+        return
+    if not channels:
+        _notification_channels.pop(recipient_id, None)
 
 
 @dataclass
@@ -339,13 +353,16 @@ class NotificationService:
 
     def _push_event(self, recipient_id: int, event: NotificationEvent) -> None:
         """将通知事件推送到用户的 SSE channel。"""
-        channel = get_notification_channel(recipient_id)
+        channels = _notification_channels.get(recipient_id)
+        if not channels:
+            return
         event_json = json.dumps({
             "type": event.type,
             "notification_id": event.notification_id,
             "data": event.data,
         }, ensure_ascii=False)
-        channel.append(event_json)
-        # 限制 channel 缓冲区大小，防止内存泄漏
-        if len(channel) > 100:
-            channel[:] = channel[-50:]
+        for channel in list(channels):
+            channel.append(event_json)
+            # 限制 channel 缓冲区大小，防止内存泄漏
+            if len(channel) > 100:
+                channel[:] = channel[-50:]

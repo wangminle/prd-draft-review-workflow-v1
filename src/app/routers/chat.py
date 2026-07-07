@@ -10,6 +10,7 @@
 
 import json
 import logging
+import time
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
@@ -24,6 +25,7 @@ from app.repositories.context_item_repository import ContextItemRepository, Cont
 from app.schemas.chat import ChatRequest, ContextItemCreate, ContextItemInfo, ContextItemUpdate, ModelInfo, PromptTemplateInfo
 from app.services.chat_application_service import ChatApplicationService
 from app.services.llm import stream_chat
+from app.logging_config import log_llm_session
 from app.storage.chat_file_storage import ChatFileStorage
 
 logger = logging.getLogger(__name__)
@@ -82,6 +84,7 @@ async def chat(
         collected = []
         reasoning_parts = []
         token_count = 0
+        stream_started = time.monotonic()
 
         try:
             async for chunk in stream_chat(
@@ -114,21 +117,49 @@ async def chat(
                 if chunk.finish_reason:
                     # Save assistant response to DB before sending [DONE]
                     full_text = "".join(collected)
+                    stats = chunk.usage or {}
+                    true_token_count = (
+                        stats.get("total_tokens")
+                        or stats.get("completion_tokens")
+                        or token_count
+                    )
+                    assistant_token_count = (
+                        stats.get("completion_tokens")
+                        or stats.get("total_tokens")
+                        or token_count
+                    )
+                    elapsed_seconds = stats.get("elapsed_seconds")
+                    elapsed_ms = None
+                    if elapsed_seconds is not None:
+                        elapsed_ms = int(float(elapsed_seconds) * 1000)
+                    elif stats.get("elapsed_ms") is not None:
+                        elapsed_ms = int(stats["elapsed_ms"])
+                    else:
+                        elapsed_ms = int((time.monotonic() - stream_started) * 1000)
+
                     if full_text:
                         stream_conv_repo = ConversationRepository(db_session)
                         await stream_conv_repo.append_message(
                             conversation_id=conv_id, role="assistant",
-                            content=full_text, token_count=token_count,
+                            content=full_text, token_count=assistant_token_count,
                         )
                         await db_session.commit()
 
+                    log_llm_session(
+                        model_cfg["llm_model"],
+                        llm_messages,
+                        full_text,
+                        stats or None,
+                        elapsed_ms=elapsed_ms,
+                        reasoning_content="".join(reasoning_parts) or None,
+                    )
+
                     # Final stats
-                    stats = chunk.usage or {}
                     data = json.dumps({
                         "content": "",
                         "conversation_id": conv_id,
                         "done": True,
-                        "token_count": token_count,
+                        "token_count": true_token_count,
                         "elapsed_seconds": stats.get("elapsed_seconds"),
                     })
                     yield f"data: {data}\n\n"

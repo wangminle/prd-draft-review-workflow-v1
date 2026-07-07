@@ -109,8 +109,20 @@ class ReviewParticipantRepository:
     def __init__(self, db: AsyncSession):
         self._db = db
 
+    _ROLE_PRIORITY = {"Observer": 0, "Reviewer": 1, "Approver": 2}
+
     async def add_participant(self, *, request_id: int, user_id: int,
                               role: str) -> ReviewParticipant:
+        existing = await self.get_by_request_and_user(request_id, user_id)
+        if existing:
+            if self._ROLE_PRIORITY.get(role, 0) > self._ROLE_PRIORITY.get(existing.role, 0):
+                existing.role = role
+            if existing.status != "active":
+                existing.status = "active"
+            await self._db.flush()
+            await self._db.refresh(existing)
+            return existing
+
         p = ReviewParticipant(
             request_id=request_id,
             user_id=user_id,
@@ -135,7 +147,7 @@ class ReviewParticipantRepository:
             select(ReviewParticipant).where(
                 ReviewParticipant.request_id == request_id,
                 ReviewParticipant.user_id == user_id,
-            )
+            ).order_by(ReviewParticipant.id).limit(1)
         )
         return result.scalar_one_or_none()
 

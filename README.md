@@ -121,6 +121,9 @@ src/static/                 前端 SPA（含 workspace.js 资料库、notificati
 skills/                     需求评审技能链
 src/agent/extensions/       Agent 安全 Extension（工具调用拦截与审批）
 package.json                Pi Agent npm 依赖声明（pi-coding-agent）
+start.sh                    服务启停脚本（start|stop|restart|status）
+update.sh                   目标服务器版本更新脚本（校验/备份/回滚）
+package.sh                  开发机打包脚本，生成 *-code-config*.tar.gz 分发包
 runtime/                    数据库、上传、转换、结果、日志
 runtime/config/             品牌配置模板（ui-branding.example.yaml）
 runtime/assets/branding/    品牌资产目录（Logo、favicon）
@@ -135,6 +138,19 @@ tests/                      自动化测试
 - 避免运行时数据进入源码仓库。
 - 在部署时独立挂载数据卷。
 - 在开源或跨环境迁移时保护业务数据。
+
+### 打包与部署
+
+跨服务器部署通过 `package.sh` 生成只含代码与配置模板的分发包（不含密钥、不含运行时数据），目标服务器用 `update.sh` 安装或更新（含自动备份、健康检查与失败回滚）。
+
+```bash
+./package.sh                 # 开发机打包（默认 zip）→ dist/*-code-config*.zip
+./package.sh --format tar.gz # 走 update.sh 自动更新流程时改用 tar.gz
+./update.sh                  # 目标服务器更新（自动查找 *-code-config*.tar.gz）
+./start.sh start             # 首次部署或手动启停
+```
+
+完整流程（首次部署、版本更新、运行时数据迁移、品牌配置迁移）见 [打包与部署指南](docs/4-deployment/2026-07-07-打包与部署指南.md)；目标服务器的 Nginx/systemd/安全加固见 [Ubuntu 部署与安全加固方案](docs/4-deployment/2026-05-22-ubuntu-nginx-systemd-security-plan.md)。
 
 ### License
 
@@ -255,6 +271,9 @@ src/static/                 Frontend SPA (incl. workspace.js knowledge library, 
 skills/                     Review skill chain
 src/agent/extensions/       Agent security Extension (tool call interception and approval)
 package.json                Pi Agent npm dependency (pi-coding-agent)
+start.sh                    Service control script (start|stop|restart|status)
+update.sh                   Target-server update script (validate/backup/rollback)
+package.sh                  Dev-machine packaging script; produces *-code-config*.tar.gz
 runtime/                    Database, uploads, conversions, results, logs
 runtime/config/             Branding config template (ui-branding.example.yaml)
 runtime/assets/branding/    Branding assets directory (Logo, favicon)
@@ -265,6 +284,19 @@ tests/                      Automated tests
 ### Data and Code Separation
 
 All databases, uploads, converted files, logs, and review artifacts live under the runtime directory, which is git-ignored by default. This keeps runtime data out of source control, simplifies deployment with mounted data volumes, and reduces the risk of leaking business data across environments.
+
+### Packaging and Deployment
+
+Cross-server deployment uses `package.sh` to produce a code-and-config-only archive (no secrets, no runtime data); the target server installs or updates it with `update.sh` (auto backup, health check, and rollback on failure).
+
+```bash
+./package.sh                 # dev machine (default zip) → dist/*-code-config*.zip
+./package.sh --format tar.gz # use tar.gz for the update.sh auto-update flow
+./update.sh                  # target server update (auto-discovers *-code-config*.tar.gz)
+./start.sh start             # first deploy or manual control
+```
+
+Full procedures (first deploy, version update, runtime data migration, branding migration) are in [Packaging and Deployment Guide](docs/4-deployment/2026-07-07-打包与部署指南.md); target-server Nginx/systemd/security hardening is in [Ubuntu Deployment and Hardening Plan](docs/4-deployment/2026-05-22-ubuntu-nginx-systemd-security-plan.md).
 
 ### License
 

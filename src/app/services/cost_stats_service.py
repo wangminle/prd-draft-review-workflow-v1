@@ -119,11 +119,23 @@ class CostStatsService:
         rows = 0
         for (workspace_id, user_id, mode, model_id), stats in agg.items():
             # 检查是否已存在
+            workspace_filter = (
+                CostDailySummary.workspace_id.is_(None)
+                if workspace_id is None
+                else CostDailySummary.workspace_id == workspace_id
+            )
+            user_filter = (
+                CostDailySummary.user_id.is_(None)
+                if user_id is None
+                else CostDailySummary.user_id == user_id
+            )
             existing = await self._db.execute(
                 select(CostDailySummary).where(
                     CostDailySummary.date == date_str,
                     CostDailySummary.model_id == model_id,
                     CostDailySummary.mode == mode,
+                    workspace_filter,
+                    user_filter,
                 )
             )
             row = existing.scalar_one_or_none()

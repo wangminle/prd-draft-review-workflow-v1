@@ -37,6 +37,18 @@ async def _auth_header(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _register_user_id(client, username: str) -> int:
+    resp = await client.post(
+        "/api/auth/register",
+        json={"username": username, "password": "test123456"},
+    )
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    me_resp = await client.get("/api/auth/me", headers=headers)
+    assert me_resp.status_code == 200, me_resp.text
+    return me_resp.json()["id"]
+
+
 async def _create_project(client, headers):
     """创建一个审查项目用于测试。"""
     resp = await client.post(
@@ -201,11 +213,12 @@ async def test_resubmit_only_for_rejected(client):
 async def test_participants_list(client):
     """P4.A.2: 列出审查参与者"""
     headers = await _auth_header(client)
+    approver_id = await _register_user_id(client, "review_participant_approver")
     project_id = await _create_project(client, headers)
 
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [approver_id]},
         headers=headers,
     )
     request_id = create_resp.json()["id"]
@@ -220,3 +233,6 @@ async def test_participants_list(client):
     roles = {p["role"] for p in participants}
     assert "Reviewer" in roles
     assert "Approver" in roles
+    user_ids = {p["user_id"] for p in participants}
+    assert 1 in user_ids
+    assert approver_id in user_ids

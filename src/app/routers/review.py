@@ -902,9 +902,7 @@ async def review_progress_sse(
     if user_id_from_ticket is None:
         raise HTTPException(status_code=401, detail="认证票据无效或已过期")
 
-    proj_result = await db.execute(select(ReviewProject).where(ReviewProject.id == project_id, ReviewProject.created_by == user_id_from_ticket))
-    if proj_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=403, detail="无权访问该项目")
+    await _verify_project_owner(db, project_id, user_id_from_ticket)
     task_result = await db.execute(select(ReviewTask).where(ReviewTask.id == review_id, ReviewTask.project_id == project_id))
     if task_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="审查任务不存在")

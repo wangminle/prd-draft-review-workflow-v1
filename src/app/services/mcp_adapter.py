@@ -213,9 +213,15 @@ class MCPAdapterManager:
             try:
                 allowed_roles = json.loads(policy.allowed_roles_json)
             except (json.JSONDecodeError, TypeError):
-                pass
+                allowed_roles = None
+            if not isinstance(allowed_roles, list):
+                allowed_roles = None
 
-        allowed = not allowed_roles or user_role in allowed_roles
+        if allowed_roles is None:
+            allowed = False
+        else:
+            allowed = not allowed_roles or user_role in allowed_roles
+
         return {
             "allowed": allowed,
             "requires_approval": policy.requires_approval,
