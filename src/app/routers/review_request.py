@@ -148,10 +148,11 @@ async def create_review_request(
     # 更新状态为 pending_approval
     await request_repo.update_status(review_req, "pending_approval")
 
-    # P4.D.3: 通知 Approver
+    # P4.D.3: 通知 Approver（defer_push：commit 成功后才推送，避免幽灵通知 BUG-106）
+    notif_service = None
     if req.approver_ids:
         from app.services.notification_service import NotificationService
-        notif_service = NotificationService(db)
+        notif_service = NotificationService(db, defer_push=True)
         await notif_service.notify_review_request_created(
             request_id=review_req.id,
             project_id=req.project_id,
@@ -161,6 +162,8 @@ async def create_review_request(
         )
 
     await db.commit()
+    if notif_service:
+        notif_service.flush_pending()
     await db.refresh(review_req)
 
     return _serialize_request(review_req)
@@ -280,15 +283,16 @@ async def decide_round(
     # 更新 ReviewRequest 状态
     request_repo = ReviewRequestRepository(db)
     review_req = await request_repo.get_by_id(review_round.request_id)
+    notif_service = None
     if review_req:
         if req.decision == "approved":
             await request_repo.update_status(review_req, "approved")
         elif req.decision == "rejected":
             await request_repo.update_status(review_req, "rejected")
 
-        # P4.D.3: 通知发起人
+        # P4.D.3: 通知发起人（defer_push：commit 成功后才推送，避免幽灵通知 BUG-106）
         from app.services.notification_service import NotificationService
-        notif_service = NotificationService(db)
+        notif_service = NotificationService(db, defer_push=True)
         await notif_service.notify_review_round_decided(
             request_id=review_req.id,
             round_no=review_round.round_no,
@@ -299,6 +303,8 @@ async def decide_round(
         )
 
     await db.commit()
+    if notif_service:
+        notif_service.flush_pending()
     return _serialize_round(review_round)
 
 
@@ -338,12 +344,13 @@ async def resubmit_review_request(
     review_req.current_round = new_round_no
     await request_repo.update_status(review_req, "pending_approval")
 
-    # P4.D.3: 通知审批人重新提交
+    # P4.D.3: 通知审批人重新提交（defer_push：commit 成功后才推送，避免幽灵通知 BUG-106）
+    notif_service = None
     if prev_approver_id:
+        from app.services.notification_service import NotificationService
+        notif_service = NotificationService(db, defer_push=True)
         try:
             async with db.begin_nested():
-                from app.services.notification_service import NotificationService
-                notif_service = NotificationService(db)
                 await notif_service.notify_review_request_created(
                     request_id=review_req.id,
                     project_id=review_req.project_id,
@@ -352,9 +359,14 @@ async def resubmit_review_request(
                     goal=review_req.goal,
                 )
         except Exception as exc:
+            # savepoint 回滚：丢弃缓冲事件，避免外层 commit 时推送指向已回滚行的幽灵通知
+            notif_service.discard_pending()
+            notif_service = None
             logger.warning("review request resubmit notification failed: %s", exc)
 
     await db.commit()
+    if notif_service:
+        notif_service.flush_pending()
     await db.refresh(review_req)
 
     return _serialize_request(review_req)

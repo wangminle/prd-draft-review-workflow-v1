@@ -64,6 +64,9 @@ class KnowledgeFileStorage:
 
     def read_file(self, file_id: str) -> bytes | None:
         root = self._resolve_upload_root()
+        # BUG-110: 目录不存在时返回 None（调用方据此返回 404），而非让 iterdir 抛 FileNotFoundError 退化成 500
+        if not root.exists():
+            return None
         for candidate in root.iterdir():
             if candidate.name.startswith(file_id):
                 return candidate.read_bytes()
@@ -71,6 +74,8 @@ class KnowledgeFileStorage:
 
     def delete_file(self, file_id: str) -> bool:
         root = self._resolve_upload_root()
+        if not root.exists():
+            return False
         for candidate in root.iterdir():
             if candidate.name.startswith(file_id):
                 candidate.unlink()

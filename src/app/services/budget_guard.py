@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.review import CostDailySummary, WorkspaceBudget
@@ -25,10 +25,10 @@ async def get_monthly_token_usage(db: AsyncSession, workspace_id: int) -> int:
             )
         ).where(
             CostDailySummary.date.like(f"{month_prefix}-%"),
-            or_(
-                CostDailySummary.workspace_id == workspace_id,
-                CostDailySummary.workspace_id.is_(None),
-            ),
+            # BUG-109: 只统计该 workspace 的专属行，不含 workspace_id IS NULL 的全局汇总行。
+            # 全局行会被重复计入每个 workspace，导致 current_month_tokens 偏大、
+            # ensure_workspace_llm_allowed 在 block 模式下误封未超限的 workspace。
+            CostDailySummary.workspace_id == workspace_id,
         )
     )
     return int(result.scalar_one() or 0)

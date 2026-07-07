@@ -113,15 +113,33 @@ class ReviewParticipantRepository:
 
     async def add_participant(self, *, request_id: int, user_id: int,
                               role: str) -> ReviewParticipant:
-        existing = await self.get_by_request_and_user(request_id, user_id)
-        if existing:
-            if self._ROLE_PRIORITY.get(role, 0) > self._ROLE_PRIORITY.get(existing.role, 0):
-                existing.role = role
-            if existing.status != "active":
-                existing.status = "active"
+        # BUG-107: 查询该 (request_id, user_id) 的全部历史行，收敛存量重复行。
+        result = await self._db.execute(
+            select(ReviewParticipant).where(
+                ReviewParticipant.request_id == request_id,
+                ReviewParticipant.user_id == user_id,
+            ).order_by(ReviewParticipant.id)
+        )
+        existing_list = list(result.scalars().all())
+
+        if existing_list:
+            primary = existing_list[0]
+            # 角色升级：取传入 role 与所有重复行现有角色中的最高优先级
+            best_role = primary.role
+            for e in existing_list:
+                if self._ROLE_PRIORITY.get(e.role, 0) > self._ROLE_PRIORITY.get(best_role, 0):
+                    best_role = e.role
+            if self._ROLE_PRIORITY.get(role, 0) > self._ROLE_PRIORITY.get(best_role, 0):
+                best_role = role
+            primary.role = best_role
+            if primary.status != "active":
+                primary.status = "active"
+            # 删除存量重复行（保留最早的一条作为主记录）
+            for dup in existing_list[1:]:
+                await self._db.delete(dup)
             await self._db.flush()
-            await self._db.refresh(existing)
-            return existing
+            await self._db.refresh(primary)
+            return primary
 
         p = ReviewParticipant(
             request_id=request_id,
@@ -140,7 +158,17 @@ class ReviewParticipantRepository:
             .where(ReviewParticipant.request_id == request_id)
             .order_by(ReviewParticipant.created_at)
         )
-        return list(result.scalars().all())
+        rows = list(result.scalars().all())
+        # BUG-107: 按 user_id 去重，兼容存量重复行。同 user 多条时保留角色优先级
+        # 最高的；优先级相同则保留最早创建的（已按 created_at 升序，先入 deduped）。
+        deduped: dict[int, ReviewParticipant] = {}
+        for p in rows:
+            existing = deduped.get(p.user_id)
+            if existing is None:
+                deduped[p.user_id] = p
+            elif self._ROLE_PRIORITY.get(p.role, 0) > self._ROLE_PRIORITY.get(existing.role, 0):
+                deduped[p.user_id] = p
+        return list(deduped.values())
 
     async def get_by_request_and_user(self, request_id: int, user_id: int) -> ReviewParticipant | None:
         result = await self._db.execute(

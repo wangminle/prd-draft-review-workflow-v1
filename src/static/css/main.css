@@ -2,7 +2,7 @@
    AI产品需求初审 — 主样式表
    设计系统：Arco Design（火山设计）+ Swiss International
    配色体系：Arco Design 官方色板
-   字体系列：Inter (EN) + Noto Sans SC (CN)
+   字体系列：系统字体栈（本地，无外网依赖）
    网格系统：8px 基线网格
    ═══════════════════════════════════════════ */
 
@@ -144,7 +144,7 @@ html {
 }
 
 body {
-    font-family: 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', '微软雅黑', 'Noto Sans CJK SC', sans-serif;
     font-size: var(--fs-14);
     line-height: var(--lh-normal);
     color: var(--color-text);

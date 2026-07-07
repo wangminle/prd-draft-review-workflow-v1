@@ -281,6 +281,13 @@ async def list_sources(
     user: User = Depends(get_current_user),
 ):
     """P0.B.2 + P5.A.1: 列出资料，支持 owner_type/visibility 过滤"""
+    # BUG-108: 团队资料列表不允许筛选 owner_type=user 的个人私有资料。
+    # 仓储层 list_by_workspace 只按 workspace_id+owner_type+visibility 过滤、不绑定 owner_id，
+    # 若放行 owner_type=user 会返回同空间所有成员的私有资料元数据，造成越权枚举。
+    # 个人资料请通过 /workspace/personal/sources 端点访问（仅返回 owner_id=当前用户 的记录）。
+    if owner_type == "user":
+        raise HTTPException(400, "个人资料请通过个人资料接口访问")
+
     repo = WorkspaceRepository(db)
     ws = await repo.get_by_id(workspace_id)
     if ws is None:

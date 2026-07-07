@@ -173,9 +173,9 @@ async def confirm_artifact(
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    # 通知项目相关参与者
+    # 通知项目相关参与者（defer_push：commit 成功后才推送，避免幽灵通知 BUG-106）
     from app.services.notification_service import NotificationService
-    notif_service = NotificationService(db)
+    notif_service = NotificationService(db, defer_push=True)
     if artifact.object_type == "review_request":
         from app.repositories.review_request_repository import ReviewParticipantRepository
         participant_repo = ReviewParticipantRepository(db)
@@ -190,6 +190,7 @@ async def confirm_artifact(
         )
 
     await db.commit()
+    notif_service.flush_pending()
     return _serialize_artifact(artifact)
 
 

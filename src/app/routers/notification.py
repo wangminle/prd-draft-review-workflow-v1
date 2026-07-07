@@ -228,12 +228,14 @@ async def create_comment(
         parent_id=req.parent_id,
     )
 
+    # 通知（defer_push：commit 成功后才推送，避免幽灵通知 BUG-106）
+    from app.services.notification_service import NotificationService
+    notif_service = NotificationService(db, defer_push=True)
+
     # 如果是回复，通知原评论作者
     if req.parent_id:
         parent_comment = await repo.get_by_id(req.parent_id)
         if parent_comment and parent_comment.author_id != user.id:
-            from app.services.notification_service import NotificationService
-            notif_service = NotificationService(db)
             await notif_service.notify_comment_reply(
                 comment_id=comment.id,
                 object_type=req.object_type,
@@ -248,8 +250,6 @@ async def create_comment(
     if mentions:
         from sqlalchemy import select
         from app.models.user import User as UserModel
-        from app.services.notification_service import NotificationService
-        notif_service = NotificationService(db)
         for username in set(mentions):
             result = await db.execute(
                 select(UserModel).where(UserModel.username == username)
@@ -265,6 +265,7 @@ async def create_comment(
                 )
 
     await db.commit()
+    notif_service.flush_pending()
     return _serialize_comment(comment)
 
 

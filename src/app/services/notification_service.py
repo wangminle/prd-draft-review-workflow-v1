@@ -61,9 +61,13 @@ class NotificationEvent:
 class NotificationService:
     """通知服务：创建通知 + SSE 推送。"""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, *, defer_push: bool = False):
         self._db = db
         self._repo = NotificationRepository(db)
+        # defer_push=True 时 _push_event 仅缓冲，等事务成功后由 flush_pending() 推送，
+        # 避免 commit/回滚前推送导致幽灵通知（BUG-106）。
+        self._defer_push = defer_push
+        self._pending: list[tuple[int, NotificationEvent]] = []
 
     async def notify_review_request_created(
         self,
@@ -352,6 +356,18 @@ class NotificationService:
         return notification.id
 
     def _push_event(self, recipient_id: int, event: NotificationEvent) -> None:
+        """缓冲或立即推送 SSE 事件（BUG-106）。
+
+        defer_push=True 时仅缓冲到 self._pending，等外层事务成功提交后由
+        flush_pending() 统一推送；事务回滚则用 discard_pending() 丢弃，
+        避免推送指向已回滚 Notification 行的幽灵事件。
+        """
+        if getattr(self, "_defer_push", False):
+            self._pending.append((recipient_id, event))
+            return
+        self._deliver(recipient_id, event)
+
+    def _deliver(self, recipient_id: int, event: NotificationEvent) -> None:
         """将通知事件推送到用户的 SSE channel。"""
         channels = _notification_channels.get(recipient_id)
         if not channels:
@@ -366,3 +382,13 @@ class NotificationService:
             # 限制 channel 缓冲区大小，防止内存泄漏
             if len(channel) > 100:
                 channel[:] = channel[-50:]
+
+    def flush_pending(self) -> None:
+        """外层事务成功提交后，推送所有缓冲的 SSE 事件（BUG-106）。"""
+        for recipient_id, event in self._pending:
+            self._deliver(recipient_id, event)
+        self._pending.clear()
+
+    def discard_pending(self) -> None:
+        """丢弃缓冲事件（savepoint 回滚或事务失败时调用，BUG-106）。"""
+        self._pending.clear()
