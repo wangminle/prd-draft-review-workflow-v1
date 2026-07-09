@@ -49,7 +49,7 @@ async def db_session(db_engine):
 
 @pytest_asyncio.fixture
 async def admin_user(db_session):
-    admin = User(username="admin", password_hash=hash_password("admin123"), role="admin")
+    admin = User(username="admin", password_hash=hash_password("admin@2026"), role="admin")
     db_session.add(admin)
     await db_session.flush()
     await db_session.refresh(admin)
@@ -506,7 +506,7 @@ class TestProjectMigration:
         session_maker = async_sessionmaker(db_engine, expire_on_commit=False)
 
         async with session_maker() as session:
-            admin = User(username="admin", password_hash=hash_password("admin123"), role="admin")
+            admin = User(username="admin", password_hash=hash_password("admin@2026"), role="admin")
             session.add(admin)
             await session.flush()
 
@@ -545,7 +545,7 @@ class TestProjectMigration:
         session_maker = async_sessionmaker(db_engine, expire_on_commit=False)
 
         async with session_maker() as session:
-            admin = User(username="admin", password_hash=hash_password("admin123"), role="admin")
+            admin = User(username="admin", password_hash=hash_password("admin@2026"), role="admin")
             session.add(admin)
             await session.flush()
 
@@ -584,7 +584,7 @@ class TestDefaultWorkspaceSeed:
         session_maker = async_sessionmaker(db_engine, expire_on_commit=False)
 
         async with session_maker() as session:
-            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin"))
+            session.add(User(username="admin", password_hash=hash_password("admin@2026"), role="admin"))
             await session.commit()
 
         async with session_maker() as session:
@@ -629,7 +629,7 @@ class TestDefaultWorkspaceSeed:
         session_maker = async_sessionmaker(db_engine, expire_on_commit=False)
 
         async with session_maker() as session:
-            session.add(User(username="admin", password_hash=hash_password("admin123"), role="admin"))
+            session.add(User(username="admin", password_hash=hash_password("admin@2026"), role="admin"))
             await session.commit()
 
         async def run_seed():

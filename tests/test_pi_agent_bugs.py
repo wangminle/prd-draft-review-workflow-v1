@@ -66,7 +66,7 @@ async def pi_agent_env(tmp_path):
     async with session_maker() as session:
         session.add(User(
             username="admin",
-            password_hash=hash_password("admin123"),
+            password_hash=hash_password("admin@2026"),
             role="admin",
         ))
         await session.commit()

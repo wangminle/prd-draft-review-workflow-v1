@@ -216,7 +216,7 @@ def _create_old_style_db(db_path: str) -> None:
     conn.execute(
         "INSERT INTO users (id, username, password_hash, role, created_at, last_active_at, is_active) "
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (1, "admin", hash_password("admin123"), "admin", now, now, 1),
+        (1, "admin", hash_password("admin@2026"), "admin", now, now, 1),
     )
     conn.execute(
         "INSERT INTO users (id, username, password_hash, role, created_at, last_active_at, is_active) "

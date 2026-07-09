@@ -21,6 +21,11 @@ from app.models.knowledge import KnowledgeDocument, KnowledgeChunk, RetrievalLog
 from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
+
+# 首次启动创建的默认管理员口令（部署后应立即修改）
+DEFAULT_ADMIN_PASSWORD = "admin@2026"
+LEGACY_WEAK_ADMIN_PASSWORD = "admin123"
+
 from app.models.review import (  # noqa: F401 — ensure review tables are registered
     ReviewProject,
     ReviewDocument,
@@ -241,7 +246,7 @@ async def _ensure_fts5():
 
 
 async def _ensure_default_admin():
-    """确保默认管理员用户存在；若使用默认密码则打印警告"""
+    """确保默认管理员用户存在；若仍使用预设/历史弱口令则打印警告"""
     from app.models.user import User
     from app.services.auth import hash_password, verify_password
 
@@ -250,17 +255,18 @@ async def _ensure_default_admin():
         result = await session.execute(select(User).where(User.username == "admin"))
         admin = result.scalar_one_or_none()
         if admin is None:
-            import secrets as _secrets
-            temp_password = _secrets.token_hex(8)
             admin = User(
                 username="admin",
-                password_hash=hash_password(temp_password),
+                password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
                 role="admin",
             )
             session.add(admin)
             await session.commit()
-            logger.info("[INIT] 管理员账号已创建，请查看配置获取初始密码")
-        elif verify_password("admin123", admin.password_hash):
+            logger.info("[INIT] 管理员账号已创建：用户名 admin，密码为预设默认口令")
+            logger.warning("[SECURITY] 请尽快修改默认管理员密码")
+        elif verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash):
+            logger.warning("[SECURITY] 检测到默认预设口令 admin，强烈建议立即修改密码")
+        elif verify_password(LEGACY_WEAK_ADMIN_PASSWORD, admin.password_hash):
             logger.warning("[SECURITY] 检测到默认弱口令 admin/admin123，强烈建议立即修改密码")
 
 

@@ -14,7 +14,7 @@
 
 | 参与者 ID | 名称 | 系统角色 `User.role` | 团队空间角色 `WorkspaceMember.role` | 测试账号建议 |
 |-----------|------|----------------------|-------------------------------------|--------------|
-| **A1** | 系统管理员 | `admin` | 通常为 `owner`（bootstrap） | `admin` / admin123 |
+| **A1** | 系统管理员 | `admin` | 通常为 `owner`（bootstrap） | `admin` / admin@2026 |
 | **A2** | 普通成员 | `user` | `member` | `member_a`（注册或后台创建） |
 | **A3** | 团队负责人 | `user` | `owner` | `owner_b` |
 | **A4** | 审批人 | `user` | `member` 或 `viewer` | `approver_c` |
@@ -789,7 +789,7 @@ flowchart TB
 users:
   admin:
     username: admin
-    password: admin123
+    password: admin@2026
     system_role: admin
     workspace_role: owner
   member_a:

@@ -76,7 +76,7 @@ async def _register(client: AsyncClient, username: str) -> dict:
 async def _login_admin(client: AsyncClient) -> dict:
     resp = await client.post(
         "/api/auth/login",
-        json={"username": "admin", "password": "admin123"},
+        json={"username": "admin", "password": "admin@2026"},
     )
     assert resp.status_code == 200, resp.text
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}

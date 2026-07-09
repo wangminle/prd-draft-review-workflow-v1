@@ -13,9 +13,9 @@ VENDOR_NOTICE = (ROOT / "src/static/vendor/NOTICE.md").read_text(encoding="utf-8
 
 class TestVendorLocalization:
     def test_local_vendor_scripts_exist_in_html(self):
-        assert "/vendor/purify.min.js" in HTML
-        assert "/vendor/marked.min.js" in HTML
-        assert "/vendor/mermaid.min.js" in HTML
+        assert "./vendor/purify.min.js" in HTML
+        assert "./vendor/marked.min.js" in HTML
+        assert "./vendor/mermaid.min.js" in HTML
 
     def test_no_cdn_script_references_in_html(self):
         assert "cdn.jsdelivr.net" not in HTML
@@ -46,11 +46,11 @@ class TestVendorLocalization:
 
     def test_static_scripts_have_cache_busting_version(self):
         for script in [
-            "/vendor/purify.min.js",
-            "/vendor/marked.min.js",
-            "/vendor/mermaid.min.js",
-            "/js/chat.js",
-            "/js/review.js",
+            "./vendor/purify.min.js",
+            "./vendor/marked.min.js",
+            "./vendor/mermaid.min.js",
+            "./js/chat.js",
+            "./js/review.js",
         ]:
             assert f'{script}?v=' in HTML
 

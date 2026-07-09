@@ -75,7 +75,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.3.3"}
+        return {"status": "ok", "version": "0.3.4"}
 
     return app, engine, TestSessionLocal
 
@@ -95,7 +95,7 @@ async def init_test_db(engine, session_maker):
         if result.scalar_one_or_none() is None:
             session.add(User(
                 username="admin",
-                password_hash=hash_password("admin123"),
+                password_hash=hash_password("admin@2026"),
                 role="admin",
             ))
 

@@ -226,7 +226,7 @@ async def test_admin_users_list_includes_last_active_time(client):
 
     admin_login_resp = await client.post(
         "/api/auth/login",
-        json={"username": "admin", "password": "admin123"},
+        json={"username": "admin", "password": "admin@2026"},
     )
     assert admin_login_resp.status_code == 200
     admin_headers = {"Authorization": f"Bearer {admin_login_resp.json()['access_token']}"}

@@ -15,7 +15,7 @@ from tests.conftest import init_test_db, make_test_app
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-ADMIN_CREDS = {"username": "admin", "password": "admin123"}
+ADMIN_CREDS = {"username": "admin", "password": "admin@2026"}
 
 
 @pytest_asyncio.fixture
@@ -35,7 +35,7 @@ async def client():
             pass
 
 
-async def _auth(client, username="admin", password="admin123"):
+async def _auth(client, username="admin", password="admin@2026"):
     resp = await client.post("/api/auth/login", json={"username": username, "password": password})
     assert resp.status_code == 200
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}

@@ -29,7 +29,7 @@ async def client():
 async def _admin_headers(client):
     resp = await client.post(
         "/api/auth/login",
-        json={"username": "admin", "password": "admin123"},
+        json={"username": "admin", "password": "admin@2026"},
     )
     assert resp.status_code == 200, resp.text
     token = resp.json()["access_token"]

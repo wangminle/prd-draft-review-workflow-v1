@@ -339,7 +339,7 @@ async def test_delete_source_not_found():
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         # Use admin login (has owner role in default workspace)
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = resp.json()["access_token"]
         headers = _auth_headers(token)
 
@@ -801,7 +801,7 @@ async def test_delete_source_member_role_blocked():
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         # Admin login for workspace management
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = resp.json()["access_token"]
 
         # Register a member-role user
@@ -975,7 +975,7 @@ async def test_update_tags_member_role_blocked():
 
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = resp.json()["access_token"]
 
         resp = await c.post("/api/auth/register", json={"username": "tagmember", "password": "test123456"})
@@ -1048,7 +1048,7 @@ async def test_viewer_cannot_upload():
 
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = resp.json()["access_token"]
 
         resp = await c.post("/api/auth/register", json={"username": "viewer_user", "password": "test123456"})
@@ -1118,7 +1118,7 @@ async def test_freeze_snapshot_on_pipeline_start():
 
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = resp.json()["access_token"]
 
         async with session_maker() as session:
@@ -1178,7 +1178,7 @@ async def test_create_review_project_writes_workspace_id():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1204,7 +1204,7 @@ async def test_add_source_ref_cross_workspace_blocked():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1258,7 +1258,7 @@ async def test_add_source_ref_archived_blocked():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1301,7 +1301,7 @@ async def test_list_sources_tag_and_status_filter():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1351,7 +1351,7 @@ async def test_source_detail_returns_extracted_text_and_project_refs():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         # Upload a file to get extracted_text
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1401,7 +1401,7 @@ async def test_source_download_endpoint():
 
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await ac.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1436,7 +1436,7 @@ async def test_source_download_endpoint():
 class TestDefaultWorkspaceEndpoints:
     async def test_get_default_workspace(self, client):
         """GET /api/workspace/default 返回默认团队空间，含 is_default=True"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1449,7 +1449,7 @@ class TestDefaultWorkspaceEndpoints:
 
     async def test_put_default_workspace_rename(self, client):
         """PUT /api/workspace/default 可以改名，改名后 get_default 仍能找到"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1480,7 +1480,7 @@ class TestDefaultWorkspaceEndpoints:
 
     async def test_put_default_workspace_empty_name_rejected(self, client):
         """空名称被 422 拒绝"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1489,7 +1489,7 @@ class TestDefaultWorkspaceEndpoints:
 
     async def test_rename_preserves_registration_auto_join(self, client):
         """改名后注册新用户仍能自动加入默认团队"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1542,7 +1542,7 @@ class TestDefaultWorkspaceEndpoints:
 class TestMemberManagementEndpoints:
     async def test_list_default_members(self, client):
         """GET /api/workspace/default/members 返回成员列表"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -1563,7 +1563,7 @@ class TestMemberManagementEndpoints:
         await client.post("/api/auth/register", json={"username": "role_test_user", "password": "test123456"})
 
         # admin 登录
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = login_resp.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1596,7 +1596,7 @@ class TestMemberManagementEndpoints:
         """PUT /api/workspace/default/members/{user_id} 停用/恢复成员"""
         await client.post("/api/auth/register", json={"username": "status_test_user", "password": "test123456"})
 
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = login_resp.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1635,7 +1635,7 @@ class TestMemberManagementEndpoints:
 
     async def test_self_modification_blocked(self, client):
         """不能变更自身的角色或状态"""
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = login_resp.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1668,7 +1668,7 @@ class TestMemberManagementEndpoints:
         member_headers = {"Authorization": f"Bearer {member_token}"}
 
         # 获取 admin 的 user_id
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
         members_resp = await client.get("/api/workspace/default/members", headers=admin_headers)
@@ -1687,7 +1687,7 @@ class TestMemberManagementEndpoints:
         """无效角色/状态值返回 422"""
         await client.post("/api/auth/register", json={"username": "val_test_user", "password": "test123456"})
 
-        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        login_resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = login_resp.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1724,7 +1724,7 @@ class TestReviewWorkspaceActiveMemberCheck:
         user_token = user_login.json()["access_token"]
 
         # admin 停用该用户
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1769,7 +1769,7 @@ class TestReviewWorkspaceActiveMemberCheck:
         user_headers = {"Authorization": f"Bearer {user_token}"}
 
         # 上传资料
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1845,7 +1845,7 @@ class TestBug037InactiveMemberProjectAccess:
         assert any(p["name"] == "bug037-proj" for p in list_resp.json())
 
         # admin 停用该用户
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1883,7 +1883,7 @@ class TestBug037InactiveMemberProjectAccess:
         project_id = proj_resp.json()["id"]
 
         # admin 停用该用户
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1921,7 +1921,7 @@ class TestBug037InactiveMemberProjectAccess:
         project_id = proj_resp.json()["id"]
 
         # admin 停用该用户
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1956,7 +1956,7 @@ class TestBug038InactiveMemberVisibleInList:
         """BUG-038: GET /api/workspace/default/members 返回含 inactive 成员"""
         await client.post("/api/auth/register", json={"username": "bug038_user", "password": "test123456"})
 
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -1992,7 +1992,7 @@ class TestBug038InactiveMemberVisibleInList:
 class TestBug039DefaultWorkspaceStatusUpdate:
     async def test_update_default_workspace_status(self, client):
         """BUG-039: PUT /api/workspace/default 可更新 status"""
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 
@@ -2014,7 +2014,7 @@ class TestBug039DefaultWorkspaceStatusUpdate:
 
     async def test_update_default_workspace_invalid_status(self, client):
         """BUG-039: 无效 status 返回 422"""
-        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+        admin_login = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
         admin_token = admin_login.json()["access_token"]
         admin_headers = {"Authorization": f"Bearer {admin_token}"}
 

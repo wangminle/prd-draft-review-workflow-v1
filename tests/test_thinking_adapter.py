@@ -155,7 +155,7 @@ class TestModelConfigThinkingAPI:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 token_resp = await ac.post("/api/auth/login", json={
-                    "username": "admin", "password": "admin123",
+                    "username": "admin", "password": "admin@2026",
                 })
                 token = token_resp.json()["access_token"]
                 ac.headers["Authorization"] = f"Bearer {token}"
@@ -314,7 +314,7 @@ class TestDBMigration:
             transport = ASGITransport(app=app)
             async with AsyncClient(transport=transport, base_url="http://test") as ac:
                 token_resp = await ac.post("/api/auth/login", json={
-                    "username": "admin", "password": "admin123",
+                    "username": "admin", "password": "admin@2026",
                 })
                 token = token_resp.json()["access_token"]
                 ac.headers["Authorization"] = f"Bearer {token}"

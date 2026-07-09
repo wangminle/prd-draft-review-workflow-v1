@@ -65,7 +65,7 @@ async def db_session(db_engine):
 
 @pytest_asyncio.fixture
 async def admin_user(db_session):
-    admin = User(username="admin", password_hash=hash_password("admin123"), role="admin")
+    admin = User(username="admin", password_hash=hash_password("admin@2026"), role="admin")
     db_session.add(admin)
     await db_session.flush()
     await db_session.refresh(admin)

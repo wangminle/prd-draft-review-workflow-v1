@@ -15,9 +15,9 @@ def test_chat_events_are_bound_once():
 
 
 def test_chat_uses_open_source_markdown_renderer_with_sanitizer():
-    assert "/vendor/purify.min.js" in HTML
-    assert "/vendor/marked.min.js" in HTML
-    assert "/vendor/mermaid.min.js" in HTML
+    assert "./vendor/purify.min.js" in HTML
+    assert "./vendor/marked.min.js" in HTML
+    assert "./vendor/mermaid.min.js" in HTML
     assert "window.marked.parse(text)" in CHAT_JS
     assert "window.DOMPurify.sanitize" in CHAT_JS
 

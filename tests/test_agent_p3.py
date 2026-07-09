@@ -14,7 +14,7 @@ from tests.conftest import init_test_db, make_test_app
 
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
-ADMIN_CREDS = {"username": "admin", "password": "admin123"}
+ADMIN_CREDS = {"username": "admin", "password": "admin@2026"}
 
 
 @pytest_asyncio.fixture

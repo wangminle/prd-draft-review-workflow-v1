@@ -35,7 +35,7 @@ async def client():
 
 @pytest_asyncio.fixture
 async def admin_headers(client):
-    resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    resp = await client.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
     token = resp.json()["access_token"]
     return {"Authorization": f"Bearer {token}"}
 

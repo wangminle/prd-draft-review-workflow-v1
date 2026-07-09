@@ -136,7 +136,7 @@ async def admin_token(app_client):
     """Login as admin and return token"""
     resp = await app_client.post("/api/auth/login", json={
         "username": "admin",
-        "password": "admin123",
+        "password": "admin@2026",
     })
     data = resp.json()
     return data["access_token"]
@@ -340,7 +340,7 @@ class TestModelConfigAPI:
         app_client, session_maker = app_client_with_db
         login_resp = await app_client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "admin123",
+            "password": "admin@2026",
         })
         admin_token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {admin_token}"}
@@ -428,7 +428,7 @@ class TestModelConfigAPI:
 
         login_resp = await app_client.post("/api/auth/login", json={
             "username": "admin",
-            "password": "admin123",
+            "password": "admin@2026",
         })
         admin_token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {admin_token}"}
