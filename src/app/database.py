@@ -255,15 +255,19 @@ async def _ensure_default_admin():
         result = await session.execute(select(User).where(User.username == "admin"))
         admin = result.scalar_one_or_none()
         if admin is None:
+            initial = os.environ.get("ADMIN_INITIAL_PASSWORD") or DEFAULT_ADMIN_PASSWORD
             admin = User(
                 username="admin",
-                password_hash=hash_password(DEFAULT_ADMIN_PASSWORD),
+                password_hash=hash_password(initial),
                 role="admin",
             )
             session.add(admin)
             await session.commit()
-            logger.info("[INIT] 管理员账号已创建：用户名 admin，密码为预设默认口令")
-            logger.warning("[SECURITY] 请尽快修改默认管理员密码")
+            if os.environ.get("ADMIN_INITIAL_PASSWORD"):
+                logger.info("[INIT] 管理员账号已创建：用户名 admin（使用 ADMIN_INITIAL_PASSWORD）")
+            else:
+                logger.info("[INIT] 管理员账号已创建：用户名 admin，密码为预设默认口令")
+                logger.warning("[SECURITY] 请尽快修改默认管理员密码，或设置 ADMIN_INITIAL_PASSWORD 后重建")
         elif verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash):
             logger.warning("[SECURITY] 检测到默认预设口令 admin，强烈建议立即修改密码")
         elif verify_password(LEGACY_WEAK_ADMIN_PASSWORD, admin.password_hash):
@@ -325,8 +329,8 @@ async def _ensure_model_configs():
 
     settings = get_settings()
     jwt_secret = settings.get("auth", {}).get("secret_key")
-    if not jwt_secret or jwt_secret == "change-me-in-production":
-        raise RuntimeError("JWT secret 未配置或使用默认值，请设置 .env 中的 JWT_SECRET")
+    from app.services.jwt_secret import assert_jwt_secret_safe
+    assert_jwt_secret_safe(jwt_secret)
 
     async with async_session() as session:
         result = await session.execute(select(ModelConfig).order_by(ModelConfig.display_order, ModelConfig.id))

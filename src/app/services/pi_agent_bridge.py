@@ -35,6 +35,45 @@ _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 PI_BIN = str(_PROJECT_ROOT / "node_modules" / ".bin" / "pi")
 EXT_DIR = str(_PROJECT_ROOT / "src" / "agent" / "extensions")
 
+# 活动 bridge 注册表：审批通过后可恢复被拦截的工具调用
+_active_bridges: dict[int, "PiAgentBridge"] = {}
+# run_id → 一次性审批放行工具列表
+_one_shot_approvals: dict[int, list[str]] = {}
+# run_id → 运行期 RAG/内部 API 令牌
+_run_tokens: dict[int, str] = {}
+
+
+def register_active_bridge(run_id: int, bridge: "PiAgentBridge") -> None:
+    _active_bridges[run_id] = bridge
+
+
+def unregister_active_bridge(run_id: int) -> None:
+    _active_bridges.pop(run_id, None)
+    _run_tokens.pop(run_id, None)
+
+
+def get_active_bridge(run_id: int) -> Optional["PiAgentBridge"]:
+    return _active_bridges.get(run_id)
+
+
+def get_run_token(run_id: int) -> str | None:
+    return _run_tokens.get(run_id)
+
+
+def set_run_token(run_id: int, token: str) -> None:
+    _run_tokens[run_id] = token
+
+
+def grant_one_shot_approval(run_id: int, tool_name: str) -> None:
+    tools = _one_shot_approvals.setdefault(run_id, [])
+    if tool_name not in tools:
+        tools.append(tool_name)
+
+
+def consume_one_shot_approvals(run_id: int) -> list[str]:
+    return list(_one_shot_approvals.pop(run_id, []))
+
+
 # Pi RPC 事件类型 → 业务映射
 _KEY_EVENTS = frozenset({
     "agent_start", "agent_end", "turn_start", "turn_end",
@@ -58,6 +97,32 @@ class PiAgentBridge:
         self._run_repo: AgentRunRepository | None = None
         self._approval_repo: AgentApprovalRepository | None = None
         self._db: AsyncSession | None = None
+        self._run_token: str | None = None
+        self._approval_event: asyncio.Event | None = None
+        self._pending_approved_tools: list[str] = []
+
+    @staticmethod
+    def _build_extension_env(
+        *,
+        base_env: dict,
+        allowed_tools: list[str],
+        scope_json: str,
+        user_id: int,
+        run_id: int,
+        run_token: str,
+        api_base: str,
+        one_shot_approved: list[str] | None = None,
+    ) -> dict:
+        """构造传给 Pi Extension 的环境变量（工具白名单/授权范围/RAG 凭证）。"""
+        env = dict(base_env)
+        env["AGENT_ALLOWED_TOOLS"] = ",".join(allowed_tools) if allowed_tools else ""
+        env["AGENT_SCOPE_JSON"] = scope_json
+        env["AGENT_USER_ID"] = str(user_id)
+        env["AGENT_RUN_ID"] = str(run_id)
+        env["AGENT_RUN_TOKEN"] = run_token
+        env["AGENT_API_BASE"] = api_base
+        env["AGENT_ONE_SHOT_APPROVED"] = ",".join(one_shot_approved or [])
+        return env
 
     def _resolve_extension_path(self, configured_path: str | None) -> str:
         """解析 Extension 路径。
@@ -124,13 +189,55 @@ class PiAgentBridge:
         if system_prompt:
             args.extend(["--system-prompt", system_prompt])
 
-        # 如果 profile.allowed_tools_json 限制工具
-        allowed_tools = []
+        # 解析 profile 工具白名单 + 授权范围，注入 Extension 环境变量
+        allowed_tools: list[str] = []
         if profile.allowed_tools_json:
             try:
-                allowed_tools = json.loads(profile.allowed_tools_json)
+                parsed = json.loads(profile.allowed_tools_json)
+                if isinstance(parsed, list):
+                    allowed_tools = [str(t) for t in parsed]
             except (json.JSONDecodeError, TypeError):
                 pass
+
+        from app.repositories.agent_repository import AgentAuthorizationRepository
+        auth_repo = AgentAuthorizationRepository(db)
+        auths = await auth_repo.list_by_agent(profile.id)
+        scope_payload = {
+            "default_scope_type": profile.default_scope_type or "personal",
+            "authorizations": [],
+        }
+        for a in auths:
+            perms: list = []
+            if a.permissions_json:
+                try:
+                    parsed_perms = json.loads(a.permissions_json)
+                    if isinstance(parsed_perms, list):
+                        perms = parsed_perms
+                except (json.JSONDecodeError, TypeError):
+                    perms = []
+            scope_payload["authorizations"].append({
+                "scope_type": a.scope_type,
+                "scope_id": a.scope_id,
+                "permissions": perms,
+            })
+        import secrets
+        self._run_token = secrets.token_urlsafe(24)
+        api_base = os.environ.get(
+            "AGENT_API_BASE",
+            f"http://127.0.0.1:{os.environ.get('SERVER_PORT', '17957')}",
+        )
+        one_shot = consume_one_shot_approvals(run.id)
+        env = self._build_extension_env(
+            base_env=env,
+            allowed_tools=allowed_tools,
+            scope_json=json.dumps(scope_payload, ensure_ascii=False),
+            user_id=run.user_id,
+            run_id=run.id,
+            run_token=self._run_token,
+            api_base=api_base,
+            one_shot_approved=one_shot,
+        )
+        set_run_token(run.id, self._run_token)
         # 不用 --no-tools，让 Pi 默认加载内置工具，Extension 负责限制
 
         try:
@@ -139,17 +246,37 @@ class PiAgentBridge:
                 stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
             )
             self._start_time = time.monotonic()
-            logger.info("[PiAgentBridge] PID=%d, provider=%s, model=%s, ext=%s",
-                        self._proc.pid, provider, model, ext_path)
+            register_active_bridge(run.id, self)
+            logger.info("[PiAgentBridge] PID=%d, provider=%s, model=%s, ext=%s, allowed_tools=%s",
+                        self._proc.pid, provider, model, ext_path, allowed_tools)
             # 等待进程稳定
             await asyncio.sleep(3)
             if not self.is_alive:
                 stderr = self._read_stderr()
                 logger.error("[PiAgentBridge] 进程启动失败: %s", stderr[:500])
+                unregister_active_bridge(run.id)
                 return False
             return True
         except Exception as e:
             logger.exception("[PiAgentBridge] 启动异常")
+            unregister_active_bridge(run.id)
+            return False
+
+    def resume_after_approval(self, tool_name: str) -> bool:
+        """审批通过后通知活动子进程继续（followUp），并记录一次性放行。"""
+        self._pending_approved_tools.append(tool_name)
+        if self._approval_event is not None:
+            self._approval_event.set()
+        if not self.is_alive:
+            return False
+        try:
+            self.send_command(
+                "followUp",
+                message=f"[approval] 工具 {tool_name} 已批准，请继续完成目标。",
+            )
+            return True
+        except Exception:
+            logger.exception("[PiAgentBridge] followUp after approval failed")
             return False
 
     def stop(self):
@@ -327,7 +454,9 @@ class PiAgentBridge:
 
     async def cleanup(self):
         """清理：停止子进程，确保 run 状态最终化。"""
+        if self._run is not None:
+            unregister_active_bridge(self._run.id)
         self.stop()
-        if self._run and self._run.status in ("planning", "running"):
+        if self._run and self._run_repo and self._run.status in ("planning", "running"):
             await self._run_repo.update_status(self._run, "failed",
                                                 error_message="Pi subprocess terminated unexpectedly")

@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.4。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.5。
 
 ### 架构设计
 
@@ -63,13 +63,14 @@ flowchart LR
 ### 功能要点
 
 - 项目化评审：按项目管理需求文档、上下文版本、评审任务和报告输出。
-- 协作审查（P4）：审查通过后进入"讲解准备→产物确认→协作审查"三阶段流程；ReviewRequest/Round/Participant 模型支持多轮审批与参与者管理；讲解准备模式自动注入审查结果和知识上下文；Artifact 产物支持 draft→confirmed 冻结生命周期；通知系统实时推送审批/评论/提及事件（SSE + 铃铛 Inbox）；评论组件支持回复和 @mention。
-- 团队空间与资料库：支持团队共享资料上传、列表、详情、下载和软删除；项目可引用团队资料并自动冻结版本快照；四级角色权限（owner/admin/member/viewer）控制资料管理、上传和查看；停用成员自动阻断项目访问和资料引用；统一权限入口（require_action + is_active_member）覆盖全部 workspace 和 review 域操作。
+- 协作审查（P4）：审查通过后进入"讲解准备→产物确认→协作审查"三阶段流程；ReviewRequest/Round/Participant 模型支持多轮审批与参与者管理；讲解准备模式自动注入审查结果和知识上下文；Artifact 产物支持 draft→confirmed 冻结生命周期；对象级权限校验覆盖产物/快照/评论，阻断跨用户越权读写；通知系统实时推送审批/评论/提及事件（SSE + 铃铛 Inbox）；评论组件支持回复和 @mention。
+- 团队空间与资料库：支持团队共享资料上传、列表、详情、下载和软删除；项目可引用团队资料并自动冻结版本快照；后台 Embedding Worker 异步向量化入库，个人资料检索支持向量命中与 FTS 降级；四级角色权限（owner/admin/member/viewer）控制资料管理、上传和查看；停用成员自动阻断项目访问和资料引用；统一权限入口（require_action + is_active_member）覆盖全部 workspace 和 review 域操作。
 - OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
-- Agent 对话与工具注册：支持通过 Pi Agent（方案A：RPC 子进程桥接）进行自主工具调用对话；AgentProfile/AgentRun 管理身份与运行记录；ToolRegistry schema 声明可用工具；高风险工具调用触发人工审批流程；MCP 适配器支持外部工具服务连接；前端提供 Agent 模式开关和审批面板。
+- Agent 对话与工具注册：支持通过 Pi Agent（方案A：RPC 子进程桥接）进行自主工具调用对话；AgentProfile/AgentRun 管理身份与运行记录；工具白名单与授权范围注入 Extension 强制执行；高风险工具调用触发人工审批并可恢复被拦截调用；RAG 检索走真实 RetrievalService（无 mock）；MCP 全局配置限管理员、workspace 级需 manage 权限；前端提供 Agent 模式开关和审批面板。
 - 个人知识与个人 Agent（P5）：个人私有知识作用域，支持"团队资料/我的资料"子视图切换；个人 Agent 默认行为配置（默认范围、名称、状态）；Agent 间对话通知；消息中心完善（批量已读/归档）；评论 @提及和 resolve 功能。
 - 治理与运营（P6）：成本统计服务（从 JSONL 日志聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget 模型 + 读写 API + BudgetGuard 硬限制拦截，超额阻断对话）。
 - 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。版本号通过 `app_version` 字段配置。
+- 安全启动与密钥治理：`JWT_SECRET` 必填且拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；生命周期结束时释放 SQLAlchemy engine。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
 - 实时任务体验：评审流程支持流式进度反馈，适合长流程 AI 审查任务。
@@ -103,23 +104,25 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# 编辑 .env：填入 LLM API Key；JWT_SECRET 必填（至少 32 字符随机串，可用
+# python3 -c "import secrets; print(secrets.token_hex(32))" 生成）
 ./start.sh
 ```
 
-默认端口为 17957。
+默认端口为 17957。未设置安全 `JWT_SECRET` 时服务会拒绝启动。
 
 ### 目录说明
 
 ```text
 src/main.py                 FastAPI 入口与静态站点挂载
 src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance）
-src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService、CostStatsService、QualityStatsService、BudgetGuard
+src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService、CostStatsService、QualityStatsService、BudgetGuard、EmbeddingWorker、对象级权限（object_access）、JWT 密钥校验
 src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact）
 src/app/storage/            文档与运行时文件存储归口（ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage）
 src/app/log_writers/        审计、前端、LLM 会话日志
 src/static/                 前端 SPA（含 workspace.js 资料库、notification.js 通知模块）
 skills/                     需求评审技能链
-src/agent/extensions/       Agent 安全 Extension（工具调用拦截与审批）
+src/agent/extensions/       Agent 安全 Extension（工具白名单、范围约束、审批拦截）
 package.json                Pi Agent npm 依赖声明（pi-coding-agent）
 start.sh                    服务启停脚本（start|stop|restart|status）
 update.sh                   目标服务器版本更新脚本（校验/备份/回滚）
@@ -160,7 +163,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.4.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.5.
 
 ### Architecture
 
@@ -213,13 +216,14 @@ Supported review modes:
 ### Feature Highlights
 
 - Project-centric review management for documents, context versions, tasks, and reports.
-- Collaborative review (P4): post-approval workflow covers "presentation preparation → artifact confirmation → collaborative review"; ReviewRequest/Round/Participant models support multi-round approval and participant management; presentation mode auto-injects review results and knowledge context; Artifact lifecycle with draft→confirmed freeze; real-time notification system (SSE + bell Inbox) for approval/comment/mention events; comment component with replies and @mention support.
-- Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access; inactive members automatically blocked from project access and source referencing; unified permission entry point (require_action + is_active_member) covering all workspace and review-domain operations.
+- Collaborative review (P4): post-approval workflow covers "presentation preparation → artifact confirmation → collaborative review"; ReviewRequest/Round/Participant models support multi-round approval and participant management; presentation mode auto-injects review results and knowledge context; Artifact lifecycle with draft→confirmed freeze; object-level access checks on artifacts/snapshots/comments to block cross-user BOLA; real-time notification system (SSE + bell Inbox) for approval/comment/mention events; comment component with replies and @mention support.
+- Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; background Embedding Worker for async vectorization with personal FTS fallback; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access; inactive members automatically blocked from project access and source referencing; unified permission entry point (require_action + is_active_member) covering all workspace and review-domain operations.
 - OpenAI-compatible multi-model integration with encrypted API key storage and configurable thinking settings.
 - Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
-- Agent conversation and tool registration: autonomous tool-calling conversations via Pi Agent (Architecture A: RPC subprocess bridging); AgentProfile/AgentRun for identity and run tracking; ToolRegistry schema for available tools; high-risk tool calls trigger human approval; MCP adapter for external tool service connections; frontend Agent mode toggle and approval panel.
+- Agent conversation and tool registration: autonomous tool-calling conversations via Pi Agent (Architecture A: RPC subprocess bridging); AgentProfile/AgentRun for identity and run tracking; allowed-tools whitelist and authorization scope enforced in the Extension; high-risk tool calls trigger human approval with resume of blocked calls; RAG uses real RetrievalService (no mock); global MCP config requires admin, workspace-scoped MCP requires manage; frontend Agent mode toggle and approval panel.
 - Personal knowledge and personal Agent (P5): personal private knowledge scope with "Team / Mine" sub-view toggle; personal Agent default behavior configuration (default scope, name, status); inter-Agent conversation notifications; enhanced message center (batch read/archive); comment @mention and resolve features.
 - Governance and operations (P6): cost statistics service (aggregation from JSONL logs, daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget model + read/write API + BudgetGuard hard-limit enforcement that blocks conversations on overrun).
+- Secure startup and secret hygiene: `JWT_SECRET` is required and rejects example/short secrets; optional `ADMIN_INITIAL_PASSWORD`; SQLAlchemy engine is disposed on shutdown.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
 - Streaming progress for long-running AI review tasks.
@@ -253,23 +257,25 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
+# Edit .env: set at least one LLM API key; JWT_SECRET is required
+# (min 32 chars; e.g. python3 -c "import secrets; print(secrets.token_hex(32))")
 ./start.sh
 ```
 
-The default server port is 17957.
+The default server port is 17957. The service refuses to start without a safe `JWT_SECRET`.
 
 ### Project Map
 
 ```text
 src/main.py                 FastAPI entry point and static site mount
 src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance)
-src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService, CostStatsService, QualityStatsService, BudgetGuard
+src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService, CostStatsService, QualityStatsService, BudgetGuard, EmbeddingWorker, object_access, JWT secret checks
 src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact)
 src/app/storage/            Runtime file storage consolidation (ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage)
 src/app/log_writers/        Audit, frontend, and LLM session logs
 src/static/                 Frontend SPA (incl. workspace.js knowledge library, notification.js notification module)
 skills/                     Review skill chain
-src/agent/extensions/       Agent security Extension (tool call interception and approval)
+src/agent/extensions/       Agent security Extension (tool whitelist, scope enforcement, approval gating)
 package.json                Pi Agent npm dependency (pi-coding-agent)
 start.sh                    Service control script (start|stop|restart|status)
 update.sh                   Target-server update script (validate/backup/rollback)

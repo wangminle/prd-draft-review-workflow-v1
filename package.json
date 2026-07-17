@@ -1,6 +1,6 @@
 {
   "name": "ai-review-workflow",
-  "version": "0.3.4",
+  "version": "0.3.5",
   "private": true,
   "description": "AI产品需求初审平台 — Pi Agent 集成 (方案A: pi-coding-agent CLI --mode rpc)",
   "dependencies": {

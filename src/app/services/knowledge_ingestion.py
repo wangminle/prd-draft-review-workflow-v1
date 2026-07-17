@@ -290,3 +290,64 @@ class KnowledgeIngestionService:
             }
             for row in rows
         ]
+
+    async def search_fts_personal(
+        self,
+        query: str,
+        user_id: int,
+        limit: int = 10,
+    ) -> list[dict]:
+        """个人资料 FTS5 降级：先按关键词召回，再过滤 owner_id=user 且 private/user 资料。"""
+        sanitized = _sanitize_fts5_query(query)
+        if len(sanitized) < _FTS_TRIGRAM_MIN_LENGTH:
+            return []
+
+        await self._db.execute(text("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_chunks_fts
+            USING fts5(text, section, source_ref, chunk_id UNINDEXED, source_id UNINDEXED, workspace_id UNINDEXED, tokenize='trigram')
+        """))
+
+        # 不强制 workspace_id：个人资料可能挂在某 workspace 或 workspace_id=NULL
+        result = await self._db.execute(text("""
+            SELECT
+                chunk_id,
+                text,
+                section,
+                source_ref,
+                rank,
+                source_id
+            FROM knowledge_chunks_fts
+            WHERE text MATCH :query
+            ORDER BY rank
+            LIMIT :limit
+        """), {"query": sanitized, "limit": max(limit * 5, 20)})
+
+        rows = result.fetchall()
+        if not rows:
+            return []
+
+        source_ids = list({row[5] for row in rows})
+        owned = await self._db.execute(
+            select(KnowledgeSource.id).where(
+                KnowledgeSource.id.in_(source_ids),
+                KnowledgeSource.owner_id == user_id,
+                or_(
+                    KnowledgeSource.owner_type == "user",
+                    KnowledgeSource.visibility == "private",
+                ),
+            )
+        )
+        allowed = {row[0] for row in owned.fetchall()}
+        rows = [row for row in rows if row[5] in allowed][:limit]
+
+        return [
+            {
+                "id": row[0],
+                "text": row[1],
+                "section": row[2],
+                "source_ref": row[3],
+                "rank": row[4],
+                "source_id": row[5],
+            }
+            for row in rows
+        ]

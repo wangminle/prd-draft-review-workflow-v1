@@ -16,6 +16,7 @@ from app.models.user import User
 from app.repositories.notification_repository import NotificationRepository, CommentRepository
 from app.services.notification_service import get_notification_channel, clear_channel
 from app.services.auth import consume_sse_ticket
+from app.services.object_access import assert_object_access
 
 router = APIRouter()
 
@@ -219,6 +220,8 @@ async def create_comment(
     if req.object_type not in ("review_request", "review_round", "artifact", "knowledge_source"):
         raise HTTPException(422, "无效的 object_type")
 
+    await assert_object_access(db, req.object_type, req.object_id, user.id)
+
     repo = CommentRepository(db)
     comment = await repo.create(
         object_type=req.object_type,
@@ -277,6 +280,7 @@ async def list_comments(
     db: AsyncSession = Depends(get_db),
 ):
     """P4.D.6: 列出指定对象的评论。"""
+    await assert_object_access(db, object_type, object_id, user.id)
     repo = CommentRepository(db)
     comments = await repo.list_by_object(object_type, object_id)
     return [_serialize_comment(c) for c in comments]
@@ -312,6 +316,8 @@ async def resolve_comment(
     comment = await repo.get_by_id(comment_id)
     if not comment:
         raise HTTPException(404, "评论不存在")
+
+    await assert_object_access(db, comment.object_type, comment.object_id, user.id)
 
     resolution = body.get("resolution", "resolved")
     if resolution not in ("resolved", "forced_pass"):

@@ -18,7 +18,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from app.models.user import Base
 from app.utils import now_cn
 
-VALID_EMBEDDING_STATUSES = ("pending", "done", "failed")
+VALID_EMBEDDING_STATUSES = ("pending", "processing", "done", "failed")
 VALID_ANSWER_OBJECT_TYPES = ("retrieval", "chat", "review")
 VALID_ANSWER_RATINGS = ("helpful", "unhelpful")
 

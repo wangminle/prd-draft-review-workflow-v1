@@ -12,7 +12,7 @@ os.environ.setdefault("CONFIG_PATH", str(SRC / "config.yaml"))
 # Ensure JWT_SECRET is set before any app module loads config —
 # config.yaml uses ${JWT_SECRET} which resolves to "" if unset,
 # but we need a stable non-empty secret for API key encryption/decryption.
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests")
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests-32chars!!")
 
 import pytest
 import pytest_asyncio
@@ -75,7 +75,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.3.4"}
+        return {"status": "ok", "version": "0.3.5"}
 
     return app, engine, TestSessionLocal
 
@@ -120,7 +120,7 @@ async def init_test_db(engine, session_maker):
         from app.services.crypto import encrypt_key
 
         settings = get_settings()
-        jwt_secret = settings.get("auth", {}).get("secret_key", "test-jwt-secret-for-tests")
+        jwt_secret = settings.get("auth", {}).get("secret_key", "test-jwt-secret-for-tests-32chars!!")
 
         result = await session.execute(select(ModelConfig))
         existing = {mc.model_id for mc in result.scalars().all()}

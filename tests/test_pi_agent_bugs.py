@@ -15,7 +15,7 @@ SRC = ROOT / "src"
 sys.path.insert(0, str(SRC))
 
 os.environ.setdefault("CONFIG_PATH", str(SRC / "config.yaml"))
-os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests")
+os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests-32chars!!")
 
 import pytest
 import pytest_asyncio

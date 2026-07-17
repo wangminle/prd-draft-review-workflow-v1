@@ -124,6 +124,13 @@
 | BUG-109 | 修复 | `budget_guard.get_monthly_token_usage` 把 `workspace_id IS NULL` 的全局汇总行计入每个 workspace，导致 `current_month_tokens` 偏大、`ensure_workspace_llm_allowed` 在 block 模式下误封未超限 workspace | 2026-07-07 18:00 | 2026-07-07 18:15 | 已修复 | `get_monthly_token_usage` 去掉 `OR workspace_id IS NULL` 分支，只统计该 workspace 专属行；新增 `tests/test_bugfix_108_110.py`（含无专属行返回 0、不含 NULL 全局行）；全量 pytest 1087 passed |
 | BUG-110 | 修复 | `KnowledgeFileStorage.read_file/delete_file` 在上传目录不存在时直接 `iterdir()` 抛 `FileNotFoundError`，下载路径退化成 500 而非 404 | 2026-07-07 18:00 | 2026-07-07 18:15 | 已修复 | `read_file/delete_file` 加 `root.exists()` 保护，缺失时返回 `None/False`（与调用方 None→404 契约一致）；新增 `tests/test_bugfix_108_110.py`（含目录存在正常路径回归）；全量 pytest 1087 passed |
 | BUG-111 | 修复 | LWA 别名/子路径下 `index.html` 用根绝对路径引用 CSS/JS/vendor/favicon，浏览器打到网关根导致静态资源 404（IMP-023 应用侧根治） | 2026-07-09 16:30 | 2026-07-09 16:35 | 已修复 | `src/static/index.html` 全部改为 `./css/...`、`./js/...`、`./vendor/...`、`./favicon.svg`；新增 `tests/test_bugfix_111_relative_static_assets.py`；同步 markdown/chat/web-guidelines 契约断言；定向 165 passed，全量 `pytest -q` 1089 passed。部署侧需将更新后源码导入 LWA 后执行 `lwa rebuild prd-workflow` |
+| BUG-112 | 修复 | P0 对象级权限缺失：Artifact、KnowledgeSnapshot、Comment 接口只校验登录态，未校验当前用户对 conversation/review request/project/workspace 的访问权；任意登录用户可按 ID 读取或改写他人产物、读写快照、读取/创建/解决他人评论 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | 新增 `object_access.py`；`artifact.py`/`notification.py` 全端点接入对象归属校验；新增 `tests/test_bugfix_112_118.py` BOLA 回归；全量 1103 passed |
+| BUG-113 | 修复 | P0 Agent 安全约束未进入执行链：`allowed_tools_json` 被读取但未传给 Pi 或 Extension，`AgentAuthorization`/`default_scope_type` 仅用于 CRUD/UI，低风险工具默认放行；高风险工具“批准”仅更新数据库状态，不能恢复被拦截调用 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | Bridge 注入 `AGENT_ALLOWED_TOOLS`/`AGENT_SCOPE_JSON`/`AGENT_ONE_SHOT_APPROVED`；Extension 强制白名单；活动 bridge 注册表 + `decide_approval` followUp/一次性放行恢复；全量 1103 passed |
+| BUG-114 | 修复 | P1 Agent RAG 工具仍返回硬编码模拟结果，可能把不存在的“需求评审流程规范/PRD写作规范”作为真实检索结果提供给用户 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | Extension `rag_search` 改调 `POST /api/agent/runs/{id}/rag`（run token + RetrievalService）；失败返回显式 error，移除 mock；全量 1103 passed |
+| BUG-115 | 修复 | P1 知识库异步 embedding 管线未实现：上传/重入库只创建 pending chunks 和 FTS，仓库没有任务消费者调用 `EmbeddingService.embed_batch()` + `KnowledgeVectorService.upsert()` 并更新 done/failed；个人检索又显式禁用 FTS 降级，导致个人资料检索在当前链路恒为空 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | 新增 `embedding_worker.py` 并在 lifespan 启动；`search_fts_personal` + personal FTS 降级；全量 1103 passed |
+| BUG-116 | 修复 | P1 默认部署密钥校验失配：`.env.example` 提供公开固定 JWT secret，但启动校验只拒绝另一个字符串；照 README 执行 `cp .env.example .env` 后服务可直接启动，攻击者可用已知 secret 伪造任意用户/管理员 Token | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | 新增 `jwt_secret.assert_jwt_secret_safe`（拒绝示例/过短密钥）；`.env.example` 留空 JWT_SECRET；支持 `ADMIN_INITIAL_PASSWORD`；全量 1103 passed |
+| BUG-117 | 修复 | P1 MCP 全局配置接口缺少管理员和 workspace 权限：任意普通用户可列出全部 Server/Policy，并创建任意 stdio endpoint 或修改任意 server 的工具策略 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | 全局 MCP 需 admin；workspace 级需 manage；list 按可见范围过滤；全量 1103 passed |
+| BUG-118 | 修复 | P2 应用生命周期未释放全局 SQLAlchemy engine；完整测试虽 1090 passed，但解释器退出时出现 4 个 `_connection_worker_thread` 异常，生产优雅停机也没有 `engine.dispose()` | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | lifespan finally 停止 embedding worker 并 `await engine.dispose()`；新增 lifespan 回归测试；全量 1103 passed |
 
 ## 调整事项
 
@@ -236,6 +243,7 @@
 | CHK-080 | 检查 | 全量回归测试 + Windows 平台适配审查（BUG-084~091 未提交改动复核） | 2026-06-28 09:00 | 2026-06-28 09:25 | 已完成 | 全量 pytest 从 34 failed/158 errors 修复至 **1067 passed, 0 failed, 0 errors**；发现并修复 BUG-092（BUG-084 回归：approver_ids 校验顺序）、BUG-093（admin.js .slice 残留）、BUG-094（branding_config 跨平台绝对路径）、BUG-095（缺失 example.yaml）、BUG-096（migrate_branding 路径分隔符）、BUG-097（Windows teardown 文件锁定）；BUG-098（governance with_for_update SQLite 无效）记录为待观察低风险项 |
 | CHK-081 | 检查 | 提交 289af60（BUG-099~105）残留缺陷复查 | 2026-07-07 17:20 | 2026-07-07 17:20 | 已完成 | 定向执行 `pytest -q tests/test_bugfix_099_104.py tests/test_review_request.py`，14 passed；静态复查 + 临时内存库脚本复现 2 个残留问题：BUG-106（savepoint 回滚后仍推送幽灵 SSE 通知）与 BUG-107（历史重复 `ReviewParticipant` 记录升级后仍重复展示）；同时排除 `allowed_roles_json=NULL` 的误报，当前行为仍为 allow-all |
 | CHK-082 | 检查 | BUG-106/107 修复实现复审 + 新增 BUG-108/109/110 复审与修复 | 2026-07-07 17:30 | 2026-07-07 18:20 | 已完成 | 独立读码确认 CHK-081 报告的 BUG-106（幽灵 SSE：通知 push 早于 savepoint 提交）/ BUG-107（历史重复参与者存量去重）成立并已修复（`defer_push` outbox 缓冲 + 读写双向去重）；复审又新发现并修复 3 项：BUG-108（`/workspace/{id}/sources` 透传 `owner_type=user` 越权枚举他人私有资料 → 路由拒绝）、BUG-109（`get_monthly_token_usage` 含 `workspace_id IS NULL` 全局行导致 per-workspace token 虚高与误封 → 去掉 OR NULL 分支）、BUG-110（`KnowledgeFileStorage` 目录缺失 `iterdir` 抛 500 → 加 `exists()` 保护）；新增 `tests/test_bugfix_106_107.py`（6 项）+ `tests/test_bugfix_108_110.py`（7 项）；再次排除 `allowed_roles_json=NULL` 误报；全量 pytest 1087 passed |
+| CHK-083 | 检查 | V0.3.4 当前仓库全量 Bug 与功能缺失审查 | 2026-07-17 13:05 | 2026-07-17 13:05 | 已完成 | 盘点需求/WBS、后端路由、权限、Agent、知识检索、前端契约与部署配置；全量 pytest 1090 passed，Python compileall、全部前端 JS `node --check`、三份 shell `bash -n` 通过；动态复现跨用户 Artifact 读取/篡改与 personal retrieval 恒空；确认 BUG-112~118 共 7 项未修复问题，其中 P0 2 项、P1 4 项、P2 1 项 |
 
 ## 测试数据
 
@@ -303,6 +311,7 @@
 | DOC-054 | 文档 | README 与「打包与部署指南」同步 package.sh 默认 zip 的变更（配合 OPS-004） | 2026-07-07 16:40 | 2026-07-07 16:47 | 已完成 | README.md 中英文「打包与部署 / Packaging and Deployment」代码块更新为默认 zip + `--format tar.gz` 备选；部署指南：流程图改为 zip（默认）/tar.gz 双分支、3.1 用法补充 --format 选项与默认 zip 说明、3.4 自检清单新增 macOS AppleDouble（._*）拦截项、4.2 首次部署解压命令由 tar -xzf 改为 unzip（保留 tar.gz 备选） |
 | DOC-055 | 文档 | V0.3.3 版本号全量同步（顺带修正 V0.3.2 提交漏 bump 版本号的历史遗漏） | 2026-07-07 18:30 | 2026-07-07 18:30 | 已完成 | 发现提交 289af60 标记为 V0.3.2-Build0598 但版本号字串从未实际 bump（`git log -S 'version="0.3.2"'` 证实从未出现在 main.py），故本次直接 0.3.1→0.3.3；全代码/配置/文档 10 个文件 18 处同步：main.py(2: FastAPI version + /api/health)、branding_config.py(DEFAULT_BRANDING.app_version)、mcp_adapter.py(MCP clientInfo.version)、index.html(4: topbar Ver. 标注)、conftest.py(测试健康检查 mock)、update.sh(NEW_VERSION 硬编码 fallback——若不同步会在 line 448 误判"已是该版本"跳过部署)、package.json、ui-branding.example.yaml、README.md(中英 2 处)、打包与部署指南(5 处：适用版本/解压命令/健康检查返回/update.sh 示例)；package-lock.json 虽含 0.3.1 但已 git-ignored 且不入包、由 package.json 在 npm install 时自动重生成，故不手改；docs/3-design 下 3 篇历史设计基线文档（用户故事与E2E测试用例图-V0.3.1.md 等）的版本号+日期头是历史快照，刻意保留不动；验证：无测试硬断言版本字串值、全量 pytest 1087 passed |
 | DOC-056 | 文档 | V0.3.4 版本号全量同步 | 2026-07-09 17:07 | 2026-07-09 17:08 | 已完成 | 0.3.3→0.3.4：main.py(2)、branding_config.py、mcp_adapter.py、index.html(4)、conftest.py、update.sh(NEW_VERSION)、package.json、ui-branding.example.yaml、README.md(中英 2)、打包与部署指南(5)；docs/3-design 历史快照与 package-lock.json（git-ignored）不改；定向 166 passed，全量 `pytest -q` 1090 passed |
+| DOC-057 | 文档 | V0.3.5 版本号全量同步 + README/部署指南对齐 BUG-112~118 | 2026-07-17 15:52 | 2026-07-17 15:52 | 已完成 | 0.3.4→0.3.5：main.py(2)、branding_config.py、mcp_adapter.py、index.html(4)、conftest.py、update.sh(NEW_VERSION)、package.json、ui-branding.example.yaml、README.md（版本+能力+快速启动 JWT 必填）、打包与部署指南（版本/解压/健康检查/update 示例 + JWT 校验说明）；skills/* 无应用版本号无需改；docs/3-design 历史快照与 package-lock.json 不改；定向 branding+runtime_config+bugfix_112_118 共 105 passed，全量 `pytest -q` 1103 passed |
 
 ## 功能开发
 
@@ -400,6 +409,7 @@
 | OPS-003 | 运维 | 按部署交付需求生成 zip 格式分发包（与 package.sh 同清单），输出到项目上级目录 | 2026-07-07 16:22 | 2026-07-07 16:22 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.1-build202607071622.zip`（4.6M/321 文件，含最新 README 与「打包与部署指南」），位于项目上级目录（项目外，不入库）；成员清单与 package.sh 一致（src/tools/tests/docs/skills + 根脚本 + 配置模板），排除 node_modules/.git/.env(密钥)/__pycache__/*.pyc/runtime 业务数据/POC/eval；直接 `unzip -l \| grep` 逐项验证：main.py/start.sh/update.sh/requirements.txt/package.json/.env.example/ui-branding.example.yaml 均在，危险项（node_modules/.git/__pycache__/*.pyc/runtime:data·uploads/裸 .env/真实 ui-branding.yaml）全为 0 |
 | OPS-004 | 优化 | package.sh 增强：默认输出 zip 格式、新增 --format 选项；zip 改用 Python zipfile 打包以设置 UTF-8 文件名标志位；tar.gz 加 COPYFILE_DISABLE=1 消除 macOS AppleDouble 垃圾文件 | 2026-07-07 16:30 | 2026-07-07 16:47 | 已完成 | 默认格式由 tar.gz 改为 zip（`--format tar.gz`/`both` 可选）；zip 打包从 Info-ZIP CLI 改为 Python zipfile——macOS Info-ZIP 不支持 -UN=u、无法设 UTF-8 标志，导致 zipinfo 显示乱码且 Windows 解压中文乱码，Python zipfile 自动设 bit 11 UTF-8 标志实现跨平台正确；发现并修复 tar.gz 含 ._ AppleDouble 垃圾文件的老问题（bsdtar 默认行为，加 `COPYFILE_DISABLE=1` + `--exclude='._*'`，自检新增 `._` 拦截）；三种模式实跑通过自检，Python 校验：zip 与 tar.gz 文件清单 265=265 完全一致、29 个非 ASCII 条目全部设 UTF-8 标志、无 ._ 文件；已用新脚本重新生成正式 zip 到项目上级目录并删除旧的 build202607071622.zip（旧 Info-ZIP 版无 UTF-8 标志） |
 | OPS-005 | 运维 | 按 V0.3.3 版本生成 zip 分发包到项目上级目录（配合 DOC-055 版本号同步） | 2026-07-07 20:12 | 2026-07-07 20:12 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.3-build202607072012.zip`（267 文件/4.6M，位于项目上级目录、不入库）；package.sh 默认 zip 输出 + 内置自检通过；独立 Python zipfile 交叉验证：关键文件（main.py/start.sh/update.sh/requirements.txt/package.json/.env.example/ui-branding.example.yaml + 新增 test_bugfix_106_107.py/test_bugfix_108_110.py + BUG-106~110 涉及 8 个源文件）均在包内，包内 main.py 版本号=0.3.3；危险项全 0（node_modules/.git/__pycache__/*.pyc/裸 .env/runtime 业务数据/真实 ui-branding.yaml/AppleDouble ._）；29 个非 ASCII 条目全部设 UTF-8 标志位(bit 11)、中文部署指南文件名可读；文件数 267 = 上版 265 + 2 新测试；package.sh 本身不入包属设计（目标服务器只需 update.sh 更新、不需打包能力，与 copy_versioned_files 清单一致）；上级目录旧 v0.3.1 包(build202607071647)保留未删 |
+| OPS-006 | 运维 | 按 V0.3.4 版本生成 zip 分发包到项目上级目录（配合 DOC-056 版本号同步） | 2026-07-09 17:18 | 2026-07-09 17:18 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.4-build202607091718.zip`（268 文件/4.6M，位于项目上级目录、不入库）；package.sh 自检通过；交叉验证：关键文件齐全、包内 main.py 版本=0.3.4、危险项 0、29 个非 ASCII 条目均设 UTF-8 标志；文件数 268 = 上版 267 + 1（test_bugfix_111_relative_static_assets.py） |
 
 ## 规划事项
 
@@ -415,14 +425,14 @@
 
 | 分类 | 总数 | 已完成 | 待开发/待修复 | 完成率 |
 | --- | --- | --- | --- | --- |
-| 代码 Bug | 110 | 110 | 0 | 100% |
-| 调整事项 | 18 | 18 | 0 | 100% |
-| 检查事项 | 82 | 82 | 0 | 100% |
+| 代码 Bug | 118 | 118 | 0 | 100% |
+| 调整事项 | 20 | 20 | 0 | 100% |
+| 检查事项 | 83 | 83 | 0 | 100% |
 | 测试数据 | 1 | 1 | 0 | 100% |
-| 文档维护 | 55 | 55 | 0 | 100% |
+| 文档维护 | 57 | 57 | 0 | 100% |
 | 功能开发 | 75 | 75 | 0 | 100% |
 | 调研事项 | 2 | 2 | 0 | 100% |
-| 配置运维 | 5 | 5 | 0 | 100% |
+| 配置运维 | 6 | 6 | 0 | 100% |
 | 规划事项 | 0 | 0 | 0 | 0% |
 | 优化事项 | 0 | 0 | 0 | 0% |
-| **总计** | 348 | 348 | 0 | 100% |
+| **总计** | 362 | 362 | 0 | 100% |

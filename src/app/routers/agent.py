@@ -4,7 +4,7 @@ import json
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,6 +62,13 @@ class MCPToolPolicyCreate(BaseModel):
     allowed_roles: Optional[list[str]] = None
     requires_approval: bool = False
     risk_level: str = "low"
+
+
+class AgentRagRequest(BaseModel):
+    query: str
+    workspace_id: Optional[int] = None
+    scope: str = "workspace"  # workspace | personal
+    top_k: int = 5
 
 
 # ─── Helpers ──────────────────────────────────────────────────
@@ -471,20 +478,140 @@ async def decide_approval(
         raise HTTPException(403, "只有指定的审批人可以决策")
 
     approval = await repo.decide(approval, user.id, req.decision, req.comment)
-    return _serialize_approval(approval)
+
+    # 审批通过：恢复活动 bridge 或登记一次性放行供下次执行
+    resumed = False
+    tool_name = None
+    if req.decision == "approved" and approval.action_type.startswith("tool_call:"):
+        tool_name = approval.action_type.split(":", 1)[1]
+        from app.services.pi_agent_bridge import (
+            get_active_bridge,
+            grant_one_shot_approval,
+        )
+        grant_one_shot_approval(approval.run_id, tool_name)
+        bridge = get_active_bridge(approval.run_id)
+        if bridge is not None:
+            resumed = bridge.resume_after_approval(tool_name)
+
+    result = _serialize_approval(approval)
+    result["resumed"] = resumed
+    result["tool_name"] = tool_name
+    return result
+
+
+# ─── Agent RAG (Extension 内部调用) ────────────────────────────
+
+@router.post("/runs/{run_id}/rag")
+async def agent_rag_search(
+    run_id: int,
+    req: AgentRagRequest,
+    db: AsyncSession = Depends(get_db),
+    x_agent_run_token: str | None = Header(default=None, alias="X-Agent-Run-Token"),
+):
+    """供 Pi Extension rag_search 调用的内部检索端点（run token 鉴权）。"""
+    from app.services.pi_agent_bridge import get_run_token
+    from app.services.retrieval_service import RetrievalService
+
+    expected = get_run_token(run_id)
+    if not expected or not x_agent_run_token or x_agent_run_token != expected:
+        raise HTTPException(401, "无效的 Agent Run Token")
+
+    run_repo = AgentRunRepository(db)
+    run = await run_repo.get_by_id(run_id)
+    if not run:
+        raise HTTPException(404, "Agent run not found")
+
+    scope = req.scope if req.scope in ("workspace", "personal") else "workspace"
+    workspace_id = req.workspace_id
+    if scope == "workspace" and workspace_id is None:
+        from app.repositories.workspace_repository import WorkspaceRepository
+        ws_repo = WorkspaceRepository(db)
+        default_ws = await ws_repo.get_default()
+        workspace_id = default_ws.id if default_ws else None
+
+    retrieval = RetrievalService(db_session=db)
+    try:
+        response = await retrieval.retrieve(
+            query=req.query,
+            workspace_id=workspace_id,
+            top_k=req.top_k,
+            user_id=run.user_id,
+            scope=scope,
+        )
+    except Exception as e:
+        logger.exception("[AGENT-RAG] retrieve failed")
+        raise HTTPException(502, f"检索失败: {e}")
+
+    return {
+        "query": response.query,
+        "results": [
+            {
+                "chunk_id": r.chunk_id,
+                "source_id": r.source_id,
+                "section": r.section,
+                "text_snippet": r.text_snippet,
+                "distance": r._distance,
+                "confidence": r.confidence,
+                "rejected": r.rejected,
+            }
+            for r in response.results
+            if not r.rejected
+        ],
+        "total": response.total,
+        "fallback_reason": response.fallback_reason,
+        "mock": False,
+    }
 
 
 # ─── MCP Config (P3.C) ──────────────────────────────────────
+
+async def _require_mcp_manage_access(
+    db: AsyncSession,
+    user: User,
+    workspace_id: int | None,
+) -> None:
+    """全局 MCP 配置需管理员；workspace 级需 owner/admin。"""
+    if workspace_id is None:
+        if user.role != "admin":
+            raise HTTPException(403, "需要管理员权限管理全局 MCP 配置")
+        return
+    from app.repositories.workspace_repository import WorkspaceRepository
+    from app.services.workspace_access import require_action
+    ws_repo = WorkspaceRepository(db)
+    member = await ws_repo.get_member(workspace_id, user.id)
+    require_action(member, "manage", "管理 MCP 配置")
+
 
 @router.get("/mcp/servers")
 async def list_mcp_servers(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from sqlalchemy import select
+    from sqlalchemy import select, or_
     from app.models.user import MCPServerConfig
-    result = await db.execute(select(MCPServerConfig).order_by(MCPServerConfig.created_at.desc()))
-    servers = result.scalars().all()
+    from app.repositories.workspace_repository import WorkspaceRepository
+
+    # 管理员可见全部；普通用户仅可见其有 manage 权限的 workspace 下的 server
+    if user.role == "admin":
+        result = await db.execute(select(MCPServerConfig).order_by(MCPServerConfig.created_at.desc()))
+        servers = result.scalars().all()
+    else:
+        ws_repo = WorkspaceRepository(db)
+        workspaces = await ws_repo.get_user_workspaces(user.id)
+        manage_ids = []
+        from app.services.workspace_access import can
+        for ws in workspaces:
+            member = await ws_repo.get_member(ws.id, user.id)
+            if can(member, "manage"):
+                manage_ids.append(ws.id)
+        if not manage_ids:
+            raise HTTPException(403, "需要管理员或 Workspace 管理权限查看 MCP 配置")
+        result = await db.execute(
+            select(MCPServerConfig)
+            .where(MCPServerConfig.workspace_id.in_(manage_ids))
+            .order_by(MCPServerConfig.created_at.desc())
+        )
+        servers = result.scalars().all()
     return [
         {
             "id": s.id, "workspace_id": s.workspace_id, "name": s.name,
@@ -501,6 +628,7 @@ async def create_mcp_server(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    await _require_mcp_manage_access(db, user, req.workspace_id)
     from app.models.user import MCPServerConfig
     server = MCPServerConfig(
         name=req.name,
@@ -525,7 +653,13 @@ async def list_mcp_policies(
     db: AsyncSession = Depends(get_db),
 ):
     from sqlalchemy import select
-    from app.models.user import MCPToolPolicy
+    from app.models.user import MCPServerConfig, MCPToolPolicy
+    result = await db.execute(select(MCPServerConfig).where(MCPServerConfig.id == server_id))
+    server = result.scalar_one_or_none()
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    await _require_mcp_manage_access(db, user, server.workspace_id)
+
     result = await db.execute(
         select(MCPToolPolicy).where(MCPToolPolicy.server_id == server_id)
     )
@@ -547,7 +681,14 @@ async def create_mcp_policy(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from app.models.user import MCPToolPolicy
+    from sqlalchemy import select
+    from app.models.user import MCPServerConfig, MCPToolPolicy
+    result = await db.execute(select(MCPServerConfig).where(MCPServerConfig.id == server_id))
+    server = result.scalar_one_or_none()
+    if not server:
+        raise HTTPException(404, "MCP server not found")
+    await _require_mcp_manage_access(db, user, server.workspace_id)
+
     policy = MCPToolPolicy(
         server_id=server_id,
         tool_name=req.tool_name,

@@ -237,16 +237,59 @@ class RetrievalService:
         """FTS5 降级回退检索。"""
         from app.services.knowledge_ingestion import KnowledgeIngestionService
 
-        # P5.A.1: personal scope 暂不支持 FTS5 降级（个人资料量级小，向量检索优先）
+        # personal scope：按 owner_id 做 FTS5 降级（向量未就绪时仍可检索本人资料）
         if scope == "personal" and not workspace_id:
-            elapsed_ms = (time.monotonic() - start_time) * 1000
-            return RetrievalResponse(
-                results=[],
-                total=0,
-                latency_ms=round(elapsed_ms, 1),
-                fallback_reason=fallback_reason,
-                query=query,
-            )
+            if user_id is None:
+                elapsed_ms = (time.monotonic() - start_time) * 1000
+                return RetrievalResponse(
+                    results=[],
+                    total=0,
+                    latency_ms=round(elapsed_ms, 1),
+                    fallback_reason=fallback_reason,
+                    query=query,
+                )
+            try:
+                if self._db_session is not None:
+                    ingestion = KnowledgeIngestionService(self._db_session)
+                    fts_results = await ingestion.search_fts_personal(
+                        query, user_id=user_id, limit=top_k,
+                    )
+                else:
+                    from app.database import async_session
+                    async with async_session() as db:
+                        ingestion = KnowledgeIngestionService(db)
+                        fts_results = await ingestion.search_fts_personal(
+                            query, user_id=user_id, limit=top_k,
+                        )
+                results: list[RetrievalResult] = []
+                for r in fts_results:
+                    results.append(RetrievalResult(
+                        chunk_id=r["id"],
+                        source_id=r["source_id"],
+                        section=r.get("section"),
+                        text_snippet=r["text"][:200] + "..." if len(r["text"]) > 200 else r["text"],
+                        _distance=0.0,
+                        confidence="medium",
+                        rejected=False,
+                    ))
+                elapsed_ms = (time.monotonic() - start_time) * 1000
+                return RetrievalResponse(
+                    results=results,
+                    total=len(results),
+                    latency_ms=round(elapsed_ms, 1),
+                    fallback_reason=fallback_reason or "personal_fts",
+                    query=query,
+                )
+            except Exception as e:
+                logger.warning(f"[RETRIEVE] personal FTS fallback failed: {e}")
+                elapsed_ms = (time.monotonic() - start_time) * 1000
+                return RetrievalResponse(
+                    results=[],
+                    total=0,
+                    latency_ms=round(elapsed_ms, 1),
+                    fallback_reason=fallback_reason,
+                    query=query,
+                )
 
         try:
             if self._db_session is not None:

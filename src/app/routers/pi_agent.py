@@ -24,9 +24,8 @@ router = APIRouter()
 def _get_jwt_secret() -> str:
     settings = get_settings()
     secret = settings.get("auth", {}).get("secret_key")
-    if not secret or secret == "change-me-in-production":
-        raise RuntimeError("JWT secret 未配置或使用默认值，请设置 .env 中的 JWT_SECRET")
-    return secret
+    from app.services.jwt_secret import assert_jwt_secret_safe
+    return assert_jwt_secret_safe(secret)
 
 
 def _require_admin(user: User):

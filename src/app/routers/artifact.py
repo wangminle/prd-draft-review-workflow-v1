@@ -15,6 +15,11 @@ from app.repositories.artifact_repository import (
     ArtifactRepository,
     KnowledgeSnapshotRepository,
 )
+from app.services.object_access import (
+    assert_artifact_access,
+    assert_object_access,
+    assert_project_access,
+)
 
 router = APIRouter()
 
@@ -91,6 +96,10 @@ async def create_artifact(
     if req.object_type not in ("review_request", "conversation"):
         raise HTTPException(422, "object_type must be review_request or conversation")
 
+    await assert_object_access(db, req.object_type, req.object_id, user.id)
+    if req.source_conversation_id is not None:
+        await assert_object_access(db, "conversation", req.source_conversation_id, user.id)
+
     repo = ArtifactRepository(db)
     artifact = await repo.create(
         object_type=req.object_type,
@@ -115,8 +124,10 @@ async def list_artifacts(
     """列出产物。"""
     repo = ArtifactRepository(db)
     if conversation_id:
+        await assert_object_access(db, "conversation", conversation_id, user.id)
         artifacts = await repo.list_by_conversation(conversation_id)
     elif object_type and object_id:
+        await assert_object_access(db, object_type, object_id, user.id)
         artifacts = await repo.list_by_object(object_type, object_id)
     else:
         return []
@@ -134,6 +145,7 @@ async def get_artifact(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
+    await assert_artifact_access(db, artifact, user.id)
     return _serialize_artifact(artifact)
 
 
@@ -149,6 +161,7 @@ async def update_artifact_content(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
+    await assert_artifact_access(db, artifact, user.id)
     try:
         await repo.update_content(artifact, req.content_json)
     except ValueError as e:
@@ -168,6 +181,7 @@ async def confirm_artifact(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
+    await assert_artifact_access(db, artifact, user.id)
     try:
         await repo.confirm(artifact)
     except ValueError as e:
@@ -205,6 +219,7 @@ async def unconfirm_artifact(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
+    await assert_artifact_access(db, artifact, user.id)
     try:
         await repo.unconfirm(artifact)
     except ValueError as e:
@@ -222,6 +237,7 @@ async def create_snapshot(
     db: AsyncSession = Depends(get_db),
 ):
     """P4.B.1: 创建知识快照。"""
+    await assert_project_access(db, req.project_id, user.id, action="write")
     repo = KnowledgeSnapshotRepository(db)
     snapshot = await repo.create(
         workspace_id=req.workspace_id,
@@ -247,9 +263,11 @@ async def list_snapshots(
     """列出知识快照。"""
     repo = KnowledgeSnapshotRepository(db)
     if request_id:
+        await assert_object_access(db, "review_request", request_id, user.id)
         snapshot = await repo.get_by_request(request_id)
         return [_serialize_snapshot(snapshot)] if snapshot else []
     elif project_id:
+        await assert_project_access(db, project_id, user.id, action="read")
         snapshots = await repo.list_by_project(project_id)
         return [_serialize_snapshot(s) for s in snapshots]
     return []
@@ -266,4 +284,5 @@ async def get_snapshot(
     snapshot = await repo.get_by_id(snapshot_id)
     if not snapshot:
         raise HTTPException(404, "快照不存在")
+    await assert_project_access(db, snapshot.project_id, user.id, action="read")
     return _serialize_snapshot(snapshot)
