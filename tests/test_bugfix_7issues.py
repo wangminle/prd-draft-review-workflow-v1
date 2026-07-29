@@ -229,12 +229,22 @@ async def test_bug4_migration_alter_before_update():
 
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
 
-    # 创建 agent_approval_requests 表（不含 approver_id 列）
+    # 创建 users 父表 + agent_approval_requests（不含 approver_id 列）
+    # 迁移会 ADD COLUMN ... REFERENCES users(id)，FK 开启后 UPDATE 需 users 存在
     async with engine.begin() as conn:
+        await conn.execute(text("""
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username VARCHAR(50) NOT NULL
+            )
+        """))
+        await conn.execute(text(
+            "INSERT INTO users (id, username) VALUES (1, 'admin')"
+        ))
         await conn.execute(text("""
             CREATE TABLE agent_approval_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                requester_id INTEGER NOT NULL,
+                requester_id INTEGER NOT NULL REFERENCES users(id),
                 status VARCHAR(20) NOT NULL DEFAULT 'pending'
             )
         """))

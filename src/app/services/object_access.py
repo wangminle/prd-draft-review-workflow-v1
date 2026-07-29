@@ -111,6 +111,66 @@ async def assert_artifact_access(db: AsyncSession, artifact: Artifact, user_id: 
     await assert_object_access(db, artifact.object_type, artifact.object_id, user_id)
 
 
+async def assert_artifact_write_access(
+    db: AsyncSession,
+    artifact: Artifact,
+    user_id: int,
+    *,
+    action: str = "write",
+) -> None:
+    """产物写/确认权限：Observer 只读；发起人/Reviewer/Approver/项目管理员可写。
+
+    action:
+      - write: 更新 draft 内容
+      - confirm: 确认/解冻
+    """
+    await assert_artifact_access(db, artifact, user_id)
+
+    if artifact.object_type == "conversation":
+        # 会话产物：仅会话所有者（assert 已保证可读=所有者）
+        return
+
+    if artifact.object_type != "review_request":
+        raise HTTPException(403, "无权修改该产物")
+
+    req_repo = ReviewRequestRepository(db)
+    req = await req_repo.get_by_id(artifact.object_id)
+    if req is None:
+        raise HTTPException(404, "审查请求不存在或无权访问")
+
+    if req.initiator_id == user_id:
+        return
+
+    project_repo = ReviewProjectRepository(db)
+    project = await project_repo.get_project(req.project_id)
+    if project and project.created_by == user_id:
+        return
+
+    # workspace owner/admin 可写
+    if project is not None:
+        ws_repo = WorkspaceRepository(db)
+        workspace_id = project.workspace_id
+        if workspace_id is None:
+            default_ws = await ws_repo.get_default()
+            workspace_id = default_ws.id if default_ws else None
+        if workspace_id is not None:
+            member = await ws_repo.get_member(workspace_id, user_id)
+            if member and member.status == "active" and member.role in ("owner", "admin"):
+                return
+
+    participant_repo = ReviewParticipantRepository(db)
+    participant = await participant_repo.get_by_request_and_user(req.id, user_id)
+    if participant and participant.status == "active":
+        if participant.role == "Observer":
+            raise HTTPException(403, "观察者角色为只读，不能修改或确认产物")
+        if action == "confirm" and participant.role not in ("Approver", "Reviewer"):
+            raise HTTPException(403, "当前角色无权确认或解冻产物")
+        if participant.role in ("Reviewer", "Approver"):
+            return
+
+    raise HTTPException(403, "无权修改该产物")
+
+
 async def assert_object_access(
     db: AsyncSession,
     object_type: str,

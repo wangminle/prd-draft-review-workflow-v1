@@ -5,7 +5,8 @@ import logging
 import os
 from pathlib import Path
 
-from sqlalchemy import select, text
+from sqlalchemy import event, select, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import get_settings
@@ -49,6 +50,19 @@ _db_path = _settings["database"]["path"]
 
 # 确保 data 目录存在
 Path(_db_path).parent.mkdir(parents=True, exist_ok=True)
+
+
+@event.listens_for(Engine, "connect")
+def _set_sqlite_foreign_keys(dbapi_connection, connection_record):
+    """BUG-122: 每条 SQLite 连接启用外键约束（默认关闭）。"""
+    try:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+    except Exception:
+        # 非 SQLite 方言忽略
+        pass
+
 
 engine = create_async_engine(
     f"sqlite+aiosqlite:///{_db_path}",

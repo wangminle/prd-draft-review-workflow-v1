@@ -154,6 +154,9 @@ def log_llm_session(
     elapsed_ms: int | None = None,
     error: str | None = None,
     reasoning_content: str | None = None,
+    workspace_id: int | None = None,
+    user_id: int | None = None,
+    mode: str | None = None,
 ) -> None:
     """记录一次 LLM API 调用session到 llm_sessions.jsonl"""
     log_dir = get_logs_dir()
@@ -165,6 +168,9 @@ def log_llm_session(
         "usage": usage,
         "elapsed_ms": elapsed_ms,
         "error": error,
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "mode": mode or "chat",
     }
     if reasoning_content:
         entry["reasoning_content"] = reasoning_content

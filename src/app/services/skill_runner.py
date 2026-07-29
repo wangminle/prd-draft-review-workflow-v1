@@ -288,6 +288,8 @@ class SkillRunner:
         step_max_retries: int = 3,
         step_retry_delay: int = 5,
         event_sink: Callable[[StepEvent], None] | None = None,
+        workspace_id: int | None = None,
+        user_id: int | None = None,
     ):
         self.model_cfg = model_cfg
         self.skills_dir = Path(skills_dir).resolve()
@@ -296,12 +298,22 @@ class SkillRunner:
         self.step_max_retries = step_max_retries
         self.step_retry_delay = step_retry_delay
         self.event_sink = event_sink
+        self.workspace_id = workspace_id
+        self.user_id = user_id
 
         self.prompt_loader = SkillPromptLoader(self.skills_dir)
         self.schema_loader = SkillSchemaLoader(self.skills_dir)
 
         self.state = PipelineState()
         self.pipeline_state = self.state
+
+    def _llm_attribution(self) -> dict:
+        """审查主路径 LLM 调用归属，供配额聚合（mode=review）。"""
+        return {
+            "workspace_id": self.workspace_id,
+            "user_id": self.user_id,
+            "mode": "review",
+        }
 
     # ── Event emission ──
 
@@ -381,6 +393,7 @@ class SkillRunner:
             temperature=temperature,
             extra_body=self.model_cfg.get("extra_body"),
             config=self.retry_config,
+            **self._llm_attribution(),
         )
 
         # Validate and repair against output schema
@@ -775,6 +788,7 @@ class SkillRunner:
                     temperature=0.3,
                     extra_body=self.model_cfg.get("extra_body"),
                     config=self.retry_config,
+                    **self._llm_attribution(),
                 )
                 result = normalize_dimension_result(dim_name, result)
 
@@ -833,6 +847,7 @@ class SkillRunner:
                     temperature=0.3,
                     extra_body=self.model_cfg.get("extra_body"),
                     config=self.retry_config,
+                    **self._llm_attribution(),
                 )
 
                 schema = self.schema_loader.load(skill_dir, prompt_name)

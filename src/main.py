@@ -71,6 +71,8 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         await stop_embedding_worker()
+        from app.routers.review import stop_all_pipeline_tasks
+        await stop_all_pipeline_tasks()
         from app.database import engine
         await engine.dispose()
 
@@ -78,7 +80,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.3.5",
+    version="0.3.6",
     lifespan=lifespan,
 )
 
@@ -102,7 +104,7 @@ app.include_router(governance.router, prefix="/api", tags=["治理与运营"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.3.5"}
+    return {"status": "ok", "version": "0.3.6"}
 
 
 @app.get("/api/app/branding")

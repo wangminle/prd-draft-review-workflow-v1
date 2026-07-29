@@ -265,6 +265,36 @@ async def _find_cached_analyses(db: AsyncSession, doc_ids: list[int], context_ve
 
 
 progress_queues: dict[int, asyncio.Queue] = {}
+_pipeline_tasks: dict[int, asyncio.Task] = {}
+
+
+def track_pipeline_task(task_id: int, coro) -> asyncio.Task:
+    """注册审查后台任务，便于 lifespan shutdown 取消/等待。"""
+    task = asyncio.create_task(coro, name=f"review-pipeline-{task_id}")
+    _pipeline_tasks[task_id] = task
+
+    def _cleanup(done: asyncio.Task) -> None:
+        current = _pipeline_tasks.get(task_id)
+        if current is done:
+            _pipeline_tasks.pop(task_id, None)
+
+    task.add_done_callback(_cleanup)
+    return task
+
+
+async def stop_all_pipeline_tasks(timeout: float = 15.0) -> None:
+    """取消并等待所有审查后台任务（在 engine.dispose 之前调用）。"""
+    tasks = list(_pipeline_tasks.values())
+    if not tasks:
+        _pipeline_tasks.clear()
+        return
+    for t in tasks:
+        t.cancel()
+    try:
+        await asyncio.wait(tasks, timeout=timeout)
+    except Exception:
+        logger.exception("waiting for review pipeline tasks failed")
+    _pipeline_tasks.clear()
 
 
 def _get_jwt_secret() -> str:
@@ -879,7 +909,13 @@ async def start_review(
 
     progress_queues[task.id] = asyncio.Queue()
 
-    asyncio.create_task(_run_pipeline(task.id, project_id, req.mode, selected_doc_ids, model_cfg, steps, historical_doc_ids, req.force_reanalysis))
+    track_pipeline_task(
+        task.id,
+        _run_pipeline(
+            task.id, project_id, req.mode, selected_doc_ids, model_cfg, steps,
+            historical_doc_ids, req.force_reanalysis,
+        ),
+    )
 
     return TaskInfo(
         task_id=task.id, status="pending", mode=req.mode,
@@ -1242,8 +1278,10 @@ async def _run_pipeline(
         if knowledge_chunks_text:
             context_data["knowledge_chunks"] = knowledge_chunks_text
 
-        # Create SkillRunner instance
+        # Create SkillRunner instance（审查主路径带 workspace/user 归属，供配额统计）
         pipeline_cfg = _settings.get("review", {}).get("pipeline", {})
+        project_row = await db.execute(select(ReviewProject).where(ReviewProject.id == project_id))
+        project = project_row.scalar_one_or_none()
         runner = SkillRunner(
             model_cfg=model_cfg,
             skills_dir=SKILLS_DIR,
@@ -1251,6 +1289,8 @@ async def _run_pipeline(
             retry_config=_build_review_retry_config(),
             step_max_retries=pipeline_cfg.get("step_max_retries", 3),
             step_retry_delay=pipeline_cfg.get("step_retry_delay", 5),
+            workspace_id=project.workspace_id if project else None,
+            user_id=task.created_by,
         )
 
         # P0.C.3: Freeze snapshot versions for project source refs

@@ -84,6 +84,9 @@ async def retryable_chat(
     temperature: float = 0.3,
     extra_body: dict | None = None,
     config: RetryConfig = RetryConfig(),
+    workspace_id: int | None = None,
+    user_id: int | None = None,
+    mode: str | None = None,
 ) -> tuple[str, dict | None]:
     from app.logging_config import log_llm_session
     start_time = time.time()
@@ -123,7 +126,17 @@ async def retryable_chat(
                     raise ValueError(f"LLM returned empty content (finish_reason={finish_reason})")
                 usage = data.get("usage")
                 elapsed_ms = int((time.time() - start_time) * 1000)
-                log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms, reasoning_content=reasoning_content)
+                log_llm_session(
+                    llm_model,
+                    messages,
+                    text,
+                    usage,
+                    elapsed_ms=elapsed_ms,
+                    reasoning_content=reasoning_content,
+                    workspace_id=workspace_id,
+                    user_id=user_id,
+                    mode=mode,
+                )
                 return text, usage
 
             error_text = resp.text[:500]
@@ -196,6 +209,9 @@ async def structured_chat(
     temperature: float = 0.3,
     extra_body: dict | None = None,
     config: RetryConfig = RetryConfig(),
+    workspace_id: int | None = None,
+    user_id: int | None = None,
+    mode: str | None = None,
 ) -> dict:
     text, usage = await retryable_chat(
         messages,
@@ -206,6 +222,9 @@ async def structured_chat(
         temperature=temperature,
         extra_body=extra_body,
         config=config,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        mode=mode,
     )
     return _parse_json_response(text)
 

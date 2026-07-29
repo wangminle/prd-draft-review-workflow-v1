@@ -17,6 +17,7 @@ from app.repositories.artifact_repository import (
 )
 from app.services.object_access import (
     assert_artifact_access,
+    assert_artifact_write_access,
     assert_object_access,
     assert_project_access,
 )
@@ -100,6 +101,18 @@ async def create_artifact(
     if req.source_conversation_id is not None:
         await assert_object_access(db, "conversation", req.source_conversation_id, user.id)
 
+    # 创建产物需要写权限：对 review_request 临时构造权限检查
+    if req.object_type == "review_request":
+        # 用占位 Artifact 走写权限矩阵（尚未落库）
+        from app.models.review import Artifact as _Artifact
+        probe = _Artifact(
+            object_type=req.object_type,
+            object_id=req.object_id,
+            artifact_type=req.artifact_type or "html_presentation",
+            status="draft",
+        )
+        await assert_artifact_write_access(db, probe, user.id, action="write")
+
     repo = ArtifactRepository(db)
     artifact = await repo.create(
         object_type=req.object_type,
@@ -161,7 +174,7 @@ async def update_artifact_content(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
-    await assert_artifact_access(db, artifact, user.id)
+    await assert_artifact_write_access(db, artifact, user.id, action="write")
     try:
         await repo.update_content(artifact, req.content_json)
     except ValueError as e:
@@ -181,7 +194,7 @@ async def confirm_artifact(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
-    await assert_artifact_access(db, artifact, user.id)
+    await assert_artifact_write_access(db, artifact, user.id, action="confirm")
     try:
         await repo.confirm(artifact)
     except ValueError as e:
@@ -219,7 +232,7 @@ async def unconfirm_artifact(
     artifact = await repo.get_by_id(artifact_id)
     if not artifact:
         raise HTTPException(404, "产物不存在")
-    await assert_artifact_access(db, artifact, user.id)
+    await assert_artifact_write_access(db, artifact, user.id, action="confirm")
     try:
         await repo.unconfirm(artifact)
     except ValueError as e:

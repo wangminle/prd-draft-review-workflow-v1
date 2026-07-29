@@ -16,6 +16,9 @@ class LlmSessionLogWriter:
         elapsed_ms: int | None = None,
         error: str | None = None,
         reasoning_content: str | None = None,
+        workspace_id: int | None = None,
+        user_id: int | None = None,
+        mode: str | None = None,
     ) -> None:
         log_llm_session(
             model,
@@ -25,4 +28,7 @@ class LlmSessionLogWriter:
             elapsed_ms=elapsed_ms,
             error=error,
             reasoning_content=reasoning_content,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            mode=mode,
         )

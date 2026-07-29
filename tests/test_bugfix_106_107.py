@@ -20,9 +20,10 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.review import ReviewParticipant
-from app.models.user import Base, Notification
+from app.models.review import ReviewParticipant, ReviewProject, ReviewRequest
+from app.models.user import Base, Notification, User
 from app.repositories.review_request_repository import ReviewParticipantRepository
+from app.services.auth import hash_password
 from app.services.notification_service import (
     NotificationEvent,
     NotificationService,
@@ -30,6 +31,34 @@ from app.services.notification_service import (
     get_notification_channel,
 )
 from tests.conftest import init_test_db, make_test_app
+
+
+async def _seed_request_with_user(db_session, *, username_prefix: str):
+    """创建 User + ReviewProject + ReviewRequest，供参与者测试插入合法 FK。"""
+    initiator = User(
+        username=f"{username_prefix}_init",
+        password_hash=hash_password("testpass123"),
+        role="user",
+    )
+    participant = User(
+        username=f"{username_prefix}_part",
+        password_hash=hash_password("testpass123"),
+        role="user",
+    )
+    db_session.add_all([initiator, participant])
+    await db_session.flush()
+    project = ReviewProject(name=f"{username_prefix}_proj", created_by=initiator.id)
+    db_session.add(project)
+    await db_session.flush()
+    request = ReviewRequest(
+        project_id=project.id,
+        initiator_id=initiator.id,
+        status="initiated",
+        goal="bug107",
+    )
+    db_session.add(request)
+    await db_session.flush()
+    return request.id, participant.id
 
 
 # ─── fixtures（与 test_bugfix_099_104 同模式）────────────────────────
@@ -211,7 +240,7 @@ async def test_resubmit_savepoint_rollback_leaves_no_ghost_sse(client_with_db, m
 @pytest.mark.asyncio
 async def test_list_participants_dedupes_legacy_duplicate_rows(db_session):
     """list_by_request 对存量重复 (request_id, user_id) 行按 user_id 去重，保留最高角色。"""
-    request_id, user_id = 200001, 200002
+    request_id, user_id = await _seed_request_with_user(db_session, username_prefix="bug107_list")
     db_session.add(ReviewParticipant(
         request_id=request_id, user_id=user_id, role="Reviewer", status="active",
     ))
@@ -230,7 +259,7 @@ async def test_list_participants_dedupes_legacy_duplicate_rows(db_session):
 @pytest.mark.asyncio
 async def test_add_participant_converges_legacy_duplicates(db_session):
     """add_participant 收敛存量重复行：删除多余行、保留单条并升级到最高角色（不降级）。"""
-    request_id, user_id = 200003, 200004
+    request_id, user_id = await _seed_request_with_user(db_session, username_prefix="bug107_add")
     db_session.add(ReviewParticipant(
         request_id=request_id, user_id=user_id, role="Reviewer", status="active",
     ))

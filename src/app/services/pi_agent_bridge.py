@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import re
 import select
 import subprocess
 import time
@@ -27,6 +28,14 @@ from app.repositories.agent_repository import AgentApprovalRepository, AgentRunR
 from app.repositories.pi_agent_config_repository import PiAgentConfigRepository
 from app.services.crypto import decrypt_key
 from app.utils import now_cn
+
+# Extension sidecar：审批通过后写入沙盒 cwd，活着的 Pi 进程可消费（不依赖重启注入 env）
+ONE_SHOT_SIDECAR_FILENAME = ".agent_one_shot_approved"
+_HIGH_RISK_TOOLS = frozenset({"bash", "write", "edit", "read"})
+# 精确解析 Extension 拦截日志中的工具名，避免 "read" 子串命中 already_read 等
+_BLOCKED_TOOL_RE = re.compile(
+    r"(?:高风险工具|工具)\s+(\w+)|当前[:：]\s*(\w+)",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -64,10 +73,40 @@ def set_run_token(run_id: int, token: str) -> None:
     _run_tokens[run_id] = token
 
 
+def extract_blocked_tool(line: str) -> str | None:
+    """从 Extension BLOCKED 日志精确提取工具名，避免子串误匹配（如 read⊂already_read）。"""
+    m = _BLOCKED_TOOL_RE.search(line)
+    if not m:
+        return None
+    name = m.group(1) or m.group(2)
+    if name in _HIGH_RISK_TOOLS:
+        return name
+    return None
+
+
+def write_one_shot_sidecar(sandbox_dir: Path | str, tool_name: str) -> None:
+    """向活着的 Pi 进程 cwd 写入一次性审批侧车文件，供 Extension 运行时消费。"""
+    if not tool_name:
+        return
+    path = Path(sandbox_dir) / ONE_SHOT_SIDECAR_FILENAME
+    path.parent.mkdir(parents=True, exist_ok=True)
+    existing: list[str] = []
+    if path.exists():
+        existing = [ln.strip() for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    if tool_name not in existing:
+        existing.append(tool_name)
+    path.write_text("\n".join(existing) + "\n", encoding="utf-8")
+
+
 def grant_one_shot_approval(run_id: int, tool_name: str) -> None:
     tools = _one_shot_approvals.setdefault(run_id, [])
     if tool_name not in tools:
         tools.append(tool_name)
+    # 活进程无法重读 env，同步写入沙盒 sidecar 供 Extension 消费
+    bridge = _active_bridges.get(run_id)
+    sandbox = getattr(bridge, "_sandbox_dir", None) if bridge is not None else None
+    if sandbox is not None:
+        write_one_shot_sidecar(sandbox, tool_name)
 
 
 def consume_one_shot_approvals(run_id: int) -> list[str]:
@@ -100,6 +139,7 @@ class PiAgentBridge:
         self._run_token: str | None = None
         self._approval_event: asyncio.Event | None = None
         self._pending_approved_tools: list[str] = []
+        self._sandbox_dir: Path | None = None
 
     @staticmethod
     def _build_extension_env(
@@ -113,9 +153,18 @@ class PiAgentBridge:
         api_base: str,
         one_shot_approved: list[str] | None = None,
     ) -> dict:
-        """构造传给 Pi Extension 的环境变量（工具白名单/授权范围/RAG 凭证）。"""
+        """构造传给 Pi Extension 的环境变量（工具白名单/授权范围/RAG 凭证）。
+
+        空白名单时注入默认安全工具 rag_search（deny-by-default），避免空值被 Extension
+        误判为“允许全部工具”。已批准的 one-shot 工具并入白名单，防止重启后仅靠
+        AGENT_ONE_SHOT_APPROVED 仍被白名单阶段拦截。
+        """
         env = dict(base_env)
-        env["AGENT_ALLOWED_TOOLS"] = ",".join(allowed_tools) if allowed_tools else ""
+        safe_tools = [t for t in allowed_tools if t] or ["rag_search"]
+        for t in one_shot_approved or []:
+            if t and t not in safe_tools:
+                safe_tools.append(t)
+        env["AGENT_ALLOWED_TOOLS"] = ",".join(safe_tools)
         env["AGENT_SCOPE_JSON"] = scope_json
         env["AGENT_USER_ID"] = str(user_id)
         env["AGENT_RUN_ID"] = str(run_id)
@@ -190,14 +239,18 @@ class PiAgentBridge:
             args.extend(["--system-prompt", system_prompt])
 
         # 解析 profile 工具白名单 + 授权范围，注入 Extension 环境变量
+        # 运行时剥离高风险工具；空白名单默认仅 rag_search
+        _HIGH_RISK = {"bash", "write", "edit", "read"}
         allowed_tools: list[str] = []
         if profile.allowed_tools_json:
             try:
                 parsed = json.loads(profile.allowed_tools_json)
                 if isinstance(parsed, list):
-                    allowed_tools = [str(t) for t in parsed]
+                    allowed_tools = [str(t) for t in parsed if str(t) not in _HIGH_RISK]
             except (json.JSONDecodeError, TypeError):
                 pass
+        if not allowed_tools:
+            allowed_tools = ["rag_search"]
 
         from app.repositories.agent_repository import AgentAuthorizationRepository
         auth_repo = AgentAuthorizationRepository(db)
@@ -241,9 +294,17 @@ class PiAgentBridge:
         # 不用 --no-tools，让 Pi 默认加载内置工具，Extension 负责限制
 
         try:
+            from app.runtime_paths import runtime_path
+            sandbox_dir = runtime_path("agent_sandboxes", str(run.id))
+            sandbox_dir.mkdir(parents=True, exist_ok=True)
+            self._sandbox_dir = Path(sandbox_dir)
+            # 启动前将已批准 one-shot 写入 sidecar，与 env 双通道一致
+            for tool in one_shot:
+                write_one_shot_sidecar(self._sandbox_dir, tool)
             self._proc = subprocess.Popen(
                 args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, bufsize=1, env=env,
+                cwd=str(sandbox_dir),
             )
             self._start_time = time.monotonic()
             register_active_bridge(run.id, self)
@@ -265,6 +326,8 @@ class PiAgentBridge:
     def resume_after_approval(self, tool_name: str) -> bool:
         """审批通过后通知活动子进程继续（followUp），并记录一次性放行。"""
         self._pending_approved_tools.append(tool_name)
+        if self._sandbox_dir is not None:
+            write_one_shot_sidecar(self._sandbox_dir, tool_name)
         if self._approval_event is not None:
             self._approval_event.set()
         if not self.is_alive:
@@ -408,18 +471,33 @@ class PiAgentBridge:
                     elif "BLOCKED" in line:
                         # Extension 拦截了高风险工具 → 创建审批请求
                         yield {"type": "tool_blocked", "message": line, "run_id": self._run.id}
-                        # 从日志提取工具名
-                        for blocked_tool in ["bash", "write", "edit"]:
-                            if blocked_tool in line:
-                                approval = await self._approval_repo.create(
-                                    run_id=self._run.id,
-                                    requester_id=self._run.user_id,
-                                    approver_id=self._run.user_id,  # P4.Pre.4: Agent 所有者作为默认审批人
-                                    action_type=f"tool_call:{blocked_tool}",
-                                    payload_ref=line[:1000],
+                        # 精确解析工具名；优先指定系统管理员为审批人，避免申请人自行放行
+                        blocked_tool = extract_blocked_tool(line)
+                        if blocked_tool:
+                            from sqlalchemy import select
+                            from app.models.user import User as _User
+                            admin_row = (
+                                await self._db.execute(
+                                    select(_User).where(
+                                        _User.role == "admin",
+                                        _User.is_active == True,  # noqa: E712
+                                    ).limit(1)
                                 )
-                                yield {"type": "approval_required", "approval_id": approval.id,
-                                        "tool_name": blocked_tool, "run_id": self._run.id}
+                            ).scalar_one_or_none()
+                            approver_id = (
+                                admin_row.id
+                                if admin_row is not None
+                                else self._run.user_id
+                            )
+                            approval = await self._approval_repo.create(
+                                run_id=self._run.id,
+                                requester_id=self._run.user_id,
+                                approver_id=approver_id,
+                                action_type=f"tool_call:{blocked_tool}",
+                                payload_ref=line[:1000],
+                            )
+                            yield {"type": "approval_required", "approval_id": approval.id,
+                                    "tool_name": blocked_tool, "run_id": self._run.id}
 
         # 如果循环结束但未收到 agent_end
         if self.is_alive and step_no > 0:

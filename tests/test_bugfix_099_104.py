@@ -348,10 +348,17 @@ async def test_cost_aggregate_upsert_keeps_workspace_specific_rows_separate(
     tmp_path,
     monkeypatch,
 ):
+    from app.models.user import User
+    from app.services.auth import hash_password
+
+    user = User(username="owner1", password_hash=hash_password("x"), role="user")
+    db_session.add(user)
+    await db_session.flush()
+
     workspace = Workspace(name="team", is_default=True, status="active")
     db_session.add(workspace)
     await db_session.flush()
-    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=1, role="owner"))
+    db_session.add(WorkspaceMember(workspace_id=workspace.id, user_id=user.id, role="owner"))
     db_session.add(
         CostDailySummary(
             workspace_id=workspace.id,

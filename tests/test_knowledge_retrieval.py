@@ -520,12 +520,18 @@ class TestRetrievalLogModel:
 
     @pytest.mark.asyncio
     async def test_retrieval_log_write(self, db_session):
+        # BUG-122: SQLite 外键已启用，workspace_id/user_id 需指向真实记录
+        user = User(username="rl_user", password_hash="x", role="user")
+        ws = Workspace(name="rl_ws", status="active")
+        db_session.add_all([user, ws])
+        await db_session.flush()
+
         log = RetrievalLog(
             query="测试查询",
-            workspace_id=1,
+            workspace_id=ws.id,
             hit_count=3,
             latency_ms=150.5,
-            user_id=1,
+            user_id=user.id,
         )
         db_session.add(log)
         await db_session.flush()
@@ -553,10 +559,15 @@ class TestAnswerFeedbackModel:
 
     @pytest.mark.asyncio
     async def test_answer_feedback_write(self, db_session):
+        # BUG-122: SQLite 外键已启用，user_id 需指向真实记录
+        user = User(username="af_user", password_hash="x", role="user")
+        db_session.add(user)
+        await db_session.flush()
+
         feedback = AnswerFeedback(
             object_type="retrieval",
             object_id=1,
-            user_id=1,
+            user_id=user.id,
             rating="helpful",
             comment="很有帮助",
         )

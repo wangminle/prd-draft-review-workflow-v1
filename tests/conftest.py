@@ -31,8 +31,12 @@ def clear_review_progress_queues():
     from app.routers import review
 
     review.progress_queues.clear()
+    if hasattr(review, "_pipeline_tasks"):
+        review._pipeline_tasks.clear()
     yield
     review.progress_queues.clear()
+    if hasattr(review, "_pipeline_tasks"):
+        review._pipeline_tasks.clear()
 
 
 def make_test_app(db_path: str):
@@ -75,7 +79,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.3.5"}
+        return {"status": "ok", "version": "0.3.6"}
 
     return app, engine, TestSessionLocal
 

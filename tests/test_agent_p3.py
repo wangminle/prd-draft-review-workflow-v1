@@ -297,8 +297,9 @@ class TestApproval:
 
     async def test_list_pending_filters_by_approver(self, client):
         """P4.Pre.4: 待审批列表按 approver_id 过滤，不同审批人只看自己的"""
-        from app.models.user import AgentRun
+        from app.models.user import AgentRun, User
         from app.repositories.agent_repository import AgentApprovalRepository
+        from app.services.auth import hash_password
 
         headers = await _auth_header(client)
         profile_resp = await client.get("/api/agent/profile", headers=headers)
@@ -307,10 +308,16 @@ class TestApproval:
         from app.database import get_db as original_get_db
         app = client._transport.app  # type: ignore
         async for db in app.dependency_overrides[original_get_db]():
+            # 第二审批人必须真实存在（外键约束）
+            approver2 = User(username="approver2", password_hash=hash_password("test123456"), role="user")
+            db.add(approver2)
+            await db.flush()
+
             run = AgentRun(agent_id=profile_id, user_id=1, goal="test2")
             db.add(run)
             await db.commit()
             await db.refresh(run)
+            await db.refresh(approver2)
 
             approval_repo = AgentApprovalRepository(db)
             # 创建两个审批请求，分别给不同审批人
@@ -319,7 +326,7 @@ class TestApproval:
                 action_type="tool_call:bash",
             )
             await approval_repo.create(
-                run_id=run.id, requester_id=1, approver_id=2,
+                run_id=run.id, requester_id=1, approver_id=approver2.id,
                 action_type="tool_call:write",
             )
 
@@ -329,9 +336,9 @@ class TestApproval:
             assert pending_1[0].approver_id == 1
 
             # 审批人 2 只看到 1 条
-            pending_2 = await approval_repo.list_pending(approver_id=2)
+            pending_2 = await approval_repo.list_pending(approver_id=approver2.id)
             assert len(pending_2) == 1
-            assert pending_2[0].approver_id == 2
+            assert pending_2[0].approver_id == approver2.id
             break
 
     async def test_api_approvals_returns_only_mine(self, client):

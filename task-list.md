@@ -132,6 +132,16 @@
 | BUG-117 | 修复 | P1 MCP 全局配置接口缺少管理员和 workspace 权限：任意普通用户可列出全部 Server/Policy，并创建任意 stdio endpoint 或修改任意 server 的工具策略 | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | 全局 MCP 需 admin；workspace 级需 manage；list 按可见范围过滤；全量 1103 passed |
 | BUG-118 | 修复 | P2 应用生命周期未释放全局 SQLAlchemy engine；完整测试虽 1090 passed，但解释器退出时出现 4 个 `_connection_worker_thread` 异常，生产优雅停机也没有 `engine.dispose()` | 2026-07-17 13:05 | 2026-07-17 13:30 | 已修复 | lifespan finally 停止 embedding worker 并 `await engine.dispose()`；新增 lifespan 回归测试；全量 1103 passed |
 
+| BUG-119 | 修复 | P0 Agent 授权范围仍未真正执行：Bridge 虽注入 `AGENT_SCOPE_JSON`，Extension 完全不读取；空工具白名单等价于允许全部工具，`read` 无需审批，普通用户还可自行配置 `allowed_tools` 并自行批准 bash/write/edit，Pi 子进程又继承服务进程文件权限 | 2026-07-29 00:00 | 2026-07-29 18:30 | 已修复 | Extension 读 scope+deny-by-default；`read` 需审批；非管理员禁高风险自配/自批；Pi cwd 沙盒；RAG 端点服务端校验授权 workspace；`tests/test_bugfix_119_124.py` |
+| BUG-120 | 修复 | P0 聊天附件 `file_id` 可目录穿越读取服务端任意受支持文本文件：`ChatFileStorage.read_text()` 直接 `os.path.join(upload_dir, file_id)`，聊天请求与上下文创建均接受用户自填 `file_id` | 2026-07-29 00:00 | 2026-07-29 18:20 | 已修复 | `_resolve_safe_path` 拒绝路径分隔/非 basename，并校验解析后仍在上传根目录；生产仍生成 UUID 文件名；全量 1116 passed |
+| BUG-121 | 修复 | P0 Workspace 配额在真实调用链中基本不生效：`log_llm_session()` 不记录 workspace/user/mode，`aggregate_daily()` 固定写入 `workspace_id=None`，而 BUG-109 后的 guard 只统计指定 workspace 行；聊天还可用客户端传入的不存在 `knowledge_workspace_id` 选择无配额记录的空间 | 2026-07-29 00:00 | 2026-07-29 18:20 | 已修复 | 日志写入 workspace/user/mode；聚合按归属字段分组；聊天校验 knowledge_workspace 存在且成员可读；全量 1116 passed |
+| BUG-122 | 修复 | P1 SQLite 外键约束未启用，模型声明的 `ondelete=CASCADE/SET NULL` 和外键引用不会由数据库执行，可写入不存在的 approver/workspace/project ID，并在删除项目后留下审查请求、快照等孤立数据 | 2026-07-29 00:00 | 2026-07-29 18:20 | 已修复 | Engine connect event `PRAGMA foreign_keys=ON`；同步修复 6 个孤儿插入测试；全量 1116 passed |
+| BUG-123 | 修复 | P1 协作审查产物写权限退化为读权限：`update/confirm/unconfirm` 仅调用 `assert_artifact_access()`，而任意 active Participant（含 Observer）或 workspace owner/admin 都会通过只读访问校验，可篡改、确认或解冻他人产物 | 2026-07-29 00:00 | 2026-07-29 18:20 | 已修复 | 新增 `assert_artifact_write_access`；Observer 只读，发起人/Reviewer/Approver/项目管理员可写确认；全量 1116 passed |
+| BUG-124 | 修复 | P2 审查后台任务使用裸 `asyncio.create_task()` 且不保存/等待任务句柄，应用 shutdown 只停止 embedding worker 后即 dispose engine；任务可能在数据库引擎释放后继续运行，测试退出仍产生多条 aiosqlite `Event loop is closed` 线程异常 | 2026-07-29 00:00 | 2026-07-29 18:20 | 已修复 | `track_pipeline_task`/`stop_all_pipeline_tasks`；lifespan 在 dispose 前取消等待审查任务；全量 1116 passed |
+| BUG-125 | 修复 | P0（CHK-086）高风险工具审批后永远无法放行：Bridge 剥离 bash/write/edit/read 且 Extension 先白名单后 one-shot，`AGENT_ONE_SHOT_APPROVED` 仍被白名单拦死；活进程也无法看到 Python 侧 grant | 2026-07-29 18:55 | 2026-07-29 19:20 | 已修复 | Extension `consumeOneShot` 优先于白名单；sidecar `.agent_one_shot_approved` 通知活进程；`_build_extension_env` 把 one-shot 并入 `AGENT_ALLOWED_TOOLS`；`tests/test_bugfix_119_124.py` +10 |
+| BUG-126 | 修复 | P1（CHK-086）BUG-121 未闭环：审查主路径 `retry.py`/`skill_runner`/`llm.non_stream_chat` 仍不写 workspace/user/mode，配额对审查 token 漏计 | 2026-07-29 18:55 | 2026-07-29 19:20 | 已修复 | `retryable_chat`/`structured_chat`/`non_stream_chat` 透传归属；`SkillRunner`+`review._run_pipeline` 注入 workspace/user、mode=`review` |
+| BUG-127 | 修复 | P1（CHK-086）BLOCKED 工具名用子串匹配（`if blocked_tool in line`），`read` 会误命中 `already_read` 等并误建审批 | 2026-07-29 18:55 | 2026-07-29 19:20 | 已修复 | `extract_blocked_tool` 正则精确解析 `工具/高风险工具/当前` + 高风险白名单校验 |
+
 ## 调整事项
 
 | ID | 动作 | 事项 | 发现时间 | 完成时间 | 状态 | 备注 |
@@ -245,6 +255,10 @@
 | CHK-082 | 检查 | BUG-106/107 修复实现复审 + 新增 BUG-108/109/110 复审与修复 | 2026-07-07 17:30 | 2026-07-07 18:20 | 已完成 | 独立读码确认 CHK-081 报告的 BUG-106（幽灵 SSE：通知 push 早于 savepoint 提交）/ BUG-107（历史重复参与者存量去重）成立并已修复（`defer_push` outbox 缓冲 + 读写双向去重）；复审又新发现并修复 3 项：BUG-108（`/workspace/{id}/sources` 透传 `owner_type=user` 越权枚举他人私有资料 → 路由拒绝）、BUG-109（`get_monthly_token_usage` 含 `workspace_id IS NULL` 全局行导致 per-workspace token 虚高与误封 → 去掉 OR NULL 分支）、BUG-110（`KnowledgeFileStorage` 目录缺失 `iterdir` 抛 500 → 加 `exists()` 保护）；新增 `tests/test_bugfix_106_107.py`（6 项）+ `tests/test_bugfix_108_110.py`（7 项）；再次排除 `allowed_roles_json=NULL` 误报；全量 pytest 1087 passed |
 | CHK-083 | 检查 | V0.3.4 当前仓库全量 Bug 与功能缺失审查 | 2026-07-17 13:05 | 2026-07-17 13:05 | 已完成 | 盘点需求/WBS、后端路由、权限、Agent、知识检索、前端契约与部署配置；全量 pytest 1090 passed，Python compileall、全部前端 JS `node --check`、三份 shell `bash -n` 通过；动态复现跨用户 Artifact 读取/篡改与 personal retrieval 恒空；确认 BUG-112~118 共 7 项未修复问题，其中 P0 2 项、P1 4 项、P2 1 项 |
 
+| CHK-084 | 检查 | V0.3.5 当前仓库全量代码与 Bug 复审 | 2026-07-29 00:00 | 2026-07-29 00:00 | 已完成 | 审查受控源码、路由权限、存储路径、Agent 执行、配额统计、数据库约束与后台任务生命周期；Python compileall、前端 JS `node --check` 通过，全量 pytest 1103 passed/6 warnings，但退出后出现 aiosqlite 线程异常；Ruff 报 237 项（以未使用导入/格式问题为主）；动态复现目录穿越并确认 BUG-119~124 共 6 项待修复问题 |
+| CHK-085 | 修复 | BUG-119~124 安全与生命周期修复收口 | 2026-07-29 18:00 | 2026-07-29 19:10 | 已完成 | 按 CHK-084 报告逐项修复：BUG-119 Extension 读 `AGENT_SCOPE_JSON`+deny-by-default+`read` 需审批+非管理员禁自配/自批+Pi cwd 沙盒；BUG-120 `_resolve_safe_path` 拒绝目录穿越；BUG-121 日志补 workspace/user/mode 归属+聊天校验 knowledge_workspace；BUG-122 connect event 启用 FK；BUG-123 `assert_artifact_write_access` Observer 只读；BUG-124 `track_pipeline_task`/`stop_all_pipeline_tasks` 纳入 lifespan。新增 `tests/test_bugfix_119_124.py`（13 项）；外键开启后同步修正 `test_knowledge_retrieval.py` 2 个孤儿插入测试。验证：定向 13 passed、相邻回归 20 passed、FK 敏感套件 103 passed；全量 pytest 连续 3 次 **1116~1117 passed / 0 failed**，且退出阶段 `Event loop is closed` 噪声降为 **0**（BUG-118/124 闭环） |
+| CHK-086 | 检查 | 未提交代码复审（BUG-119~124 修复后） | 2026-07-29 18:55 | 2026-07-29 19:20 | 已完成 | 核对未提交改动与 `tests/test_bugfix_119_124.py`（初 14 passed）；确认路径穿越/Observer/FK/pipeline/RAG/非管理员禁高风险仍 OK。发现并修复 BUG-125（审批死循环+sidecar）、BUG-126（审查归属漏计）、BUG-127（工具名子串误匹配）；同步修正统计摘要。定向 **24 passed**，相邻 agent/skill **51 passed** |
+
 ## 测试数据
 
 | ID | 动作 | 事项 | 发现时间 | 完成时间 | 状态 | 备注 |
@@ -312,6 +326,7 @@
 | DOC-055 | 文档 | V0.3.3 版本号全量同步（顺带修正 V0.3.2 提交漏 bump 版本号的历史遗漏） | 2026-07-07 18:30 | 2026-07-07 18:30 | 已完成 | 发现提交 289af60 标记为 V0.3.2-Build0598 但版本号字串从未实际 bump（`git log -S 'version="0.3.2"'` 证实从未出现在 main.py），故本次直接 0.3.1→0.3.3；全代码/配置/文档 10 个文件 18 处同步：main.py(2: FastAPI version + /api/health)、branding_config.py(DEFAULT_BRANDING.app_version)、mcp_adapter.py(MCP clientInfo.version)、index.html(4: topbar Ver. 标注)、conftest.py(测试健康检查 mock)、update.sh(NEW_VERSION 硬编码 fallback——若不同步会在 line 448 误判"已是该版本"跳过部署)、package.json、ui-branding.example.yaml、README.md(中英 2 处)、打包与部署指南(5 处：适用版本/解压命令/健康检查返回/update.sh 示例)；package-lock.json 虽含 0.3.1 但已 git-ignored 且不入包、由 package.json 在 npm install 时自动重生成，故不手改；docs/3-design 下 3 篇历史设计基线文档（用户故事与E2E测试用例图-V0.3.1.md 等）的版本号+日期头是历史快照，刻意保留不动；验证：无测试硬断言版本字串值、全量 pytest 1087 passed |
 | DOC-056 | 文档 | V0.3.4 版本号全量同步 | 2026-07-09 17:07 | 2026-07-09 17:08 | 已完成 | 0.3.3→0.3.4：main.py(2)、branding_config.py、mcp_adapter.py、index.html(4)、conftest.py、update.sh(NEW_VERSION)、package.json、ui-branding.example.yaml、README.md(中英 2)、打包与部署指南(5)；docs/3-design 历史快照与 package-lock.json（git-ignored）不改；定向 166 passed，全量 `pytest -q` 1090 passed |
 | DOC-057 | 文档 | V0.3.5 版本号全量同步 + README/部署指南对齐 BUG-112~118 | 2026-07-17 15:52 | 2026-07-17 15:52 | 已完成 | 0.3.4→0.3.5：main.py(2)、branding_config.py、mcp_adapter.py、index.html(4)、conftest.py、update.sh(NEW_VERSION)、package.json、ui-branding.example.yaml、README.md（版本+能力+快速启动 JWT 必填）、打包与部署指南（版本/解压/健康检查/update 示例 + JWT 校验说明）；skills/* 无应用版本号无需改；docs/3-design 历史快照与 package-lock.json 不改；定向 branding+runtime_config+bugfix_112_118 共 105 passed，全量 `pytest -q` 1103 passed |
+| DOC-058 | 文档 | V0.3.6 版本号全量同步 + README/部署指南/运行时基线对齐 BUG-119~124 | 2026-07-29 18:45 | 2026-07-29 18:45 | 已完成 | 0.3.5→0.3.6：main.py(2)、branding_config.py、mcp_adapter.py、index.html(4)、conftest.py、update.sh、package.json、ui-branding.example.yaml、README.md（中英版本+Agent/安全/协作/配额能力）、打包与部署指南（5）、运行时基线（agent_sandboxes、llm 归属字段、ChatFileStorage 路径安全）；历史用户故事快照与 package-lock 不改 |
 
 ## 功能开发
 
@@ -410,6 +425,7 @@
 | OPS-004 | 优化 | package.sh 增强：默认输出 zip 格式、新增 --format 选项；zip 改用 Python zipfile 打包以设置 UTF-8 文件名标志位；tar.gz 加 COPYFILE_DISABLE=1 消除 macOS AppleDouble 垃圾文件 | 2026-07-07 16:30 | 2026-07-07 16:47 | 已完成 | 默认格式由 tar.gz 改为 zip（`--format tar.gz`/`both` 可选）；zip 打包从 Info-ZIP CLI 改为 Python zipfile——macOS Info-ZIP 不支持 -UN=u、无法设 UTF-8 标志，导致 zipinfo 显示乱码且 Windows 解压中文乱码，Python zipfile 自动设 bit 11 UTF-8 标志实现跨平台正确；发现并修复 tar.gz 含 ._ AppleDouble 垃圾文件的老问题（bsdtar 默认行为，加 `COPYFILE_DISABLE=1` + `--exclude='._*'`，自检新增 `._` 拦截）；三种模式实跑通过自检，Python 校验：zip 与 tar.gz 文件清单 265=265 完全一致、29 个非 ASCII 条目全部设 UTF-8 标志、无 ._ 文件；已用新脚本重新生成正式 zip 到项目上级目录并删除旧的 build202607071622.zip（旧 Info-ZIP 版无 UTF-8 标志） |
 | OPS-005 | 运维 | 按 V0.3.3 版本生成 zip 分发包到项目上级目录（配合 DOC-055 版本号同步） | 2026-07-07 20:12 | 2026-07-07 20:12 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.3-build202607072012.zip`（267 文件/4.6M，位于项目上级目录、不入库）；package.sh 默认 zip 输出 + 内置自检通过；独立 Python zipfile 交叉验证：关键文件（main.py/start.sh/update.sh/requirements.txt/package.json/.env.example/ui-branding.example.yaml + 新增 test_bugfix_106_107.py/test_bugfix_108_110.py + BUG-106~110 涉及 8 个源文件）均在包内，包内 main.py 版本号=0.3.3；危险项全 0（node_modules/.git/__pycache__/*.pyc/裸 .env/runtime 业务数据/真实 ui-branding.yaml/AppleDouble ._）；29 个非 ASCII 条目全部设 UTF-8 标志位(bit 11)、中文部署指南文件名可读；文件数 267 = 上版 265 + 2 新测试；package.sh 本身不入包属设计（目标服务器只需 update.sh 更新、不需打包能力，与 copy_versioned_files 清单一致）；上级目录旧 v0.3.1 包(build202607071647)保留未删 |
 | OPS-006 | 运维 | 按 V0.3.4 版本生成 zip 分发包到项目上级目录（配合 DOC-056 版本号同步） | 2026-07-09 17:18 | 2026-07-09 17:18 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.4-build202607091718.zip`（268 文件/4.6M，位于项目上级目录、不入库）；package.sh 自检通过；交叉验证：关键文件齐全、包内 main.py 版本=0.3.4、危险项 0、29 个非 ASCII 条目均设 UTF-8 标志；文件数 268 = 上版 267 + 1（test_bugfix_111_relative_static_assets.py） |
+| OPS-007 | 运维 | 按 V0.3.5 版本生成 zip 分发包到项目上级目录（配合最新提交 V0.3.5-Build0671 同步） | 2026-07-17 16:20 | 2026-07-17 16:20 | 已完成 | 产物 `prd-draft-review-workflow-v1-code-config-v0.3.5-build0671-20260717.zip`（272 文件/4.6M，位于项目上级目录、不入库）；复用 package.sh 默认 zip 输出 + 内置自检通过；构建号对齐 git 最新提交 V0.3.5-Build0671-20260717；独立 Python zipfile 交叉验证：10 个关键文件（main.py/start.sh/update.sh/requirements.txt/package.json/.env.example/ui-branding.example.yaml/README.md/CLAUDE.md/LICENSE）齐全、包内 main.py 版本=0.3.5、危险项全 0（node_modules/.git/__pycache__/*.pyc/裸.env/runtime 业务数据/真实 ui-branding.yaml/AppleDouble ._）、29 个非 ASCII 条目全部设 UTF-8 标志位(bit 11)；成员清单与 package.sh 一致，排除 node_modules/.git/.env(密钥)/__pycache__/*.pyc/runtime 业务数据/POC/eval |
 
 ## 规划事项
 
@@ -425,14 +441,14 @@
 
 | 分类 | 总数 | 已完成 | 待开发/待修复 | 完成率 |
 | --- | --- | --- | --- | --- |
-| 代码 Bug | 118 | 118 | 0 | 100% |
+| 代码 Bug | 127 | 127 | 0 | 100% |
 | 调整事项 | 20 | 20 | 0 | 100% |
-| 检查事项 | 83 | 83 | 0 | 100% |
+| 检查事项 | 85 | 85 | 0 | 100% |
 | 测试数据 | 1 | 1 | 0 | 100% |
 | 文档维护 | 57 | 57 | 0 | 100% |
 | 功能开发 | 75 | 75 | 0 | 100% |
 | 调研事项 | 2 | 2 | 0 | 100% |
-| 配置运维 | 6 | 6 | 0 | 100% |
+| 配置运维 | 7 | 7 | 0 | 100% |
 | 规划事项 | 0 | 0 | 0 | 0% |
 | 优化事项 | 0 | 0 | 0 | 0% |
-| **总计** | 362 | 362 | 0 | 100% |
+| **总计** | 374 | 374 | 0 | 100% |

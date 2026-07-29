@@ -306,6 +306,9 @@ async def non_stream_chat(
     max_tokens: int = 4096,
     temperature: float = 0.7,
     extra_body: dict | None = None,
+    workspace_id: int | None = None,
+    user_id: int | None = None,
+    mode: str | None = None,
 ) -> tuple[str, dict | None]:
     """Non-streaming chat completion — returns (full_text, usage)."""
     if not api_key:
@@ -341,5 +344,15 @@ async def non_stream_chat(
         reasoning_content = message.get("reasoning_content") or ""
         usage = data.get("usage")
         elapsed_ms = int((time.time() - start_time) * 1000)
-        log_llm_session(llm_model, messages, text, usage, elapsed_ms=elapsed_ms, reasoning_content=reasoning_content)
+        log_llm_session(
+            llm_model,
+            messages,
+            text,
+            usage,
+            elapsed_ms=elapsed_ms,
+            reasoning_content=reasoning_content,
+            workspace_id=workspace_id,
+            user_id=user_id,
+            mode=mode,
+        )
         return text, usage

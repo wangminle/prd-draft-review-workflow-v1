@@ -68,9 +68,17 @@ async def chat(
 
     from app.repositories.workspace_repository import WorkspaceRepository
     from app.services.budget_guard import ensure_workspace_llm_allowed
+    from app.services.workspace_access import require_action
+
+    ws_repo = WorkspaceRepository(db)
     ws_id = req.knowledge_workspace_id
-    if ws_id is None:
-        ws_repo = WorkspaceRepository(db)
+    if ws_id is not None:
+        ws = await ws_repo.get_by_id(ws_id)
+        if ws is None:
+            raise HTTPException(status_code=404, detail="团队空间不存在")
+        member = await ws_repo.get_member(ws_id, user.id)
+        require_action(member, "read", "使用知识库")
+    else:
         default_ws = await ws_repo.get_default()
         ws_id = default_ws.id if default_ws else None
     await ensure_workspace_llm_allowed(db, ws_id)
@@ -79,6 +87,9 @@ async def chat(
     conv_id = session.conversation_id
     model_cfg = session.model_cfg
     llm_messages = session.llm_messages
+    chat_mode = req.mode or "chat"
+    chat_user_id = user.id
+    chat_workspace_id = ws_id
 
     async def _stream(db_session: AsyncSession):
         collected = []
@@ -152,6 +163,9 @@ async def chat(
                         stats or None,
                         elapsed_ms=elapsed_ms,
                         reasoning_content="".join(reasoning_parts) or None,
+                        workspace_id=chat_workspace_id,
+                        user_id=chat_user_id,
+                        mode=chat_mode,
                     )
 
                     # Final stats

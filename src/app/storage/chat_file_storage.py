@@ -9,12 +9,16 @@
 from __future__ import annotations
 
 import os
+import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.runtime_paths import runtime_path
 from app.services.file_text import extract_text_from_bytes, extract_text_from_path
+
+# 仅允许安全 basename（生产为 UUID hex+后缀）；拒绝路径分隔与穿越
+_SAFE_FILE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,200}$")
 
 
 @dataclass
@@ -55,11 +59,35 @@ class ChatFileStorage:
             return cfg_dir
         return str(runtime_path("uploads"))
 
+    def _resolve_safe_path(self, file_id: str) -> str | None:
+        """将 file_id 解析为上传根目录内的绝对路径；非法或越界返回 None。"""
+        if not file_id or not isinstance(file_id, str):
+            return None
+        # 拒绝任何路径成分（含 ..、/、\\）
+        if "/" in file_id or "\\" in file_id or file_id in (".", ".."):
+            return None
+        if Path(file_id).name != file_id:
+            return None
+        if not _SAFE_FILE_ID_RE.match(file_id):
+            return None
+
+        upload_dir = Path(self._resolve_upload_dir()).resolve()
+        candidate = (upload_dir / file_id).resolve()
+        try:
+            candidate.relative_to(upload_dir)
+        except ValueError:
+            return None
+        return str(candidate)
+
     async def save_upload(self, *, filename: str, content: bytes) -> StoredChatFile:
         ext = Path(filename).suffix.lower()
+        if ext and not re.match(r"^\.[A-Za-z0-9]{1,16}$", ext):
+            ext = ""
         file_id = f"{uuid.uuid4().hex}{ext}"
         upload_dir = self._resolve_upload_dir()
-        saved_path = os.path.join(upload_dir, file_id)
+        saved_path = self._resolve_safe_path(file_id)
+        if saved_path is None:
+            raise ValueError("invalid generated file_id")
         os.makedirs(upload_dir, exist_ok=True)
         with open(saved_path, "wb") as f:
             f.write(content)
@@ -73,19 +101,16 @@ class ChatFileStorage:
         )
 
     def read_text(self, file_id: str) -> str | None:
-        upload_dir = self._resolve_upload_dir()
-        file_path = os.path.join(upload_dir, file_id)
-        if not os.path.isfile(file_path):
+        file_path = self._resolve_safe_path(file_id)
+        if not file_path or not os.path.isfile(file_path):
             return None
         return extract_text_from_path(file_path, file_id)
 
     def delete(self, file_id: str) -> None:
-        upload_dir = self._resolve_upload_dir()
-        file_path = os.path.join(upload_dir, file_id)
-        if os.path.isfile(file_path):
+        file_path = self._resolve_safe_path(file_id)
+        if file_path and os.path.isfile(file_path):
             os.unlink(file_path)
 
     def file_exists(self, file_id: str) -> bool:
-        upload_dir = self._resolve_upload_dir()
-        file_path = os.path.join(upload_dir, file_id)
-        return os.path.isfile(file_path)
+        file_path = self._resolve_safe_path(file_id)
+        return bool(file_path and os.path.isfile(file_path))

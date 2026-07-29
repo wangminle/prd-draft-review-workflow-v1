@@ -130,17 +130,27 @@ async def test_private_source_not_readable_via_workspace_api(client):
 
 
 async def test_fts_excludes_other_users_private_source(client):
+    from app.models.user import User
+    from app.services.auth import hash_password
     from app.services.knowledge_ingestion import KnowledgeIngestionService
 
     c, sm = client
     async with sm() as db:
         ws = (await db.execute(select(Workspace).limit(1))).scalar_one()
+        admin = (await db.execute(select(User).where(User.username == "admin"))).scalar_one()
+        other = User(
+            username="fts_private_owner",
+            password_hash=hash_password("testpass123"),
+            role="user",
+        )
+        db.add(other)
+        await db.flush()
         private = KnowledgeSource(
             workspace_id=ws.id,
             source_type="upload",
             title="secret",
             owner_type="user",
-            owner_id=99,
+            owner_id=other.id,
             visibility="private",
             status="active",
             extracted_text="机密关键词内容测试",
@@ -150,7 +160,7 @@ async def test_fts_excludes_other_users_private_source(client):
             source_type="upload",
             title="team doc",
             owner_type="workspace",
-            owner_id=1,
+            owner_id=admin.id,
             visibility="team",
             status="active",
             extracted_text="团队公开关键词内容测试",
@@ -164,7 +174,7 @@ async def test_fts_excludes_other_users_private_source(client):
         await svc.ingest_source(private.id)
         await svc.ingest_source(team.id)
 
-        results = await svc.search_fts("关键词内容", ws.id, limit=10, user_id=1)
+        results = await svc.search_fts("关键词内容", ws.id, limit=10, user_id=admin.id)
         source_ids = {r["source_id"] for r in results}
         assert team.id in source_ids
         assert private.id not in source_ids

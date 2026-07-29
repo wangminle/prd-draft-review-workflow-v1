@@ -91,9 +91,11 @@ class CostStatsService:
                     input_tokens = usage.get("prompt_tokens", 0) or 0
                     output_tokens = usage.get("completion_tokens", 0) or 0
 
-                    # BUG-077：JSONL 暂无 workspace_id/user_id/mode，mode 由 model ID 推断
-                    entry_mode = infer_mode_from_model(model)
-                    key = (None, None, entry_mode, model)
+                    # 优先使用日志中的可信归属字段；缺失时 mode 由 model 推断，workspace/user 为 None
+                    entry_mode = entry.get("mode") or infer_mode_from_model(model)
+                    workspace_id = entry.get("workspace_id")
+                    user_id = entry.get("user_id")
+                    key = (workspace_id, user_id, entry_mode, model)
                     if key not in agg:
                         agg[key] = {
                             "call_count": 0,

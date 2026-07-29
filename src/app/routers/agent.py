@@ -21,6 +21,9 @@ from app.repositories.agent_repository import (
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# 普通用户不可自行启用的高风险工具（需管理员配置 + 独立审批人）
+_HIGH_RISK_TOOLS = frozenset({"bash", "write", "edit", "read"})
+
 
 # ─── Schemas ──────────────────────────────────────────────────
 
@@ -215,7 +218,12 @@ async def update_agent_profile(
     if req.system_policy is not None:
         update_kwargs["system_policy"] = req.system_policy
     if req.allowed_tools is not None:
-        update_kwargs["allowed_tools_json"] = json.dumps(req.allowed_tools, ensure_ascii=False)
+        tools = list(req.allowed_tools)
+        if user.role != "admin":
+            tools = [t for t in tools if t not in _HIGH_RISK_TOOLS]
+            if not tools:
+                tools = ["rag_search"]
+        update_kwargs["allowed_tools_json"] = json.dumps(tools, ensure_ascii=False)
     if req.status is not None:
         if req.status not in ("active", "disabled"):
             raise HTTPException(400, "status must be 'active' or 'disabled'")
@@ -477,21 +485,29 @@ async def decide_approval(
     if approval.approver_id != user.id:
         raise HTTPException(403, "只有指定的审批人可以决策")
 
-    approval = await repo.decide(approval, user.id, req.decision, req.comment)
-
     # 审批通过：恢复活动 bridge 或登记一次性放行供下次执行
     resumed = False
     tool_name = None
     if req.decision == "approved" and approval.action_type.startswith("tool_call:"):
         tool_name = approval.action_type.split(":", 1)[1]
+        # 非管理员不得自行批准自己的高风险工具调用
+        if (
+            tool_name in _HIGH_RISK_TOOLS
+            and approval.requester_id == user.id
+            and user.role != "admin"
+        ):
+            raise HTTPException(403, "高风险工具不可由申请人自行审批，请联系管理员")
         from app.services.pi_agent_bridge import (
             get_active_bridge,
             grant_one_shot_approval,
         )
+        approval = await repo.decide(approval, user.id, req.decision, req.comment)
         grant_one_shot_approval(approval.run_id, tool_name)
         bridge = get_active_bridge(approval.run_id)
         if bridge is not None:
             resumed = bridge.resume_after_approval(tool_name)
+    else:
+        approval = await repo.decide(approval, user.id, req.decision, req.comment)
 
     result = _serialize_approval(approval)
     result["resumed"] = resumed
@@ -521,13 +537,39 @@ async def agent_rag_search(
     if not run:
         raise HTTPException(404, "Agent run not found")
 
+    profile_repo = AgentProfileRepository(db)
+    profile = await profile_repo.get_by_id(run.agent_id)
+    if not profile:
+        raise HTTPException(404, "Agent profile not found")
+
     scope = req.scope if req.scope in ("workspace", "personal") else "workspace"
     workspace_id = req.workspace_id
-    if scope == "workspace" and workspace_id is None:
-        from app.repositories.workspace_repository import WorkspaceRepository
-        ws_repo = WorkspaceRepository(db)
-        default_ws = await ws_repo.get_default()
-        workspace_id = default_ws.id if default_ws else None
+
+    # BUG-119: 服务端强制校验授权范围，不信任 Extension/客户端传入的 workspace
+    auth_repo = AgentAuthorizationRepository(db)
+    auths = await auth_repo.list_by_agent(profile.id)
+    authorized_workspace_ids = {
+        a.scope_id for a in auths
+        if a.scope_type == "workspace" and a.scope_id is not None
+    }
+    default_scope = getattr(profile, "default_scope_type", None) or "personal"
+
+    if scope == "workspace":
+        if workspace_id is None:
+            from app.repositories.workspace_repository import WorkspaceRepository
+            ws_repo = WorkspaceRepository(db)
+            default_ws = await ws_repo.get_default()
+            workspace_id = default_ws.id if default_ws else None
+        if workspace_id is None:
+            raise HTTPException(400, "workspace 检索需要有效的 workspace_id")
+        if workspace_id not in authorized_workspace_ids:
+            # 默认 personal 时禁止未授权 workspace；即便 default=workspace 也必须有显式授权条目
+            raise HTTPException(403, f"workspace_id={workspace_id} 不在 Agent 授权范围内")
+    elif scope == "personal":
+        # personal 仅检索当前 run 用户私有资料；忽略客户端伪造的 workspace_id
+        workspace_id = None
+        if default_scope not in ("personal", "workspace"):
+            raise HTTPException(403, "当前 Agent 未授权个人资料检索")
 
     retrieval = RetrievalService(db_session=db)
     try:
