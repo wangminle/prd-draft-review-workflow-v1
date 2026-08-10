@@ -34,10 +34,10 @@ const Notification = {
         if (!token) return;
         // 使用 SSE ticket 方式连接，类似审查进度 SSE
         const headers = { 'Authorization': `Bearer ${token}` };
-        fetch('/api/auth/sse-ticket', { method: 'POST', headers })
+        fetch(API._url('/api/auth/sse-ticket'), { method: 'POST', headers })
             .then(r => r.json())
             .then(data => {
-                const url = `/api/notifications/stream?ticket=${encodeURIComponent(data.ticket)}`;
+                const url = API._url(`/api/notifications/stream?ticket=${encodeURIComponent(data.ticket)}`);
                 this._sse = new EventSource(url);
                 this._sse.onmessage = (event) => {
                     try {

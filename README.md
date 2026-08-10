@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.6。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.7。
 
 ### 架构设计
 
@@ -132,6 +132,9 @@ runtime/config/             品牌配置模板（ui-branding.example.yaml）
 runtime/assets/branding/    品牌资产目录（Logo、favicon）
 tools/                      品牌迁移工具（migrate_branding.py）
 tests/                      自动化测试
+docs/                       项目文档（部署指南、安全加固方案等）
+design/                     设计文档（归档、讨论、规划、参赛材料，已 git-ignored）
+eval/                       评估实验与 POC 选型证据（已 git-ignored）
 ```
 
 ### 数据与代码分离
@@ -153,7 +156,7 @@ tests/                      自动化测试
 ./start.sh start             # 首次部署或手动启停
 ```
 
-完整流程（首次部署、版本更新、运行时数据迁移、品牌配置迁移）见 [打包与部署指南](docs/4-deployment/2026-07-07-打包与部署指南.md)；目标服务器的 Nginx/systemd/安全加固见 [Ubuntu 部署与安全加固方案](docs/4-deployment/2026-05-22-ubuntu-nginx-systemd-security-plan.md)。
+完整流程（首次部署、版本更新、运行时数据迁移、品牌配置迁移）见 [打包与部署指南](docs/packaging-and-deployment.md)；目标服务器的 Nginx/systemd/安全加固见 [Ubuntu 部署与安全加固方案](docs/deployment-hardening.md)。
 
 ### License
 
@@ -163,7 +166,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.6.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.7.
 
 ### Architecture
 
@@ -285,6 +288,9 @@ runtime/config/             Branding config template (ui-branding.example.yaml)
 runtime/assets/branding/    Branding assets directory (Logo, favicon)
 tools/                      Branding migration tool (migrate_branding.py)
 tests/                      Automated tests
+docs/                       Project documentation (deployment guide, hardening plan, etc.)
+design/                     Design documents (archive, discussion, planning, competition, git-ignored)
+eval/                       Evaluation experiments and POC selection evidence (git-ignored)
 ```
 
 ### Data and Code Separation
@@ -302,7 +308,7 @@ Cross-server deployment uses `package.sh` to produce a code-and-config-only arch
 ./start.sh start             # first deploy or manual control
 ```
 
-Full procedures (first deploy, version update, runtime data migration, branding migration) are in [Packaging and Deployment Guide](docs/4-deployment/2026-07-07-打包与部署指南.md); target-server Nginx/systemd/security hardening is in [Ubuntu Deployment and Hardening Plan](docs/4-deployment/2026-05-22-ubuntu-nginx-systemd-security-plan.md).
+Full procedures (first deploy, version update, runtime data migration, branding migration) are in [Packaging and Deployment Guide](docs/packaging-and-deployment.md); target-server Nginx/systemd/security hardening is in [Ubuntu Deployment and Hardening Plan](docs/deployment-hardening.md).
 
 ### License
 

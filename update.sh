@@ -17,7 +17,7 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 BACKUP_DIR="$RUNTIME_DIR/update_backups"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-15}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-5}"
-NEW_VERSION="0.3.6"
+NEW_VERSION="0.3.7"
 
 SKIP_MIGRATE=false
 SKIP_BACKUP=false
@@ -77,24 +77,34 @@ warn() { echo "[WARN] $1"; }
 fail() { echo "[FAIL] $1"; }
 
 read_version_from_main() {
-  local main_py="$1"
-  if [ ! -f "$main_py" ]; then
+  local project_dir="$1"
+  if [ ! -d "$project_dir" ]; then
     echo "unknown"
     return
   fi
-  python3 - "$main_py" <<'PY'
-import re
-import sys
+  # 唯一事实来源：根目录 VERSION 纯文本文件；回退到 src/app/version.py、src/main.py 兼容旧结构。
+  python3 - "$project_dir" <<'PY'
+import re, sys
 from pathlib import Path
-
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-match = re.search(r'version\s*=\s*"([^"]+)"', text)
-print(match.group(1) if match else "unknown")
+root = Path(sys.argv[1])
+vf = root / "VERSION"
+if vf.exists():
+    v = vf.read_text(encoding="utf-8").strip()
+    if v:
+        print(v); sys.exit(0)
+for candidate in (root / "src/app/version.py", root / "src/main.py"):
+    if not candidate.exists():
+        continue
+    m = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', candidate.read_text(encoding="utf-8"))
+    if m:
+        print(m.group(1)); break
+else:
+    print("unknown")
 PY
 }
 
 get_current_version() {
-  read_version_from_main "$PROJECT_DIR/src/main.py"
+  read_version_from_main "$PROJECT_DIR"
 }
 
 get_server_port() {
@@ -180,7 +190,7 @@ validate_update_package() {
     return 1
   fi
 
-  if echo "$listing" | grep -Eq '(^|/)runtime/data(/|$)|(^|/)runtime/uploads(/|$)|(^|/)runtime/logs(/|$)|(^|/)runtime/results(/|$)|(^|/)runtime/storage(/|$)'; then
+  if echo "$listing" | grep -Eq '(^|/)runtime/(data|uploads|logs|results|storage|vector)(/|$)'; then
     fail "更新包包含 runtime 业务数据目录，拒绝更新"
     return 1
   fi
@@ -257,7 +267,7 @@ create_backup() {
     --exclude='*.pyc' \
     --exclude='*.tar.gz' \
     -C "$PROJECT_DIR" \
-    src tools tests docs skills start.sh update.sh requirements.txt pyproject.toml README.md CLAUDE.md AGENTS.md 2>/dev/null || true
+    src tools tests docs skills VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE 2>/dev/null || true
 
   if [ -d "$RUNTIME_DIR/config" ]; then
     cp -R "$RUNTIME_DIR/config" "$CURRENT_BACKUP_DIR/runtime_config" 2>/dev/null || true
@@ -287,7 +297,7 @@ copy_versioned_files() {
     fi
   done
 
-  for file in start.sh requirements.txt pyproject.toml README.md CLAUDE.md AGENTS.md LICENSE; do
+  for file in VERSION start.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
     if [ -f "$extracted_dir/$file" ]; then
       cp "$extracted_dir/$file" "$PROJECT_DIR/$file"
       log "  更新 $file"
@@ -323,8 +333,9 @@ sync_yaml_version() {
   fi
 
   # 用 python3 做 YAML 行级替换（保留注释、格式和其他字段）
+  # 版本号以包内 src/main.py 实际读出的 PACKAGE_VERSION 为准，避免 NEW_VERSION 忘记同步时写错
   local result
-  result=$(python3 - "$yaml_path" "$NEW_VERSION" <<'PY'
+  result=$(python3 - "$yaml_path" "${PACKAGE_VERSION:-$NEW_VERSION}" <<'PY'
 import sys
 from pathlib import Path
 
@@ -445,11 +456,6 @@ fi
 CURRENT_VERSION="$(get_current_version)"
 log "当前代码版本: $CURRENT_VERSION"
 
-if [ "$CURRENT_VERSION" = "$NEW_VERSION" ] && [ "$FORCE" = false ]; then
-  log "代码已经是 $NEW_VERSION，无需更新。使用 --force 强制重新部署。"
-  exit 0
-fi
-
 PACKAGE_PATH="$(find_code_package)"
 if [ -z "$PACKAGE_PATH" ]; then
   fail "未找到更新包，请使用 --package 指定"
@@ -462,8 +468,14 @@ TEMP_EXTRACT="$(mktemp -d)"
 trap 'rm -rf "$TEMP_EXTRACT"' EXIT
 tar -tzf "$PACKAGE_PATH" >/dev/null
 EXTRACTED_DIR="$(safe_extract_package "$PACKAGE_PATH" "$TEMP_EXTRACT")"
-PACKAGE_VERSION="$(read_version_from_main "$EXTRACTED_DIR/src/main.py")"
+PACKAGE_VERSION="$(read_version_from_main "$EXTRACTED_DIR")"
 log "更新包版本: $PACKAGE_VERSION"
+
+# 先解包读取实际版本，再与当前版本比较（避免因 NEW_VERSION 常量未同步而跳过真实更新）
+if [ "$CURRENT_VERSION" = "$PACKAGE_VERSION" ] && [ "$FORCE" = false ]; then
+  log "当前版本 $CURRENT_VERSION 与更新包版本 $PACKAGE_VERSION 相同，无需更新。使用 --force 强制重新部署。"
+  exit 0
+fi
 
 stop_service
 create_backup "$CURRENT_VERSION"

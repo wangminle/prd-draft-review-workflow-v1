@@ -18,6 +18,7 @@ from pathlib import Path
 import yaml
 
 from app.runtime_paths import get_runtime_root, runtime_path
+from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_BRANDING: dict = {
     "app_title": "AI产品需求初审",
-    "app_version": "0.3.6",
+    "app_version": APP_VERSION,
     "login_title": "AI产品需求初审",
     "login_subtitle": "AI 驱动的需求审查工作流平台",
     "login_notice": "",

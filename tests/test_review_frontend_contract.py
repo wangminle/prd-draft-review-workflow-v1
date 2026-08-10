@@ -156,7 +156,7 @@ def test_frontend_emits_structured_audit_actions():
 def test_sse_progress_uses_ephemeral_ticket_instead_of_main_jwt_query():
     progress_block = API_JS.split("getReviewProgress(projectId, reviewId)", 1)[1].split("async getReviewTaskStatus", 1)[0]
     assert "/api/auth/sse-ticket" in progress_block
-    assert "await fetch('/api/auth/sse-ticket'" in progress_block
+    assert "await fetch(this._url('/api/auth/sse-ticket')" in progress_block
     assert "?token=${encodeURIComponent(token)}" not in progress_block
     assert "new EventSource(`${url}?ticket=${encodeURIComponent(data.ticket)}`)" in progress_block
 

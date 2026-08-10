@@ -87,9 +87,8 @@ def test_update_script_validates_package_before_replacing_code():
 
     assert validate_idx < replace_idx
     assert "tar -tzf" in script
-    assert "runtime/data" in script
-    assert "runtime/uploads" in script
-    assert "runtime/logs" in script
+    # 业务数据目录黑名单（含 runtime/vector）
+    assert "runtime/(data|uploads|logs|results|storage|vector)" in script
 
 
 def test_update_script_restores_root_and_src_env_separately():

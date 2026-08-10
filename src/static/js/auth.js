@@ -141,7 +141,7 @@ const Branding = {
 
     async load() {
         try {
-            const resp = await fetch('/api/app/branding');
+            const resp = await fetch(API._url('/api/app/branding'));
             if (resp.ok) {
                 this.config = await resp.json();
                 this.apply();
@@ -163,7 +163,8 @@ const Branding = {
         }
         if (c.favicon) {
             const linkEl = document.getElementById('favicon-link');
-            if (linkEl) linkEl.href = c.favicon;
+            // 资产路径（如 assets/branding/xxx）需带上部署前缀，根路径部署时 _url 仅原样返回
+            if (linkEl) linkEl.href = API._url('/' + c.favicon);
         }
 
         // Theme colors
@@ -222,7 +223,8 @@ const Branding = {
             const containers = document.querySelectorAll(`[data-branding="${key}"]`);
             for (const container of containers) {
                 const classes = logoClassMap[key] || 'branding-logo';
-                container.innerHTML = `<img src="${url}" alt="logo" class="${classes}">`;
+                // 资产路径（如 assets/branding/xxx）需带上部署前缀，根路径部署时 _url 仅原样返回
+                container.innerHTML = `<img src="${API._url('/' + url)}" alt="logo" class="${classes}">`;
             }
         }
     },

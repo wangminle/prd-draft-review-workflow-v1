@@ -89,13 +89,27 @@ log() { echo "[PACKAGE] $1"; }
 warn() { echo "[WARN] $1"; }
 fail() { echo "[FAIL] $1"; }
 
-# ── 从 src/main.py 读取版本号（与 update.sh read_version_from_main 同源）──
-VERSION="$(python3 - "$PROJECT_DIR/src/main.py" <<'PY'
+# ── 读取版本号（与 update.sh read_version_from_main 同源）──
+# 唯一事实来源：根目录 VERSION 纯文本文件；回退到 src/app/version.py、src/main.py 兼容旧结构。
+VERSION="$(python3 - "$PROJECT_DIR" <<'PY'
 import re, sys
 from pathlib import Path
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-m = re.search(r'version\s*=\s*"([^"]+)"', text)
-print(m.group(1) if m else "unknown")
+root = Path(sys.argv[1])
+# 优先读根目录 VERSION 纯文本文件
+vf = root / "VERSION"
+if vf.exists():
+    v = vf.read_text(encoding="utf-8").strip()
+    if v:
+        print(v); sys.exit(0)
+# 回退：扫 Python 源码里的 APP_VERSION 字面量
+for candidate in (root / "src/app/version.py", root / "src/main.py"):
+    if not candidate.exists():
+        continue
+    m = re.search(r'APP_VERSION\s*=\s*"([^"]+)"', candidate.read_text(encoding="utf-8"))
+    if m:
+        print(m.group(1)); break
+else:
+    print("unknown")
 PY
 )"
 
@@ -111,11 +125,12 @@ if [ ! -f "$PROJECT_DIR/start.sh" ]; then
 fi
 
 # ── 待打包成员（相对 PROJECT_DIR 的路径）──
-# 目录对齐 update.sh copy_versioned_files；package.json 仅供首次部署 npm install。
+# 目录对齐 update.sh copy_versioned_files；package.json/package-lock.json 供首次部署可复现的 npm install。
 MEMBERS=(
   src tools tests docs skills
+  VERSION
   start.sh update.sh
-  requirements.txt pyproject.toml package.json
+  requirements.txt pyproject.toml package.json package-lock.json
   README.md CLAUDE.md LICENSE
   .env.example
   runtime/config/ui-branding.example.yaml
@@ -235,13 +250,21 @@ self_check() {
   if ! echo "$listing" | grep -Eq '(^|/)src/main\.py$'; then
     fail "自检失败：缺少 src/main.py"; check_fail=1
   fi
+  # 前端入口必须存在，否则部署后页面 404
+  if ! echo "$listing" | grep -Eq '(^|/)src/static/index\.html$'; then
+    fail "自检失败：缺少 src/static/index.html"; check_fail=1
+  fi
+  # skills/ 至少含一个技能文件，防止技能目录被误删后空包过检
+  if ! echo "$listing" | grep -Eq '(^|/)skills/[^/]+/[^/]+$'; then
+    fail "自检失败：skills/ 目录为空或缺失技能文件"; check_fail=1
+  fi
 
   if [ "$check_fail" -ne 0 ]; then
     rm -f "$pkg"
     fail "自检未通过，已删除 $pkg"
     return 1
   fi
-  log "自检通过：含 src/main.py，无密钥/业务数据/缓存/依赖目录"
+  log "自检通过：含 src/main.py 与前端入口，skills/ 非空，无密钥/业务数据/缓存/依赖目录"
   return 0
 }
 
@@ -293,7 +316,7 @@ for entry in "${PACKAGES[@]}"; do
 done
 log ""
 log "部署方式（目标服务器）："
-log "  zip    : unzip *.zip -d <目录>，按 docs/4-deployment/2026-07-07-打包与部署指南.md 首次部署"
+log "  zip    : unzip *.zip -d <目录>，按 docs/packaging-and-deployment.md 首次部署"
 log "  tar.gz : 放到项目根目录执行 ./update.sh（自动备份/校验/回滚）；或 tar -xzf 手动首次部署"
 
 if [ "$SHOW_LIST" = true ]; then

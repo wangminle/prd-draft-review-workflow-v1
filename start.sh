@@ -27,7 +27,9 @@ case "${1:-start}" in
       fi
     done
     PORT="${SERVER_PORT:-17957}"
-    echo "Starting server on port $PORT..."
+    # 监听地址：默认只绑定回环（经反向代理对外暴露），直连部署设 SERVER_HOST=0.0.0.0
+    HOST="${SERVER_HOST:-127.0.0.1}"
+    echo "Starting server on $HOST:$PORT..."
     if [ -z "$JWT_SECRET" ]; then
       export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
       echo "Generated JWT_SECRET for this session"
@@ -49,15 +51,22 @@ case "${1:-start}" in
     if ! command -v npm &>/dev/null; then
       echo "[WARN] npm not found — Pi Agent project dependencies cannot be installed"
     fi
+    # 子路径反代部署（如 https://host/prd-review/ -> 本服务）时设置 ROOT_PATH=/prd-review
+    ROOT_PATH_ARG=()
+    if [ -n "$ROOT_PATH" ]; then
+      ROOT_PATH_ARG=(--root-path "$ROOT_PATH")
+      echo "Mounting under root-path: $ROOT_PATH"
+    fi
     PYTHONPATH=src nohup uvicorn src.main:app \
-      --host 0.0.0.0 \
-      --port $PORT \
+      --host "$HOST" \
+      --port "$PORT" \
+      "${ROOT_PATH_ARG[@]}" \
       --access-log \
       >> "$LOG_FILE" 2>&1 &
     echo $! > "$PID_FILE"
     echo "Server started (PID $(cat "$PID_FILE"))"
     sleep 2
-    curl -s http://localhost:$PORT/api/health && echo " — health check OK" || echo " — health check FAILED"
+    curl -s --max-time 5 http://localhost:$PORT/api/health && echo " — health check OK" || echo " — health check FAILED"
     ;;
   stop)
     if [ -f "$PID_FILE" ]; then
@@ -79,9 +88,14 @@ case "${1:-start}" in
     ;;
   status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+      for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/src/.env"; do
+        if [ -f "$env_file" ]; then
+          set -a; source "$env_file"; set +a
+        fi
+      done
       PORT="${SERVER_PORT:-17957}"
       echo "Server running (PID $(cat "$PID_FILE"))"
-      curl -s http://localhost:$PORT/api/health && echo "" || echo "Health check failed"
+      curl -s --max-time 5 http://localhost:$PORT/api/health && echo "" || echo "Health check failed"
     else
       echo "Server not running"
       rm -f "$PID_FILE"

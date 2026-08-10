@@ -282,7 +282,8 @@ def test_bug113_bridge_injects_allowed_tools_into_env():
         api_base="http://127.0.0.1:17957",
         one_shot_approved=["bash"],
     )
-    assert env["AGENT_ALLOWED_TOOLS"] == "rag_search,read"
+    # BUG-125 起 one_shot_approved 会并入 AGENT_ALLOWED_TOOLS（Extension 白名单放行一次性审批工具）
+    assert env["AGENT_ALLOWED_TOOLS"] == "rag_search,read,bash"
     assert env["AGENT_SCOPE_JSON"] == '{"default":"personal"}'
     assert env["AGENT_USER_ID"] == "7"
     assert env["AGENT_RUN_ID"] == "42"

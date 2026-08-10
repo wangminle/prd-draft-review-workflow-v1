@@ -1,7 +1,27 @@
 /* API 调用封装 */
 const API = {
     _token: null,
-    _base: '',
+    /* 部署前缀（子路径反代时非空，如 "/prd-review"）。
+       优先取服务端注入的 window.__BASE_PATH__，否则从本脚本的加载路径推导。 */
+    _base: (function () {
+        if (typeof window.__BASE_PATH__ === 'string' && window.__BASE_PATH__) {
+            return window.__BASE_PATH__.replace(/\/+$/, '');
+        }
+        try {
+            const src = document.currentScript && document.currentScript.src;
+            if (src) {
+                const pathname = new URL(src).pathname;
+                const idx = pathname.lastIndexOf('/js/');
+                if (idx > 0) return pathname.slice(0, idx);
+            }
+        } catch (e) { /* 推导失败则按根路径部署处理 */ }
+        return '';
+    })(),
+
+    /* 拼接完整请求路径（自动带上部署前缀） */
+    _url(path) {
+        return `${this._base}${path}`;
+    },
 
     setToken(token) {
         this._token = token;
@@ -60,7 +80,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch('/api/chat', {
+        const resp = await fetch(this._url('/api/chat'), {
             method: 'POST',
             headers,
             body: JSON.stringify({ ...payload, stream: true }),
@@ -88,7 +108,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch('/api/upload/file', { method: 'POST', headers, body: formData });
+        const resp = await fetch(this._url('/api/upload/file'), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
@@ -235,7 +255,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/personal/sources/${sourceId}/download`, { method: 'GET', headers });
+        const resp = await fetch(this._url(`/api/personal/sources/${sourceId}/download`), { method: 'GET', headers });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
@@ -252,7 +272,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch('/api/personal/sources', { method: 'POST', headers, body: formData });
+        const resp = await fetch(this._url('/api/personal/sources'), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
@@ -265,7 +285,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/workspace/${wsId}/sources/${sourceId}/download`, { method: 'GET', headers });
+        const resp = await fetch(this._url(`/api/workspace/${wsId}/sources/${sourceId}/download`), { method: 'GET', headers });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
@@ -283,7 +303,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/workspace/${wsId}/sources`, { method: 'POST', headers, body: formData });
+        const resp = await fetch(this._url(`/api/workspace/${wsId}/sources`), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
             throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
@@ -314,7 +334,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/review/projects/${projectId}/documents`, {
+        const resp = await fetch(this._url(`/api/review/projects/${projectId}/documents`), {
             method: 'POST', headers, body: formData,
         });
         if (!resp.ok) {
@@ -329,7 +349,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/review/projects/${projectId}/historical-documents`, {
+        const resp = await fetch(this._url(`/api/review/projects/${projectId}/historical-documents`), {
             method: 'POST', headers, body: formData,
         });
         if (!resp.ok) {
@@ -354,13 +374,14 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const ticketResp = await fetch('/api/auth/sse-ticket', { method: 'POST', headers });
+        const ticketResp = await fetch(this._url('/api/auth/sse-ticket'), { method: 'POST', headers });
         if (!ticketResp.ok) {
             const err = await ticketResp.json().catch(() => ({ detail: ticketResp.statusText }));
             throw new Error(`${ticketResp.status} ${err.detail || ticketResp.statusText}`);
         }
         const data = await ticketResp.json();
-        const url = `${this._base}/api/review/projects/${projectId}/reviews/${reviewId}`;
+        // 与全局规范一致：统一走 _url 拼接部署前缀，避免手拼 _base 在 _url 增强时遗漏
+        const url = this._url(`/api/review/projects/${projectId}/reviews/${reviewId}`);
         return new EventSource(`${url}?ticket=${encodeURIComponent(data.ticket)}`);
     },
 
@@ -385,7 +406,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/review/projects/${projectId}/reviews/${reviewId}/report?format=markdown`, { headers });
+        const resp = await fetch(this._url(`/api/review/projects/${projectId}/reviews/${reviewId}/report?format=markdown`), { headers });
         if (!resp.ok) throw new Error('导出失败');
         return resp.text();
     },
@@ -413,7 +434,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        fetch('/api/log', {
+        fetch(this._url('/api/log'), {
             method: 'POST',
             headers,
             body: JSON.stringify({ level, action, message: message || action, page, detail }),
@@ -446,7 +467,7 @@ const API = {
         if (this.getToken()) {
             headers['Authorization'] = `Bearer ${this.getToken()}`;
         }
-        const resp = await fetch(`/api/agent/runs/${runId}/stream`, {
+        const resp = await fetch(this._url(`/api/agent/runs/${runId}/stream`), {
             method: 'POST',
             headers,
         });

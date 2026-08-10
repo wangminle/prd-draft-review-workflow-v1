@@ -14,10 +14,17 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-SCRIPT_PATH = PROJECT_ROOT / "scripts" / "run_p2d1_eval.py"
+SCRIPT_PATH = PROJECT_ROOT / "eval" / "p2d1" / "scripts" / "run_p2d1_eval.py"
 EVAL_DIR = PROJECT_ROOT / "eval" / "p2d1"
 RESULTS_JSON = EVAL_DIR / "p2d1_results.json"
 REPORT_MD = EVAL_DIR / "P2D1-检索评估报告.md"
+
+# eval/ 整体被 .gitignore 排除（POC 实验与验收数据，非生产产物）。
+# 干净克隆或 CI 环境中 eval/ 不存在，所有测试自动跳过而非失败。
+pytestmark = pytest.mark.skipif(
+    not EVAL_DIR.exists(),
+    reason="eval/ 目录被 gitignore 排除；需本地保留 eval 数据才能运行",
+)
 
 
 class TestEvalScriptExists:
@@ -36,23 +43,23 @@ class TestDocumentLoading:
     """POC 样例文档加载正确性。"""
 
     def test_poc_samples_dir_exists(self):
-        samples_dir = PROJECT_ROOT / "poc-a" / "samples"
+        samples_dir = PROJECT_ROOT / "eval" / "poc" / "poc-a" / "samples"
         assert samples_dir.exists(), f"POC 样例目录不存在: {samples_dir}"
 
     def test_prd_samples_exist(self):
-        prd_dir = PROJECT_ROOT / "poc-a" / "samples" / "prds"
+        prd_dir = PROJECT_ROOT / "eval" / "poc" / "poc-a" / "samples" / "prds"
         assert prd_dir.exists(), f"PRD 样例目录不存在: {prd_dir}"
         prd_files = list(prd_dir.glob("*.md"))
         assert len(prd_files) >= 20, f"PRD 文档不足 20 份: {len(prd_files)}"
 
     def test_norm_samples_exist(self):
-        norm_dir = PROJECT_ROOT / "poc-a" / "samples" / "norms"
+        norm_dir = PROJECT_ROOT / "eval" / "poc" / "poc-a" / "samples" / "norms"
         assert norm_dir.exists(), f"规范样例目录不存在: {norm_dir}"
         norm_files = list(norm_dir.glob("*.md"))
         assert len(norm_files) >= 5, f"规范文档不足 5 份: {len(norm_files)}"
 
     def test_report_samples_exist(self):
-        report_dir = PROJECT_ROOT / "poc-a" / "samples" / "reports"
+        report_dir = PROJECT_ROOT / "eval" / "poc" / "poc-a" / "samples" / "reports"
         assert report_dir.exists(), f"报告样例目录不存在: {report_dir}"
         report_files = list(report_dir.glob("*.md"))
         assert len(report_files) >= 5, f"报告文档不足 5 份: {len(report_files)}"
@@ -60,7 +67,7 @@ class TestDocumentLoading:
     def test_load_poc_samples_function(self):
         """测试 load_poc_samples 函数能正确加载文档。"""
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples
 
         docs = load_poc_samples()
@@ -76,7 +83,7 @@ class TestDocumentLoading:
 
     def test_document_type_distribution(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples
 
         docs = load_poc_samples()
@@ -93,7 +100,7 @@ class TestQuestionGeneration:
 
     def test_auto_questions_count(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples, generate_auto_questions
 
         docs = load_poc_samples()
@@ -106,7 +113,7 @@ class TestQuestionGeneration:
 
     def test_supplemental_questions_count(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples, generate_supplemental_questions
 
         docs = load_poc_samples()
@@ -115,7 +122,7 @@ class TestQuestionGeneration:
 
     def test_supplemental_no_answer_count(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples, generate_supplemental_questions
 
         docs = load_poc_samples()
@@ -128,7 +135,7 @@ class TestQuestionGeneration:
 
     def test_supplemental_category_distribution(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import load_poc_samples, generate_supplemental_questions
 
         docs = load_poc_samples()
@@ -146,7 +153,7 @@ class TestHitDetermination:
 
     def test_title_matches_exact(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import _title_matches
 
         assert _title_matches("001-智能对话系统", ["智能对话系统"])
@@ -154,7 +161,7 @@ class TestHitDetermination:
 
     def test_title_matches_partial(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import _title_matches
 
         # 包含关系
@@ -162,14 +169,14 @@ class TestHitDetermination:
 
     def test_title_no_match(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import _title_matches
 
         assert not _title_matches("知识库资料管理", ["智能对话系统"])
 
     def test_title_matches_empty_expected(self):
         import sys
-        sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+        sys.path.insert(0, str(PROJECT_ROOT / "eval" / "p2d1" / "scripts"))
         from run_p2d1_eval import _title_matches
 
         assert not _title_matches("智能对话系统", [])
@@ -181,7 +188,7 @@ class TestEvalResults:
     @pytest.fixture
     def results_data(self):
         if not RESULTS_JSON.exists():
-            pytest.skip("评估结果文件不存在，请先运行 python3 scripts/run_p2d1_eval.py")
+            pytest.skip("评估结果文件不存在，请先运行 python3 eval/p2d1/scripts/run_p2d1_eval.py")
         with open(RESULTS_JSON, encoding="utf-8") as f:
             return json.load(f)
 
@@ -263,7 +270,7 @@ class TestEvalReport:
     @pytest.fixture
     def report_text(self):
         if not REPORT_MD.exists():
-            pytest.skip("评估报告不存在，请先运行 python3 scripts/run_p2d1_eval.py")
+            pytest.skip("评估报告不存在，请先运行 python3 eval/p2d1/scripts/run_p2d1_eval.py")
         return REPORT_MD.read_text(encoding="utf-8")
 
     def test_report_has_title(self, report_text):

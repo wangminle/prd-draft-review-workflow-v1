@@ -69,37 +69,9 @@ build/
 
 # Node.js dependencies (npm install output)
 node_modules/
-package-lock.json
 
-# POC-A experiment directory
-# Keep scripts, tests and reports in git; ignore samples and results (generated data).
-poc-a/*
-!poc-a/scripts/
-!poc-a/scripts/*.py
-!poc-a/tests/
-!poc-a/tests/*.py
-!poc-a/reports/
-!poc-a/reports/*.md
+# Evaluation directory — POC experiments and P2.D.1 acceptance artifacts stay out of git entirely
+eval/
 
-# POC-B experiment directory
-poc-b/*
-!poc-b/scripts/
-!poc-b/scripts/*.py
-!poc-b/reports/
-!poc-b/reports/*.md
-
-# POC-C experiment directory
-poc-c/*
-!poc-c/scripts/
-!poc-c/scripts/*.py
-!poc-c/reports/
-!poc-c/reports/*.md
-
-# API keys — never commit
-poc-c/openai-key.txt
-
-# P2.D.1 evaluation directory — generated runtime data, results and reports
-# Keep the evaluation script and test file in git; ignore runtime data and results
-eval/p2d1/runtime/
-eval/p2d1/p2d1_results.json
-eval/p2d1/P2D1-检索评估报告.md
+# Design documents (internal, pending sensitive-info review before partial git tracking)
+design/

@@ -29,7 +29,7 @@ from app.runtime_paths import runtime_path
 _logs_dir = setup_logging(runtime_path("logs"))
 
 from fastapi import Depends, FastAPI, Request, Response
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -43,6 +43,7 @@ from app.services.branding_config import (
     ensure_branding_dirs,
     DEFAULT_BRANDING,
 )
+from app.version import APP_VERSION
 
 
 class NoCacheMiddleware(BaseHTTPMiddleware):
@@ -51,7 +52,12 @@ class NoCacheMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next):
         response = await call_next(request)
-        if request.url.path.startswith("/api/"):
+        # root_path 部署（子路径反代）时 url.path 带前缀，先剥离再判断
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path):]
+        if path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
         return response
 
@@ -77,11 +83,17 @@ async def lifespan(app: FastAPI):
         await engine.dispose()
 
 
+# 应用版本号（唯一事实来源在 app.version；/api/health 与打包脚本均引用此处）
+
+# 子路径反代部署时的挂载前缀（如 "/prd-review"），由 uvicorn --root-path 或 ROOT_PATH 环境变量指定
+ROOT_PATH = os.environ.get("ROOT_PATH", "").rstrip("/")
+
 app = FastAPI(
     title=DEFAULT_BRANDING["app_title"],
     description="局域网 AI 对话服务",
-    version="0.3.6",
+    version=APP_VERSION,
     lifespan=lifespan,
+    root_path=ROOT_PATH,
 )
 
 app.add_middleware(NoCacheMiddleware)
@@ -104,7 +116,7 @@ app.include_router(governance.router, prefix="/api", tags=["治理与运营"])
 
 @app.get("/api/health")
 async def health_check():
-    return {"status": "ok", "version": "0.3.6"}
+    return {"status": "ok", "version": APP_VERSION}
 
 
 @app.get("/api/app/branding")
@@ -112,11 +124,11 @@ async def get_branding():
     """返回合并后的品牌配置供前端使用。"""
     config = get_branding_config()
     result = dict(config)
-    # 将资产文件名转换为可访问 URL
+    # 将资产文件名转换为可访问 URL（相对路径，子路径前缀部署下由浏览器相对页面解析）
     for key in ("login_logo", "topbar_logo", "favicon"):
         val = result.get(key)
         if val:
-            result[key] = f"/assets/branding/{val}"
+            result[key] = f"assets/branding/{val}"
         else:
             result[key] = ""
     return result
@@ -174,5 +186,35 @@ async def frontend_log(
 
 
 static_dir = Path(__file__).parent / "static"
+
+
+def _render_index(root_path: str) -> str:
+    """读取 index.html 并在 </head> 前注入部署前缀 window.__BASE_PATH__。
+
+    前端 api.js 的 _base 优先读取该全局变量，确保子路径反代部署
+    （如 https://host/prd-review/）下，所有 /api、/assets 请求都带正确前缀。
+    root_path 为空（根路径部署）时仍注入空串，使前端行为显式且可缓存。
+    """
+    index_path = static_dir / "index.html"
+    html = index_path.read_text(encoding="utf-8")
+    # 规范化：去首尾斜杠，避免出现 // 或尾部斜杠导致前端拼接异常
+    normalized = (root_path or "").strip().strip("/")
+    inject = f"<script>window.__BASE_PATH__='/{normalized}';</script>" if normalized else "<script>window.__BASE_PATH__='';</script>"
+    return html.replace("</head>", f"{inject}</head>", 1)
+
+
+@app.get("/")
+async def serve_index():
+    """根入口：返回注入了 __BASE_PATH__ 的 index.html。
+
+    显式路由注册在 app.mount("/", StaticFiles(...)) 之前，命中优先于静态挂载，
+    从而获得字符串注入机会（StaticFiles(html=True) 直接返回原文件无法注入）。
+    加 no-store 防止浏览器缓存住旧前缀的页面。
+    """
+    if not static_dir.exists() or not (static_dir / "index.html").exists():
+        return Response(status_code=404)
+    return HTMLResponse(_render_index(ROOT_PATH), headers={"Cache-Control": "no-store"})
+
+
 if static_dir.exists():
     app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")

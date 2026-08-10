@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import MCPServerConfig, MCPToolPolicy
+from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ class MCPClient:
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "ai-review-agent", "version": "0.3.6"},
+                    "clientInfo": {"name": "ai-review-agent", "version": APP_VERSION},
                 },
             })
             self._proc.stdin.write(init_msg + "\n")
