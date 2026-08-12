@@ -121,7 +121,7 @@ WHITELIST = {
     },
     "review.py": {
         "db_add": 1,       # covered_doc_ids.add() - set op, not db.add. Persistence in repos + ReviewProjectRepository + ReviewContextRepository + ReviewPromptRepository — D.1 + E.1 完成
-        "db_commit": 35,   # P1-4.3 preflight gate on production path: +1 (early fail for inactive required skill)
+        "db_commit": 37,   # BUG-138: +2 for docx fallback (preprocess loop + historical docs loop)
         "db_flush": 1,     # freeze_snapshot flush — P0.C.3
         "builtin_open": 0,   # 已迁移到 ReviewFileStorage.read_markdown() — WBS C.1 + F 完成
         "os_makedirs": 0,    # 已迁移到 ReviewFileStorage — WBS C.1 完成

@@ -212,7 +212,9 @@ def test_failed_review_is_included_in_tasks_with_results():
 def test_batch_system_review_tasks_do_not_populate_single_doc_history():
     load_review_history_block = REVIEW_JS.split("async _loadReviewHistory(projectId, stateVersion = this._stateVersion)", 1)[1].split("_isDocModeCompleted", 1)[0]
     assert "const sharedResultModes = new Set(['review', 'insight', 'draft', 'pm']);" in load_review_history_block
-    assert "if (task.mode === 'full') return;" in load_review_history_block
+    # BUG-143: full 不再被无条件跳过（单文档 full 完成后子模式应显示已完成）；
+    # 批量任务改由 documentIds.length !== 1 守卫过滤
+    assert "if (documentIds.length !== 1) return;" in load_review_history_block
     assert "if (sharedResultModes.has(task.mode) && task.total_docs !== 1) return;" in load_review_history_block
 
 
@@ -782,3 +784,66 @@ def test_admin_has_show_agent_approvals():
 def test_api_notifications_uses_limit_offset():
     """BUG-091: 通知分页与后端 limit/offset 对齐"""
     assert "limit=${pageSize}&offset=${offset}" in API_JS
+
+
+def test_presentation_entry_has_close_button():
+    """BUG-142: '审查已完成'提示条有关闭按钮。"""
+    assert 'id="presentation-entry-close"' in HTML
+    assert "presentation-entry-close" in REVIEW_JS
+    # 确认点击关闭按钮会隐藏提示条
+    close_block = REVIEW_JS.split("presentation-entry-close")[1].split("addEventListener")[1].split("}")[0]
+    assert "review-presentation-entry" in close_block
+    assert "none" in close_block
+
+
+def test_mode_covers_hierarchy_defined():
+    """BUG-143: MODE_COVERS 定义了模式包含关系，full 覆盖所有单篇模式。"""
+    assert "MODE_COVERS" in REVIEW_JS
+    covers_block = REVIEW_JS.split("MODE_COVERS:")[1].split("},")[0]
+    # quick 只覆盖自身
+    assert "quick:   ['quick']" in covers_block
+    # full 覆盖 quick/review/pm/insight 且包含自身
+    full_lines = [ln for ln in covers_block.split('\n') if ln.strip().startswith("full:")]
+    assert len(full_lines) == 1
+    full_cover = full_lines[0]
+    for sub in ("'quick'", "'review'", "'pm'", "'insight'", "'full'"):
+        assert sub in full_cover, f"full 的 MODE_COVERS 应包含 {sub}"
+    # draft 是 full 的超集，应额外覆盖 full
+    draft_lines = [ln for ln in covers_block.split('\n') if ln.strip().startswith("draft:")]
+    assert len(draft_lines) == 1
+    assert "'full'" in draft_lines[0] and "'draft'" in draft_lines[0]
+
+
+def test_load_review_history_expands_mode_coverage():
+    """BUG-143: _loadReviewHistory 不再跳过 full 模式，而是展开为子模式。"""
+    # 确认不再有 'if (task.mode === "full") return;' 的跳过逻辑
+    load_history_block = REVIEW_JS.split("async _loadReviewHistory(projectId, stateVersion = this._stateVersion)", 1)[1].split("_isDocModeCompleted", 1)[0]
+    # 不应有无条件跳过 full 的代码
+    assert 'mode === \'full\') return' not in load_history_block, (
+        "_loadReviewHistory 中不应再无条件跳过 full 模式"
+    )
+    # 应该使用 MODE_COVERS 展开
+    assert "MODE_COVERS" in load_history_block, (
+        "_loadReviewHistory 应使用 MODE_COVERS 展开模式包含关系"
+    )
+
+
+def test_upsert_review_task_expands_mode_coverage():
+    """BUG-143: _upsertReviewTask 也应展开模式包含关系。"""
+    upsert_block = REVIEW_JS.split("_upsertReviewTask(task)", 1)[1].split("_getTaskInfo", 1)[0]
+    assert "MODE_COVERS" in upsert_block, (
+        "_upsertReviewTask 应使用 MODE_COVERS 展开模式包含关系"
+    )
+
+
+def test_failed_tasks_do_not_propagate_to_submodes():
+    """BUG-143: failed/cancelled 任务不得向下传播遮蔽已完成的低级别模式。"""
+    load_history_block = REVIEW_JS.split("async _loadReviewHistory(projectId, stateVersion = this._stateVersion)", 1)[1].split("_isDocModeCompleted", 1)[0]
+    # _reviewTaskMap 构建：propagates 白名单只含 running/pending/completed/completed_with_warnings
+    assert "propagates" in load_history_block
+    assert "'running', 'pending', 'completed', 'completed_with_warnings'" in load_history_block
+    # _reviewDocMap 构建：只有 succeeded 的任务才展开到子模式
+    assert "succeeded" in load_history_block
+    # _upsertReviewTask 同样有 propagates 保护
+    upsert_block = REVIEW_JS.split("_upsertReviewTask(task)", 1)[1].split("_getTaskInfo", 1)[0]
+    assert "propagates" in upsert_block

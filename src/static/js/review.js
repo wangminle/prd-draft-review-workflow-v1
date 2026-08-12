@@ -535,6 +535,20 @@ const Review = {
         });
     },
 
+    // Mode inclusion hierarchy: completing a higher mode implies all
+    // sub-modes are also completed for the same document(s).
+    // quick ⊂ review/pm ⊂ insight/full ⊂ draft
+    // (full ⊃ insight: full 与 insight 步骤相同，且 full 报告含全部维度，
+    //  故 full 也覆盖 insight；draft 的 7 步包含 full 的 6 步)
+    MODE_COVERS: {
+        quick:   ['quick'],
+        review:  ['quick', 'review'],
+        pm:      ['quick', 'pm'],
+        insight: ['quick', 'review', 'insight'],
+        full:    ['quick', 'review', 'pm', 'insight', 'full'],
+        draft:   ['quick', 'review', 'pm', 'insight', 'full', 'draft'],
+    },
+
     async _loadReviewHistory(projectId, stateVersion = this._stateVersion) {
         this._reviewHistory = [];
         this._reviewDocMap = {};
@@ -543,19 +557,29 @@ const Review = {
             const tasks = await API.listReviews(projectId);
             if (this._isStaleState(stateVersion) || this.currentProjectId !== projectId) return;
             this._reviewHistory = tasks || [];
+            // Build _reviewTaskMap — expand mode coverage so higher modes
+            // (full/insight/draft) mark their sub-modes as having a task too.
+            // Running/pending propagate downward (sub-mode cards show 进行中);
+            // successful results propagate downward (sub-mode cards show 已完成);
+            // failed/cancelled do NOT propagate — a failed full task must not
+            // shadow a previously completed quick task for the same document.
             (tasks || []).forEach(task => {
                 const documentIds = Array.isArray(task.document_ids) ? task.document_ids : [];
-                if (documentIds.length !== 1 || task.mode === 'full') return;
-                const key = `${documentIds[0]}_${task.mode}`;
-                const existing = this._reviewTaskMap[key];
-                if (!existing || task.task_id > existing.taskId) {
-                    this._reviewTaskMap[key] = {
-                        taskId: task.task_id,
-                        status: task.status,
-                        mode: task.mode,
-                        documentIds,
-                    };
-                }
+                if (documentIds.length !== 1) return;
+                const propagates = ['running', 'pending', 'completed', 'completed_with_warnings'].includes(task.status);
+                const coveredModes = propagates ? (this.MODE_COVERS[task.mode] || [task.mode]) : [task.mode];
+                coveredModes.forEach(m => {
+                    const key = `${documentIds[0]}_${m}`;
+                    const existing = this._reviewTaskMap[key];
+                    if (!existing || task.task_id > existing.taskId) {
+                        this._reviewTaskMap[key] = {
+                            taskId: task.task_id,
+                            status: task.status,
+                            mode: m,
+                            documentIds,
+                        };
+                    }
+                });
             });
             const tasksWithResults = (tasks || []).filter(t => ['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(t.status));
             const analysesResults = await Promise.all(
@@ -564,15 +588,23 @@ const Review = {
             if (this._isStaleState(stateVersion) || this.currentProjectId !== projectId) return;
             const sharedResultModes = new Set(['review', 'insight', 'draft', 'pm']);
             tasksWithResults.forEach((task, i) => {
-                if (task.mode === 'full') return;
                 if (sharedResultModes.has(task.mode) && task.total_docs !== 1) return;
                 const analyses = analysesResults[i] || [];
+                // Expand successful tasks to all sub-modes they cover, so e.g.
+                // a completed full task marks quick/review/pm/insight as
+                // completed for the same document. Failed/cancelled tasks only
+                // record their exact mode — they must not shadow a previously
+                // completed lower-mode task.
+                const succeeded = task.status === 'completed' || task.status === 'completed_with_warnings';
+                const docModes = succeeded ? (this.MODE_COVERS[task.mode] || [task.mode]) : [task.mode];
                 analyses.forEach(a => {
-                    const key = `${a.document_id}_${task.mode}`;
-                    const existing = this._reviewDocMap[key];
-                    if (!existing || task.task_id > existing.taskId) {
-                        this._reviewDocMap[key] = { taskId: task.task_id, status: task.status };
-                    }
+                    docModes.forEach(m => {
+                        const key = `${a.document_id}_${m}`;
+                        const existing = this._reviewDocMap[key];
+                        if (!existing || task.task_id > existing.taskId) {
+                            this._reviewDocMap[key] = { taskId: task.task_id, status: task.status };
+                        }
+                    });
                 });
             });
             if (this._docsCache.length) {
@@ -638,12 +670,19 @@ const Review = {
         } else {
             this._reviewHistory.unshift(raw);
         }
-        if (normalized.documentIds.length === 1 && normalized.mode !== 'full') {
-            const key = `${normalized.documentIds[0]}_${normalized.mode}`;
-            const existing = this._reviewTaskMap[key];
-            if (!existing || normalized.taskId >= existing.taskId) {
-                this._reviewTaskMap[key] = normalized;
-            }
+        if (normalized.documentIds.length === 1) {
+            // Same propagation rule as _loadReviewHistory: running/pending and
+            // successful statuses propagate to covered sub-modes; failed/
+            // cancelled only record their exact mode.
+            const propagates = ['running', 'pending', 'completed', 'completed_with_warnings'].includes(normalized.status);
+            const coveredModes = propagates ? (this.MODE_COVERS[normalized.mode] || [normalized.mode]) : [normalized.mode];
+            coveredModes.forEach(m => {
+                const key = `${normalized.documentIds[0]}_${m}`;
+                const existing = this._reviewTaskMap[key];
+                if (!existing || normalized.taskId >= existing.taskId) {
+                    this._reviewTaskMap[key] = { ...normalized, mode: m };
+                }
+            });
         }
         return normalized;
     },
@@ -3111,6 +3150,14 @@ const Review = {
         const prepBtn = document.getElementById('prepare-presentation-btn');
         if (prepBtn) {
             prepBtn.addEventListener('click', () => this._startPresentation());
+        }
+        // 关闭"审查已完成"提示条
+        const closeBtn = document.getElementById('presentation-entry-close');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                const entry = document.getElementById('review-presentation-entry');
+                if (entry) entry.style.display = 'none';
+            });
         }
         // P4.B.2: 创建物料按钮
         const createArtifactBtn = document.getElementById('create-artifact-btn');

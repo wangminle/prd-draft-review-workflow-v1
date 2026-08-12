@@ -375,10 +375,23 @@ async def _save_project_documents(
     allowed_ext = upload_cfg.get("allowed_extensions", [".docx"])
 
     saved = []
+    skipped = []
     for f in files:
         ext = Path(f.filename or "").suffix.lower()
         if ext not in allowed_ext:
             raise HTTPException(status_code=400, detail=f"不支持的文件类型: {ext}")
+
+        # BUG-141: skip duplicate filenames — same project + same document_type + same filename
+        dup_result = await db.execute(
+            select(ReviewDocument).where(
+                ReviewDocument.project_id == project_id,
+                ReviewDocument.document_type == document_type,
+                ReviewDocument.filename == f.filename,
+            )
+        )
+        if dup_result.scalar_one_or_none() is not None:
+            skipped.append({"filename": f.filename, "reason": "同名文件已存在"})
+            continue
 
         content = await f.read()
         if len(content) > max_size_mb * 1024 * 1024:
@@ -402,7 +415,7 @@ async def _save_project_documents(
         saved.append({"filename": f.filename, "size": len(content), "document_type": document_type})
 
     await db.commit()
-    return {"uploaded": len(saved), "files": saved}
+    return {"uploaded": len(saved), "files": saved, "skipped": skipped}
 
 
 # ── Projects ──
@@ -1450,6 +1463,27 @@ async def _run_pipeline(
                     return
                 try:
                     source_path = _resolve_stored_file_path(doc.file_path)
+                    # Fallback: if source docx is missing but a previously-converted
+                    # markdown exists, reuse it instead of failing the pipeline.
+                    # This handles environments where original uploads were not
+                    # synced (e.g., local dev from a shared deployment).
+                    if not source_path or not os.path.exists(source_path):
+                        existing_md = doc.md_path
+                        if existing_md:
+                            try:
+                                await _review_file_storage.read_markdown(existing_md)
+                                logger.warning(
+                                    "源文件不存在但已有转换结果，复用已有 Markdown: doc %d (%s) -> %s",
+                                    doc.id, doc.filename, existing_md,
+                                )
+                                doc.status = "converted"
+                                await db.commit()
+                                continue
+                            except FileNotFoundError:
+                                pass
+                        raise FileNotFoundError(
+                            f"docx not found: {source_path or doc.file_path}"
+                        )
                     md_path = await _convert_docx(source_path, doc.id, doc.filename)
                     doc.md_path = _to_runtime_relative_path(md_path)
                     doc.content_hash = _file_hash(source_path) if source_path and os.path.exists(source_path) else None
@@ -1508,6 +1542,32 @@ async def _run_pipeline(
                         return
                     try:
                         source_path = _resolve_stored_file_path(hdoc.file_path)
+                        # Fallback: reuse existing markdown if source docx is missing
+                        if not source_path or not os.path.exists(source_path):
+                            existing_md = hdoc.md_path
+                            if existing_md:
+                                try:
+                                    await _review_file_storage.read_markdown(existing_md)
+                                    logger.warning(
+                                        "历史文档源文件不存在但已有转换结果，复用: doc %d (%s)",
+                                        hdoc.id, hdoc.filename,
+                                    )
+                                    hdoc.status = "converted"
+                                    await db.commit()
+                                    md_content = await _review_file_storage.read_markdown(existing_md)
+                                    if md_content:
+                                        hist_dicts.append({
+                                            "doc_id": str(hdoc.id),
+                                            "filename": hdoc.filename,
+                                            "md_content": md_content,
+                                            "document_type": "historical",
+                                        })
+                                    continue
+                                except FileNotFoundError:
+                                    pass
+                            raise FileNotFoundError(
+                                f"docx not found: {source_path or hdoc.file_path}"
+                            )
                         md_path = await _convert_docx(source_path, hdoc.id, hdoc.filename)
                         hdoc.md_path = _to_runtime_relative_path(md_path)
                         hdoc.content_hash = _file_hash(source_path) if source_path and os.path.exists(source_path) else None

@@ -20,6 +20,10 @@ htmlcov/
 .coverage
 .coverage.*
 coverage.xml
+coverage.json
+
+# Editor/session plan artifacts
+.zcode/
 
 # Static analysis caches
 .mypy_cache/

@@ -5834,6 +5834,28 @@ input::placeholder, textarea::placeholder {
     margin-top: 2px;
 }
 
+.presentation-entry-close {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    padding: 0;
+    margin-left: auto;
+    font-size: var(--fs-18);
+    line-height: 1;
+    border: none;
+    background: transparent;
+    color: var(--color-text-muted);
+    cursor: pointer;
+    border-radius: var(--radius-medium);
+    transition: background 0.15s, color 0.15s;
+}
+
+.presentation-entry-close:hover {
+    background: rgba(0, 0, 0, 0.06);
+    color: var(--color-text);
+}
+
 /* 产物卡片区域 */
 .review-artifact-section {
     margin-top: var(--sp-6);

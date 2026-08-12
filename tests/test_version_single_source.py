@@ -27,7 +27,7 @@ def test_version_file_exists_and_pure():
 
 def test_version_file_value():
     content = VERSION_FILE.read_text(encoding="utf-8").strip()
-    assert content == "0.3.9", f"VERSION 当前应为 0.3.9，实际 {content!r}"
+    assert content == "0.3.10", f"VERSION 当前应为 0.3.10，实际 {content!r}"
 
 
 def test_version_py_reads_version_file():

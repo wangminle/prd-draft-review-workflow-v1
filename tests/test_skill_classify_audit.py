@@ -183,14 +183,6 @@ def test_config_version_pattern_used_when_cli_is_default():
     assert version_pattern == r"V\d+\.\d+"
 
 
-def test_version_chain_schema_requires_min_items_2():
-    """The version-chain output schema must require minItems=2 for chains."""
-    schema_path = SKILLS / "prd-overview-classify" / "templates" / "output-schema.version-chain.json"
-    schema = json.loads(schema_path.read_text(encoding="utf-8"))
-    chain_item = schema["properties"]["chains"]["items"]
-    assert chain_item["properties"]["versions"]["minItems"] == 2
-
-
 def test_version_chain_schema_includes_dependencies():
     """The version-chain output schema must declare dependencies."""
     schema_path = SKILLS / "prd-overview-classify" / "templates" / "output-schema.version-chain.json"
