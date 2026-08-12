@@ -537,6 +537,8 @@ async def test_init_db_preserves_existing_data():
             await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN product_strategy TEXT"))
         if "tech_evolution" not in sr_columns:
             await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN tech_evolution TEXT"))
+        if "dimensions_meta" not in sr_columns:
+            await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN dimensions_meta TEXT"))
 
         ctx_result = await conn.execute(sa_text("PRAGMA table_info(chat_context_items)"))
         ctx_columns = {row[1] for row in ctx_result.fetchall()}

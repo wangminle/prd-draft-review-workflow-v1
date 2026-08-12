@@ -1,2 +1,4 @@
 pydantic>=2.0
 reportlab>=4.0
+# --polish 功能需要 anthropic SDK（可选，仅在使用 --polish 标记时需要）
+anthropic>=0.40.0

@@ -2,7 +2,7 @@
 """system-review PM评估独立入口：仅执行维度6（PM能力评估）。
 
 用法:
-    python pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
+    python3 pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
 
 输入: prd-overview-classify输出JSON + prd-per-analysis输出目录
 输出: PM能力评估JSON + Markdown报告
@@ -14,7 +14,6 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
     from pydantic import BaseModel, Field
@@ -25,6 +24,13 @@ except ImportError:
 DEFAULT_TEXT_MODEL = "claude-sonnet-4-20250514"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+
+
+def _escape_md_cell(text) -> str:
+    """转义 Markdown 表格单元格中的竖线和换行，避免破坏表格结构。"""
+    if text is None:
+        return ""
+    return str(text).replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
 
 
 class WritingScore(BaseModel):
@@ -160,7 +166,7 @@ def generate_pm_assessment_md(result: PMAssessmentResult, project_name: str) -> 
     for key, label in [("logic", "逻辑结构"), ("tech_depth", "技术深度"),
                        ("boundary", "边界意识"), ("business", "商业视角")]:
         s = getattr(ws, key, WritingScore())
-        lines.append(f"| {label} | {s.score} | {s.evidence} |")
+        lines.append(f"| {label} | {_escape_md_cell(s.score)} | {_escape_md_cell(s.evidence)} |")
     lines.append("")
 
     ts = result.thinking_scores
@@ -170,7 +176,7 @@ def generate_pm_assessment_md(result: PMAssessmentResult, project_name: str) -> 
     for key, label in [("iteration", "迭代思维"), ("experience", "体验思维"),
                        ("data", "数据思维"), ("business", "商业思维")]:
         s = getattr(ts, key, WritingScore())
-        lines.append(f"| {label} | {s.score} | {s.evidence} |")
+        lines.append(f"| {label} | {_escape_md_cell(s.score)} | {_escape_md_cell(s.evidence)} |")
     lines.append("")
 
     if result.highlights:

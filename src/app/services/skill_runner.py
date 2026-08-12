@@ -186,6 +186,28 @@ _MODE_STEPS = {
     "draft": ["classify", "per_analysis", "system_review", "insights", "report"],
 }
 
+# Steps that cannot be skipped — if the underlying Skill is inactive,
+# the pipeline must refuse to start rather than silently skip.
+_REQUIRED_STEPS = {
+    "classify", "per_analysis", "system_review", "report",
+}
+
+# Steps that may be skipped when the underlying Skill is inactive —
+# the pipeline runs in degraded mode and downstream reports must mark
+# the missing dimension explicitly.
+_OPTIONAL_STEPS = {
+    "insights",
+}
+
+
+class SkillInactiveError(RuntimeError):
+    """Raised when a required Skill is inactive and cannot be skipped.
+
+    Distinguishes "degraded mode" (optional Skill inactive, pipeline can
+    continue with warnings) from "blocked mode" (required Skill inactive,
+    pipeline cannot start).
+    """
+
 # System-review dimensions in execution order
 _REVIEW_DIMENSIONS = [
     "business-value",
@@ -399,6 +421,7 @@ class SkillRunner:
         # Validate and repair against output schema
         diagnostics = []
         schema_valid = None
+        schema_critical = False
         schema = self.schema_loader.load(skill_dir, prompt_name)
         if schema:
             errors = self.schema_loader.validate(raw_result, schema)
@@ -407,13 +430,38 @@ class SkillRunner:
                 diagnostics.extend(errors)
                 raw_result = self.schema_loader.repair(raw_result, schema)
                 schema_valid = raw_result.get("_schema_valid", False)
+                schema_critical = bool(raw_result.get("_schema_critical", False))
+                # P1-4.2: Surface non-critical repairs in diagnostics so they
+                # are visible to callers instead of being silently applied.
+                repair_notes = raw_result.pop("_schema_repair_notes", [])
+                if repair_notes:
+                    diagnostics.extend(repair_notes)
+                if schema_critical:
+                    # Critical business field was missing/invalid — treat as error
+                    # so downstream steps cannot silently consume bogus data.
+                    logger.error(
+                        "Schema critical failure for %s: business field invalid/missing",
+                        skill_name,
+                    )
             else:
                 schema_valid = True
         else:
             raw_result["_schema_valid"] = None
 
+        # When a critical business field was repaired, mark step as error so
+        # callers can retry or fail gracefully instead of persisting bogus data.
+        step_status = "success"
+        if raw_result.get("error"):
+            step_status = "error"
+        elif schema_critical:
+            step_status = "error"
+            raw_result["error"] = (
+                f"schema critical validation failure for {skill_name}: "
+                f"business field missing or out of range"
+            )
+
         step_result = SkillStepResult(
-            status="success" if not raw_result.get("error") else "error",
+            status=step_status,
             data=raw_result,
             diagnostics=diagnostics,
             schema_valid=schema_valid,
@@ -432,6 +480,10 @@ class SkillRunner:
 
         Returns:
             Final pipeline_state dict with all intermediate outputs.
+
+        Raises:
+            SkillInactiveError: if a required Skill is marked inactive by the
+                caller-provided `inactive_skills` set in initial_inputs.
         """
         steps = _MODE_STEPS.get(mode, _MODE_STEPS["review"])
         self.state = PipelineState()
@@ -439,8 +491,24 @@ class SkillRunner:
         for key, value in initial_inputs.items():
             self.state[key] = value
 
+        # Preflight: enforce SkillConfig.status gate. The caller passes the
+        # set of inactive skill_ids (from SkillConfigRepository.list_all) via
+        # initial_inputs["inactive_skills"]. Required Skills inactive → raise.
+        # Optional Skills inactive → mark degraded and skip.
+        inactive_skills = set(initial_inputs.get("inactive_skills", []) or [])
+        if inactive_skills:
+            self._preflight_skill_gate(steps, inactive_skills)
+
         for step_idx, skill_name in enumerate(steps):
             logger.info("Pipeline step %d/%d: %s (mode=%s)", step_idx + 1, len(steps), skill_name, mode)
+
+            # Skip optional steps whose Skill is inactive (degraded mode)
+            skill_dir = _SKILL_NAMES.get(skill_name, skill_name)
+            if skill_dir in inactive_skills and skill_name in _OPTIONAL_STEPS:
+                logger.warning("Skill %s inactive — running in degraded mode (skipping %s)",
+                               skill_dir, skill_name)
+                self.state.setdefault("degraded_steps", []).append(skill_name)
+                continue
 
             # Special handling for multi-call steps
             if skill_name == "per_analysis":
@@ -455,6 +523,26 @@ class SkillRunner:
                 self._store_result(skill_name, result)
 
         return self.pipeline_state
+
+    def _preflight_skill_gate(
+        self, steps: list[str], inactive_skills: set[str]
+    ) -> None:
+        """Refuse to start the pipeline if any required Skill is inactive.
+
+        Optional Skills inactive are allowed (degraded mode handled in run_pipeline).
+        """
+        blocked: list[str] = []
+        for step_name in steps:
+            if step_name not in _REQUIRED_STEPS:
+                continue
+            skill_dir = _SKILL_NAMES.get(step_name, step_name)
+            if skill_dir in inactive_skills:
+                blocked.append(skill_dir)
+        if blocked:
+            raise SkillInactiveError(
+                f"必需 Skill 处于 inactive 状态，拒绝启动管线：{', '.join(blocked)}。"
+                f"请在管理后台重新启用后再发起审查任务。"
+            )
 
     # ── Multi-call step handlers ──
 
@@ -502,14 +590,26 @@ class SkillRunner:
         Always runs all 7 dimensions. Results are cached and reused —
         mode only determines which tab to display and what report highlights.
         Returns True when cancelled between dimension calls.
+
+        Tracks per-dimension success/failure in pipeline_state["review_dimensions_meta"]:
+          - dimensions_executed: list of dim names that produced valid (non-error) output
+          - dimensions_failed: list of dim names whose output was an error object
+          - status: "success" | "partial" | "all_failed" | "cancelled"
+
+        If all dimensions fail, status is "all_failed" — callers MUST treat the
+        review step as failed and must not cache or persist the error objects
+        as a completed review.
         """
         dimensions = _REVIEW_DIMENSIONS
 
-        dimension_results = {}
+        dimension_results: dict[str, dict] = {}
+        executed: list[str] = []
+        failed: list[str] = []
 
         for dim_idx, dim_name in enumerate(dimensions):
             if await _cancel_requested(should_cancel):
                 self.pipeline_state["review_dimensions"] = dimension_results
+                self._record_review_dimensions_meta(executed, failed, status="cancelled")
                 return True
             logger.info("System-review dimension %d/%d: %s", dim_idx + 1, len(dimensions), dim_name)
 
@@ -518,24 +618,171 @@ class SkillRunner:
             result = await self._run_dimension_with_retry(dim_name, inputs)
             dimension_results[dim_name] = result
 
+            if isinstance(result, dict) and result.get("error"):
+                failed.append(dim_name)
+                logger.warning("System-review dimension %s failed: %s", dim_name, result.get("error"))
+            else:
+                executed.append(dim_name)
+
         self.pipeline_state["review_dimensions"] = dimension_results
+
+        if not executed:
+            status = "all_failed"
+        elif failed:
+            status = "partial"
+        else:
+            status = "success"
+        self._record_review_dimensions_meta(executed, failed, status=status)
+
         return False
 
+    def _record_review_dimensions_meta(
+        self, executed: list[str], failed: list[str], status: str
+    ) -> None:
+        """Record structured execution summary for the seven-dimension review."""
+        self.pipeline_state["review_dimensions_meta"] = {
+            "dimensions_executed": executed,
+            "dimensions_failed": failed,
+            "total": len(_REVIEW_DIMENSIONS),
+            "success_count": len(executed),
+            "failed_count": len(failed),
+            "status": status,
+        }
+
     async def _run_insights(self) -> None:
-        """Run requirement-insights as 3 sequential sub-steps."""
+        """Run requirement-insights as 3 sequential sub-steps.
+
+        After completion, pipeline_state["insights_meta"] carries:
+          - issue_conservation: total_issues == resolved + partial + unresolved
+          - baseline_warning: non-empty when no independent target baseline
+            was provided (so callers must not claim absolute gap identification)
+          - sub_step_status: per sub-step "success" | "error"
+        """
         sub_steps = [
             ("evolution-match", "evolution"),
             ("feature-extraction", "features"),
             ("gap-assessment", "gap"),
         ]
-        insight_results = {}
+        insight_results: dict[str, dict] = {}
+        sub_step_status: dict[str, str] = {}
+        sub_step_inputs: dict[str, dict] = {}
 
         for prompt_name, key in sub_steps:
             inputs = self._build_insight_inputs(prompt_name, insight_results)
+            sub_step_inputs[prompt_name] = inputs
             result = await self._run_insight_substep_with_retry(prompt_name, inputs)
             insight_results[key] = result
+            sub_step_status[prompt_name] = (
+                "error" if (isinstance(result, dict) and result.get("error")) else "success"
+            )
+
+        # Issue conservation: ensure every input issue is represented in matches.
+        # If the model dropped issues, the LLM-side matches list will be shorter
+        # than the input current_issues list. We backfill unresolved entries here
+        # so downstream stats cannot silently lose problems.
+        evolution_result = insight_results.get("evolution", {}) or {}
+        matches = evolution_result.get("matches", []) if isinstance(evolution_result, dict) else []
+        if isinstance(matches, list):
+            backfilled = self._backfill_missing_issues(
+                matches, sub_step_inputs.get("evolution-match", {})
+            )
+            if backfilled:
+                insight_results["evolution"]["matches"] = backfilled["matches"]
+                insight_results["evolution"]["_conservation_note"] = backfilled["note"]
+
+        # Carry baseline_warning from feature-extraction output into gap-assessment
+        # inputs and surface in insights_meta so reports can be transparent.
+        features_result = insight_results.get("features", {}) or {}
+        baseline_warning = features_result.get("baseline_warning", "") if isinstance(features_result, dict) else ""
+
+        # Issue conservation stats
+        conservation = self._compute_issue_conservation(
+            insight_results.get("evolution", {}) or {}
+        )
 
         self.pipeline_state["insights"] = insight_results
+        self.pipeline_state["insights_meta"] = {
+            "sub_step_status": sub_step_status,
+            "baseline_warning": baseline_warning,
+            "issue_conservation": conservation,
+        }
+
+    def _backfill_missing_issues(
+        self, matches: list[dict], last_inputs: dict
+    ) -> dict | None:
+        """Ensure every input issue appears in matches.
+
+        If the model returned fewer matches than input issues (or omitted
+        some issue_ids), add unresolved entries with confidence=low so
+        downstream stats cannot silently drop problems.
+        """
+        current_issues_raw = last_inputs.get("current_issues", "[]")
+        try:
+            current_issues = json.loads(current_issues_raw) if isinstance(current_issues_raw, str) else current_issues_raw
+        except json.JSONDecodeError:
+            current_issues = []
+        if not isinstance(current_issues, list) or not current_issues:
+            return None
+
+        seen_ids = {
+            m.get("issue_id") for m in matches if isinstance(m, dict) and m.get("issue_id")
+        }
+        backfilled_count = 0
+        for issue in current_issues:
+            if not isinstance(issue, dict):
+                continue
+            issue_id = issue.get("issue_id")
+            if issue_id and issue_id not in seen_ids:
+                matches.append({
+                    "issue_id": issue_id,
+                    "issue": issue.get("issue", ""),
+                    "resolved_in": None,
+                    "resolved_version": None,
+                    "status": "unresolved",
+                    "evidence": None,
+                    "confidence": "low",
+                    "note": "模型漏返回，已由代码回填为 unresolved",
+                })
+                backfilled_count += 1
+        if backfilled_count == 0:
+            return None
+        return {
+            "matches": matches,
+            "note": f"代码回填 {backfilled_count} 个被模型漏返回的问题为 unresolved",
+        }
+
+    def _compute_issue_conservation(self, evolution_result: dict) -> dict:
+        """Verify total_issues == resolved + partial + unresolved.
+
+        Matches with missing/unknown status default to "unresolved" so the
+        invariant still holds (and surfaces data-quality issues via the
+        unresolved count rather than silently dropping the issue).
+        """
+        matches = evolution_result.get("matches", []) if isinstance(evolution_result, dict) else []
+        if not isinstance(matches, list):
+            return {"valid": False, "reason": "matches is not a list"}
+        resolved = 0
+        partial = 0
+        unresolved = 0
+        for m in matches:
+            if not isinstance(m, dict):
+                unresolved += 1
+                continue
+            status = m.get("status", "unresolved")
+            if status == "resolved":
+                resolved += 1
+            elif status == "partial":
+                partial += 1
+            else:
+                unresolved += 1
+        total = len(matches)
+        return {
+            "valid": total == resolved + partial + unresolved,
+            "total_issues": total,
+            "resolved": resolved,
+            "partial": partial,
+            "unresolved": unresolved,
+        }
 
     # ── Input builders ──
 
@@ -552,9 +799,13 @@ class SkillRunner:
         docs = state.get("docs", [])
         excerpts = []
         for doc in docs:
+            # 使用 DB doc_id（不可变主键）作为唯一标识，文件名仅用于展示。
+            # 这与 classify.md prompt 示例中的 [doc_id] 格式一致，确保 LLM
+            # 回填的 doc_id 可被路由精确匹配，避免重名文件误匹配。
+            doc_id = doc.get("id", doc.get("doc_id", ""))
             title = doc.get("filename", doc.get("title", ""))
             content = doc.get("md_content", "")[:2000]
-            excerpts.append(f"文档: {title}\n内容摘要:\n{content[:1000]}")
+            excerpts.append(f"- [{doc_id}] {title}: {content[:1000]}")
 
         # Load default categories from skill template
         categories_path = self.skills_dir / "prd-overview-classify" / "templates" / "default-categories.json"
@@ -649,62 +900,180 @@ class SkillRunner:
     def _build_insight_inputs(self, prompt_name: str, prior_results: dict) -> dict:
         """Build inputs for an insights sub-step."""
         state = self.pipeline_state
+        analyses = state.get("analyses", {})
+        classify_output = state.get("classify", {})
+        version_chains = classify_output.get("version_chains", [])
+        categories = classify_output.get("categories", [])
 
         if prompt_name == "evolution-match":
-            # Gather boundary issues from analyses
+            # Build current issues with stable issue_id, grouped by doc.
+            # Each issue carries its doc_id so downstream can find the
+            # subsequent versions in the same chain and inject their
+            # structured analysis (core_problem / boundary_in / key_points).
             current_issues = []
-            analyses = state.get("analyses", {})
             for doc_id, analysis in analyses.items():
-                for issue in analysis.get("boundary_issues", []):
+                for idx, issue in enumerate(analysis.get("boundary_issues", [])):
+                    issue_text = issue.get("issue", "") if isinstance(issue, dict) else str(issue)
+                    if not issue_text:
+                        continue
                     current_issues.append({
-                        "doc_id": doc_id,
-                        "issue": issue.get("issue", ""),
-                        "severity": issue.get("severity", "medium"),
+                        "issue_id": f"{doc_id}_issue_{idx:03d}",
+                        "doc_id": str(doc_id),
+                        "issue": issue_text,
+                        "severity": issue.get("severity", "medium") if isinstance(issue, dict) else "medium",
                     })
+
+            # Build a map: doc_id → list of subsequent docs in the same chain
+            # (with structured analysis content, not just metadata).
+            subsequent_docs_map = self._build_subsequent_docs_map(version_chains, analyses)
+
+            # For each issue, attach the structured content of its subsequent docs
+            for issue_entry in current_issues:
+                issue_entry["subsequent_docs"] = subsequent_docs_map.get(
+                    issue_entry["doc_id"], []
+                )
+
             inputs = {
                 "current_issues": json.dumps(current_issues, ensure_ascii=False),
-                "subsequent_docs": json.dumps(
-                    state.get("classify", {}).get("version_chains", []),
-                    ensure_ascii=False,
-                ),
+                "subsequent_docs": json.dumps(subsequent_docs_map, ensure_ascii=False),
             }
 
         elif prompt_name == "feature-extraction":
-            analyses = state.get("analyses", {})
             boundary_data = []
             for doc_id, analysis in analyses.items():
                 boundary_data.append({
-                    "doc_id": doc_id,
+                    "doc_id": str(doc_id),
                     "boundary_in": analysis.get("boundary_in", []),
                     "boundary_out": analysis.get("boundary_out", []),
                 })
+            # Optional target capability baseline from ReviewContext —
+            # without an independent baseline, only "coverage analysis"
+            # (not "absolute gap identification") is meaningful.
+            target_baseline = self.context.get("target_capability_baseline", [])
             inputs = {
                 "boundary_data": json.dumps(boundary_data, ensure_ascii=False),
-                "categories": json.dumps(
-                    state.get("classify", {}).get("categories", []), ensure_ascii=False
-                ),
-                "version_chains": json.dumps(
-                    state.get("classify", {}).get("version_chains", []), ensure_ascii=False
-                ),
+                "categories": json.dumps(categories, ensure_ascii=False),
+                "version_chains": json.dumps(version_chains, ensure_ascii=False),
+                "target_baseline": json.dumps(target_baseline, ensure_ascii=False),
             }
 
         elif prompt_name == "gap-assessment":
-            features_result = prior_results.get("features", {})
+            features_result = prior_results.get("features", {}) or {}
+            feature_dimensions = features_result.get("feature_dimensions", [])
+            baseline_warning = features_result.get("baseline_warning", "")
+
+            # Deterministically build coverage_matrix from feature_dimensions
+            # + analyses. The model is NOT asked to simultaneously produce
+            # dimensions and coverage conclusions — that dual task caused
+            # gap-assessment to receive empty matrices.
+            coverage_matrix = self._build_coverage_matrix(feature_dimensions, analyses)
+            gaps = [entry for entry in coverage_matrix if entry["status"] == "gap"]
+            overlaps = [entry for entry in coverage_matrix if entry["status"] == "overlap"]
+
             inputs = {
-                "coverage_matrix": json.dumps(
-                    features_result.get("coverage_matrix", []), ensure_ascii=False
-                ),
-                "gaps": json.dumps(features_result.get("gaps", []), ensure_ascii=False),
-                "overlaps": json.dumps(features_result.get("overlaps", []), ensure_ascii=False),
-                "categories": json.dumps(
-                    state.get("classify", {}).get("categories", []), ensure_ascii=False
-                ),
+                "coverage_matrix": json.dumps(coverage_matrix, ensure_ascii=False),
+                "gaps": json.dumps(gaps, ensure_ascii=False),
+                "overlaps": json.dumps(overlaps, ensure_ascii=False),
+                "categories": json.dumps(categories, ensure_ascii=False),
+                "baseline_warning": baseline_warning,
             }
 
         else:
             inputs = {}
 
         return inputs
+
+    def _build_subsequent_docs_map(
+        self, version_chains: list[dict], analyses: dict
+    ) -> dict[str, list[dict]]:
+        """For each doc_id, return the structured analysis of all docs that
+        come AFTER it in the same version chain.
+
+        Includes core_problem / boundary_in / boundary_out / key_points /
+        excerpt, so the LLM can actually cite evidence for resolved/partial
+        status instead of guessing from metadata.
+        """
+        subsequent_map: dict[str, list[dict]] = {}
+        if not version_chains:
+            return subsequent_map
+
+        for chain in version_chains:
+            if not isinstance(chain, dict):
+                continue
+            versions = chain.get("versions", []) or []
+            for i, v_info in enumerate(versions):
+                doc_id = str(v_info.get("doc_id", ""))
+                subsequent = []
+                for later in versions[i + 1:]:
+                    later_id = str(later.get("doc_id", ""))
+                    analysis = analyses.get(later_id, {}) or {}
+                    subsequent.append({
+                        "doc_id": later_id,
+                        "version": later.get("version", analysis.get("version", "")),
+                        "title": later.get("title", analysis.get("title", "")),
+                        "core_problem": analysis.get("core_problem", ""),
+                        "boundary_in": analysis.get("boundary_in", []),
+                        "boundary_out": analysis.get("boundary_out", []),
+                        "key_points": analysis.get("key_points", {}),
+                        "excerpt": (analysis.get("core_problem", "") or "")[:500],
+                    })
+                if subsequent:
+                    subsequent_map[doc_id] = subsequent_map.get(doc_id, []) + subsequent
+        return subsequent_map
+
+    def _build_coverage_matrix(
+        self, feature_dimensions: list, analyses: dict
+    ) -> list[dict]:
+        """Deterministically build a coverage matrix from feature dimensions
+        and per-doc analyses.
+
+        Rules:
+        - Each feature with source_doc_ids becomes "covered" or "overlap"
+          (overlap when >1 doc covers it).
+        - Each feature with empty source_doc_ids becomes "gap".
+        - When the LLM did not provide source_doc_ids, fall back to a
+          case-insensitive substring match against boundary_in + core_problem
+          (matches the standalone insights.py behavior).
+        """
+        matrix: list[dict] = []
+        for idx, dim in enumerate(feature_dimensions):
+            if isinstance(dim, str):
+                name = dim
+                feature_id = f"feat_{idx + 1:03d}"
+                source_doc_ids: list[str] = []
+            elif isinstance(dim, dict):
+                name = dim.get("name", "")
+                feature_id = dim.get("feature_id") or f"feat_{idx + 1:03d}"
+                source_doc_ids = list(dim.get("source_doc_ids", []) or [])
+            else:
+                continue
+
+            # If the model didn't return source_doc_ids, derive them.
+            if not source_doc_ids and name:
+                name_lower = name.lower()
+                for doc_id, analysis in analyses.items():
+                    boundary_in = analysis.get("boundary_in", []) or []
+                    core_problem = analysis.get("core_problem", "") or ""
+                    check_text = " ".join(boundary_in) + " " + core_problem
+                    if name_lower in check_text.lower() or any(
+                        name_lower in str(bi).lower() for bi in boundary_in
+                    ):
+                        source_doc_ids.append(str(doc_id))
+
+            if not source_doc_ids:
+                status = "gap"
+            elif len(source_doc_ids) > 1:
+                status = "overlap"
+            else:
+                status = "covered"
+
+            matrix.append({
+                "feature_id": feature_id,
+                "feature": name,
+                "covered_by": source_doc_ids,
+                "status": status,
+            })
+        return matrix
 
     def _build_report_inputs(self, state: dict) -> dict:
         """Build inputs for the report skill."""
@@ -798,6 +1167,17 @@ class SkillRunner:
                     if errors:
                         logger.warning("Schema errors for dim %s: %s", dim_name, errors)
                         result = self.schema_loader.repair(result, schema)
+                        # P1-4.2: Surface non-critical repairs in result
+                        _repair_notes = result.pop("_schema_repair_notes", [])
+                        if _repair_notes:
+                            result["_repair_notes"] = _repair_notes
+                        # Check critical field failure - treat as error so
+                        # downstream cannot silently consume bogus data.
+                        if result.get("_schema_critical"):
+                            raise ValueError(
+                                f"dimension {dim_name} schema critical failure: "
+                                f"business field missing or out of range"
+                            )
 
                 if dim_name == "pm-assessment":
                     pm_payload = extract_pm_assessment_payload(result)
@@ -856,6 +1236,17 @@ class SkillRunner:
                     if errors:
                         logger.warning("Schema errors for insight %s: %s", prompt_name, errors)
                         result = self.schema_loader.repair(result, schema)
+                        # P1-4.2: Surface non-critical repairs in result
+                        _repair_notes = result.pop("_schema_repair_notes", [])
+                        if _repair_notes:
+                            result["_repair_notes"] = _repair_notes
+                        # Check critical field failure - treat as error so
+                        # downstream cannot silently consume bogus data.
+                        if result.get("_schema_critical"):
+                            raise ValueError(
+                                f"insight {prompt_name} schema critical failure: "
+                                f"business field missing or out of range"
+                            )
 
                 return result
 

@@ -2,7 +2,7 @@
 """report-generator: 从分析结果生成结构化Markdown/PDF报告。
 
 用法:
-    python generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
+    python3 generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
 
 输入: prd-overview-classify + prd-per-analysis + system-review 的输出
 输出: Markdown/PDF报告文件
@@ -11,16 +11,28 @@
 import argparse
 import json
 import os
-import re
 import sys
 from pathlib import Path
-from typing import Optional
 
 try:
     from pydantic import BaseModel, Field
 except ImportError:
     print("错误：需要 pydantic，请运行 pip install pydantic", file=sys.stderr)
     sys.exit(1)
+
+try:
+    from mermaid_builder import (
+        build_coverage_matrix_table,
+        build_dependency_graph,
+        build_evolution_flowchart,
+        build_version_chain_timeline,
+    )
+except ImportError:
+    # 允许在脚本目录外直接 import 时退化（函数内按需检查）
+    build_coverage_matrix_table = None
+    build_dependency_graph = None
+    build_evolution_flowchart = None
+    build_version_chain_timeline = None
 
 DEFAULT_TEXT_MODEL = "claude-sonnet-4-20250514"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
@@ -41,6 +53,61 @@ FORMAT_PDF = "pdf"
 FORMAT_ALL = "all"
 VALID_FORMATS = [FORMAT_MD, FORMAT_PDF, FORMAT_ALL]
 
+# ``--sections`` 别名 → 报告类型映射。
+# 别名不区分大小写；同一个报告类型可以有多个别名。
+SECTION_ALIASES: dict[str, str] = {
+    "overview": REPORT_TYPE_PER_ANALYSIS,
+    "doc_overview": REPORT_TYPE_PER_ANALYSIS,
+    "per_analysis": REPORT_TYPE_PER_ANALYSIS,
+    "analysis": REPORT_TYPE_PER_ANALYSIS,
+    "full_review": REPORT_TYPE_FULL_REVIEW,
+    "review": REPORT_TYPE_FULL_REVIEW,
+    "system_review": REPORT_TYPE_FULL_REVIEW,
+    "next_directions": REPORT_TYPE_NEXT_DIRECTIONS,
+    "directions": REPORT_TYPE_NEXT_DIRECTIONS,
+    "pm_development": REPORT_TYPE_PM_DEVELOPMENT,
+    "pm": REPORT_TYPE_PM_DEVELOPMENT,
+    "prd_draft": REPORT_TYPE_PRD_DRAFT,
+    "draft": REPORT_TYPE_PRD_DRAFT,
+    "insights": REPORT_TYPE_INSIGHTS,
+    "evolution": REPORT_TYPE_INSIGHTS,
+    "gap": REPORT_TYPE_INSIGHTS,
+}
+
+
+def _escape_md_cell(text) -> str:
+    """转义 Markdown 表格单元格中的竖线和换行，避免破坏表格结构。"""
+    if text is None:
+        return ""
+    return str(text).replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _resolve_sections(sections_arg: str) -> list[str] | None:
+    """把 ``--sections`` 参数解析为报告类型列表。
+
+    返回 ``None`` 表示未指定（使用 ``--report-type``）。
+    无法识别的别名会被收集后以警告形式打印，并跳过。
+    """
+    if not sections_arg:
+        return None
+    resolved: list[str] = []
+    unknown: list[str] = []
+    for raw in sections_arg.split(","):
+        key = raw.strip().lower()
+        if not key:
+            continue
+        rt = SECTION_ALIASES.get(key)
+        if rt and rt not in resolved:
+            resolved.append(rt)
+        elif not rt:
+            unknown.append(raw.strip())
+    if unknown:
+        print(
+            f"警告：--sections 中存在无法识别的章节名：{', '.join(unknown)}（已跳过）",
+            file=sys.stderr,
+        )
+    return resolved
+
 
 class OutputFile(BaseModel):
     type: str = "markdown"
@@ -55,7 +122,10 @@ class MermaidChart(BaseModel):
 
 
 class ReportSummary(BaseModel):
+    # ``total_reports`` 统计生成的**报告类型数量**（一个类型对应一份逻辑报告）。
     total_reports: int = 0
+    # ``total_files`` 统计实际写入磁盘的**文件数量**（MD + PDF 分别计数）。
+    total_files: int = 0
     total_md_size: int = 0
     chart_count: int = 0
 
@@ -136,7 +206,7 @@ def generate_per_analysis_md(project_name: str, analyses: list[dict],
         lines.append("| 分类 | 文档数 |")
         lines.append("|------|--------|")
         for c in categories:
-            lines.append(f"| {c.get('name', '')} | {c.get('doc_count', 0)} |")
+            lines.append(f"| {_escape_md_cell(c.get('name', ''))} | {c.get('doc_count', 0)} |")
         lines.append("")
 
     lines.append("## 二、逐篇分析\n")
@@ -188,7 +258,7 @@ def generate_per_analysis_md(project_name: str, analyses: list[dict],
         if params:
             lines.append("**关键参数**：")
             for p in params:
-                lines.append(f"- {p.get('name', '')}：{p.get('value', '')}")
+                lines.append(f"- {_escape_md_cell(p.get('name', ''))}：{_escape_md_cell(p.get('value', ''))}")
             lines.append("")
 
     all_issues = []
@@ -208,7 +278,12 @@ def generate_per_analysis_md(project_name: str, analyses: list[dict],
         lines.append("| 问题 | 来源版本 | 解决状态 | 解决版本 |")
         lines.append("|------|---------|---------|---------|")
         for iss in all_issues:
-            lines.append(f"| {iss['issue'][:30]} | {iss['version']} | {iss['status']} | {iss['resolved_by'] or '-'} |")
+            lines.append(
+                f"| {_escape_md_cell(iss['issue'][:30])} | "
+                f"{_escape_md_cell(iss['version'])} | "
+                f"{_escape_md_cell(iss['status'])} | "
+                f"{_escape_md_cell(iss['resolved_by'] or '-')} |"
+            )
         lines.append("")
 
     if insights_data:
@@ -251,10 +326,8 @@ def generate_full_review_md(project_name: str, review_data: dict) -> str:
         if not dim_data:
             continue
         section_num += 1
-        cn_num = "一二三四五六七"[section_num - 1] if section_num <= 7 else str(section_num)
-        prefix = dim_label.split("、")[0] if "、" in dim_label else cn_num
         lines.append(f"## {dim_label}\n")
-        lines.append(f"```json")
+        lines.append("```json")
         lines.append(json.dumps(dim_data, ensure_ascii=False, indent=2))
         lines.append("```\n")
 
@@ -294,7 +367,7 @@ def generate_next_directions_md(project_name: str, review_data: dict,
         unresolved = evo_summary.get("unresolved", 0)
         partial = evo_summary.get("partial", 0)
         if unresolved or partial:
-            lines.append(f"## 演进层面的需求方向\n")
+            lines.append("## 演进层面的需求方向\n")
             lines.append(f"仍有 {unresolved} 个未解决问题和 {partial} 个部分解决问题，需后续版本覆盖。\n")
 
         gap_analysis = insights_data.get("gap_analysis", {})
@@ -338,7 +411,7 @@ def generate_pm_development_md(project_name: str, review_data: dict) -> str:
         for key, label in [("logic", "逻辑结构"), ("tech_depth", "技术深度"),
                            ("boundary", "边界意识"), ("business", "商业视角")]:
             s = ws.get(key, {})
-            lines.append(f"| {label} | {s.get('score', '-')} | {s.get('evidence', '-')} |")
+            lines.append(f"| {label} | {_escape_md_cell(s.get('score', '-'))} | {_escape_md_cell(s.get('evidence', '-'))} |")
         lines.append("")
 
     ts = pm.get("thinking_scores", {})
@@ -349,7 +422,7 @@ def generate_pm_development_md(project_name: str, review_data: dict) -> str:
         for key, label in [("iteration", "迭代思维"), ("experience", "体验思维"),
                            ("data", "数据思维"), ("business", "商业思维")]:
             s = ts.get(key, {})
-            lines.append(f"| {label} | {s.get('score', '-')} | {s.get('evidence', '-')} |")
+            lines.append(f"| {label} | {_escape_md_cell(s.get('score', '-'))} | {_escape_md_cell(s.get('evidence', '-'))} |")
         lines.append("")
 
     highlights = pm.get("highlights", [])
@@ -412,7 +485,7 @@ def generate_insights_md(project_name: str, insights_data: dict) -> str:
 
         summary = evolution.get("summary", {})
         lines.append("### 汇总\n")
-        lines.append(f"| 指标 | 数量 |")
+        lines.append("| 指标 | 数量 |")
         lines.append("|------|------|")
         lines.append(f"| 演进链 | {summary.get('total_chains', 0)} |")
         lines.append(f"| 总问题数 | {summary.get('total_issues', 0)} |")
@@ -422,6 +495,10 @@ def generate_insights_md(project_name: str, insights_data: dict) -> str:
         lines.append("")
 
         mermaid = evolution.get("mermaid_graph", "")
+        if not mermaid and build_evolution_flowchart:
+            chains = evolution.get("evolution_chains", [])
+            if chains:
+                mermaid = build_evolution_flowchart(chains)
         if mermaid:
             lines.append("```mermaid")
             lines.append(mermaid)
@@ -432,32 +509,62 @@ def generate_insights_md(project_name: str, insights_data: dict) -> str:
         lines.append("## 二、功能覆盖矩阵\n")
         matrix = gap_analysis.get("coverage_matrix", [])
         if matrix:
-            lines.append("| 功能维度 | 覆盖文档 | 状态 |")
-            lines.append("|---------|---------|------|")
-            for entry in matrix:
-                status_icon = {"covered": "✅", "gap": "❌", "overlap": "🔄"}.get(entry.get("status", ""), "❓")
-                covered = ", ".join(entry.get("covered_by", [])) or "-"
-                lines.append(f"| {entry.get('feature', '')} | {covered} | {status_icon} {entry.get('status', '')} |")
-            lines.append("")
+            if build_coverage_matrix_table:
+                lines.append(build_coverage_matrix_table(matrix))
+                lines.append("")
+            else:
+                lines.append("| 功能维度 | 覆盖文档 | 状态 |")
+                lines.append("|---------|---------|------|")
+                for entry in matrix:
+                    status_icon = {"covered": "✅", "gap": "❌", "overlap": "🔄"}.get(entry.get("status", ""), "❓")
+                    covered = ", ".join(entry.get("covered_by", [])) or "-"
+                    lines.append(f"| {_escape_md_cell(entry.get('feature', ''))} | {_escape_md_cell(covered)} | {status_icon} {_escape_md_cell(entry.get('status', ''))} |")
+                lines.append("")
 
         gaps = gap_analysis.get("gaps", [])
         if gaps:
             lines.append("## 三、需求缺口\n")
             for g in gaps:
-                lines.append(f"- 🔴 **{g.get('feature', '')}**（{g.get('severity', '')}）→ {g.get('suggestion', '')}")
+                lines.append(f"- 🔴 **{_escape_md_cell(g.get('feature', ''))}**（{_escape_md_cell(g.get('severity', ''))}）→ {_escape_md_cell(g.get('suggestion', ''))}")
             lines.append("")
 
         overlaps = gap_analysis.get("overlaps", [])
         if overlaps:
             lines.append("## 四、功能重叠\n")
             for o in overlaps:
-                lines.append(f"- 🔄 **{o.get('feature', '')}**：{o.get('note', '')}（覆盖：{', '.join(o.get('covered_by', []))}）")
+                lines.append(f"- 🔄 **{_escape_md_cell(o.get('feature', ''))}**：{_escape_md_cell(o.get('note', ''))}（覆盖：{', '.join(_escape_md_cell(d) for d in o.get('covered_by', []))}）")
             lines.append("")
 
     return "\n".join(lines)
 
 
-def markdown_to_pdf(md_path: Path, pdf_path: Path) -> bool:
+def _get_cjk_font_name() -> str:
+    """注册并返回支持中文的字体名称。
+
+    优先使用 reportlab 内置的 ``STSong-Light`` CID 字体（无需外部字体文件），
+    注册失败时回退到 ``Helvetica``，此时中文将无法正常显示，函数会打印警告。
+    """
+    try:
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+    except ImportError:
+        return "Helvetica"
+
+    font_name = "STSong-Light"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(font_name))
+        return font_name
+    except Exception as e:
+        print(f"  警告：注册中文字体失败，PDF中文可能无法显示：{e}", file=sys.stderr)
+        return "Helvetica"
+
+
+def markdown_to_pdf(content: str, pdf_path: Path) -> bool:
+    """把 Markdown 文本渲染为 PDF。
+
+    使用 reportlab 内置的 ``STSong-Light`` CID 字体以支持中文，
+    Markdown 中的 ``**bold**`` 和表格竖线会被简单清洗后再渲染。
+    """
     try:
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -467,24 +574,22 @@ def markdown_to_pdf(md_path: Path, pdf_path: Path) -> bool:
         print("  警告：reportlab未安装，跳过PDF生成（pip install reportlab）", file=sys.stderr)
         return False
 
-    try:
-        with open(md_path, "r", encoding="utf-8") as f:
-            content = f.read()
-    except Exception as e:
-        print(f"  警告：读取Markdown失败：{e}", file=sys.stderr)
+    if not content:
+        print("  警告：内容为空，跳过PDF生成", file=sys.stderr)
         return False
 
     doc = SimpleDocTemplate(str(pdf_path), pagesize=A4,
                             leftMargin=25 * mm, rightMargin=25 * mm,
                             topMargin=20 * mm, bottomMargin=20 * mm)
 
+    cjk_font = _get_cjk_font_name()
     styles = getSampleStyleSheet()
     cn_style = ParagraphStyle('ChineseNormal', parent=styles['Normal'],
-                               fontName='Helvetica', fontSize=10, leading=14)
+                               fontName=cjk_font, fontSize=10, leading=14)
     cn_h1 = ParagraphStyle('ChineseH1', parent=styles['Heading1'],
-                            fontName='Helvetica', fontSize=18, leading=22)
+                            fontName=cjk_font, fontSize=18, leading=22)
     cn_h2 = ParagraphStyle('ChineseH2', parent=styles['Heading2'],
-                            fontName='Helvetica', fontSize=14, leading=18)
+                            fontName=cjk_font, fontSize=14, leading=18)
 
     story = []
     for line in content.split("\n"):
@@ -496,7 +601,10 @@ def markdown_to_pdf(md_path: Path, pdf_path: Path) -> bool:
         elif stripped.startswith("## "):
             story.append(Paragraph(stripped[3:], cn_h2))
         else:
+            # 清洗 Markdown 特殊标记：竖线转全角、加粗标记移除，
+            # 并对 XML 特殊字符做最小转义以避免 reportlab 解析异常。
             text = stripped.replace("|", " │ ").replace("**", "")
+            text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             try:
                 story.append(Paragraph(text, cn_style))
             except Exception:
@@ -587,7 +695,19 @@ def main():
             project_name, insights_data)),
     }
 
-    types_to_generate = list(report_generators.keys()) if args.report_type == REPORT_TYPE_ALL else [args.report_type]
+    # 确定``--sections``过滤后的报告类型列表。
+    # 若指定了``--sections``，则覆盖``--report-type``的值。
+    section_types = _resolve_sections(args.sections)
+    if section_types is not None:
+        types_to_generate = section_types
+    elif args.report_type == REPORT_TYPE_ALL:
+        types_to_generate = list(report_generators.keys())
+    else:
+        types_to_generate = [args.report_type]
+
+    write_md = args.format in [FORMAT_MD, FORMAT_ALL]
+    write_pdf = args.format in [FORMAT_PDF, FORMAT_ALL]
+    reports_generated = 0
 
     for rt in types_to_generate:
         if rt not in report_generators:
@@ -598,37 +718,70 @@ def main():
         content = gen_func()
 
         if args.polish and client:
-            print(f"  正在润色...")
+            print("  正在润色...")
             content = polish_report(client, content, text_model)
 
-        md_path = output_dir / f"{label}.md"
-        with open(md_path, "w", encoding="utf-8") as f:
-            f.write(content)
+        reports_generated += 1
 
-        md_size = len(content.encode("utf-8"))
-        total_md_size += md_size
-        result.files.append(OutputFile(type="markdown", path=str(md_path), size=md_size))
-        print(f"  ✓ Markdown已保存：{md_path}（{md_size}字节）")
+        if write_md:
+            md_path = output_dir / f"{label}.md"
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            md_size = len(content.encode("utf-8"))
+            total_md_size += md_size
+            result.files.append(OutputFile(type="markdown", path=str(md_path), size=md_size))
+            print(f"  ✓ Markdown已保存：{md_path}（{md_size}字节）")
+        else:
+            # format=pdf 时也需要统计 MD 字节数，但不写入磁盘。
+            total_md_size += len(content.encode("utf-8"))
 
-        if args.format in [FORMAT_PDF, FORMAT_ALL]:
+        if write_pdf:
             pdf_path = output_dir / f"{label}.pdf"
-            if markdown_to_pdf(md_path, pdf_path):
+            if markdown_to_pdf(content, pdf_path):
                 pdf_size = pdf_path.stat().st_size
                 result.files.append(OutputFile(type="pdf", path=str(pdf_path), size=pdf_size))
                 print(f"  ✓ PDF已保存：{pdf_path}（{pdf_size}字节）")
             else:
-                print(f"  ⚠️ PDF生成跳过")
+                print("  ⚠️ PDF生成跳过")
 
+    # ── 收集 Mermaid 图表 ──────────────────────────────────────────
+    # 1) 来自 insights 的演进图（优先使用已有 mermaid_graph，否则按需生成）
     if insights_data:
         evolution = insights_data.get("evolution", {})
         mermaid = evolution.get("mermaid_graph", "")
+        if not mermaid and build_evolution_flowchart:
+            chains = evolution.get("evolution_chains", [])
+            if chains:
+                mermaid = build_evolution_flowchart(chains)
         if mermaid:
             result.mermaid_charts.append(MermaidChart(
                 type="evolution", chart_id="evolution_overview", code=mermaid))
             chart_count += 1
 
+    # 2) 来自 classify 的依赖图（使用 mermaid_builder 真正构建）
+    if build_dependency_graph:
+        dependencies = classify_data.get("dependencies", [])
+        documents = classify_data.get("documents", [])
+        if dependencies:
+            dep_mermaid = build_dependency_graph(dependencies, documents)
+            if dep_mermaid.strip() != "graph LR":
+                result.mermaid_charts.append(MermaidChart(
+                    type="dependency", chart_id="dependency_graph", code=dep_mermaid))
+                chart_count += 1
+
+    # 3) 来自 classify 的版本链时间线
+    if build_version_chain_timeline:
+        version_chains = classify_data.get("version_chains", [])
+        if version_chains:
+            timeline_mermaid = build_version_chain_timeline(version_chains)
+            if timeline_mermaid.strip():
+                result.mermaid_charts.append(MermaidChart(
+                    type="timeline", chart_id="version_timeline", code=timeline_mermaid))
+                chart_count += 1
+
     result.summary = ReportSummary(
-        total_reports=len(result.files),
+        total_reports=reports_generated,
+        total_files=len(result.files),
         total_md_size=total_md_size,
         chart_count=chart_count,
     )
@@ -637,7 +790,7 @@ def main():
     with open(result_path, "w", encoding="utf-8") as f:
         f.write(result.model_dump_json(indent=2, ensure_ascii=False))
 
-    print(f"\n报告生成完成：{len(result.files)}个文件，{total_md_size}字节")
+    print(f"\n报告生成完成：{reports_generated}份报告，{len(result.files)}个文件，{total_md_size}字节")
     print(f"结果已保存至：{result_path}")
 
 

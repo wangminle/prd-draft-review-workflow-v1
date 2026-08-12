@@ -3,7 +3,7 @@
 ## Generate Reports
 
 ```
-python scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
+python3 scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
 ```
 
 ### Arguments
@@ -21,9 +21,35 @@ python scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_
 |--------|---------|-------------|
 | `--insights-json` | none | Path to requirement-insights output JSON |
 | `--report-type` | `all` | Report type: per_analysis, full_review, next_directions, pm_development, prd_draft, insights, all |
-| `--format` | `md` | Output format: md, pdf, all |
-| `--sections` | all | Comma-separated sections to include |
+| `--format` | `md` | Output format: `md`（仅 Markdown）、`pdf`（仅 PDF）、`all`（两者） |
+| `--sections` | (none) | 逗号分隔的章节别名，覆盖 `--report-type` 进行筛选（见下表） |
 | `--polish` | off | Use LLM to polish the report |
+
+### `--sections` 别名
+
+指定 `--sections` 时，将覆盖 `--report-type`，只生成列出的报告类型。别名不区分大小写：
+
+| 别名 | 报告类型 |
+|------|---------|
+| `overview`, `doc_overview`, `per_analysis`, `analysis` | per_analysis |
+| `full_review`, `review`, `system_review` | full_review |
+| `next_directions`, `directions` | next_directions |
+| `pm_development`, `pm` | pm_development |
+| `prd_draft`, `draft` | prd_draft |
+| `insights`, `evolution`, `gap` | insights |
+
+```bash
+# 只生成逐篇分析和洞察报告
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --sections per_analysis,insights
+```
+
+### 输出格式行为
+
+| `--format` | 磁盘文件 | 说明 |
+|-----------|---------|------|
+| `md` | 仅 `.md` | 默认 |
+| `pdf` | 仅 `.pdf` | 不输出 Markdown 文件 |
+| `all` | `.md` + `.pdf` | 同时输出两种格式 |
 
 ### Environment Variables
 
@@ -44,9 +70,20 @@ python scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_
 | `insights` | Evolution tracking + gap analysis with coverage matrix |
 | `all` | All report types |
 
+## Output Summary
+
+`_generate_result.json` 的 `summary` 字段：
+
+| 字段 | 说明 |
+|------|------|
+| `total_reports` | 生成的**报告类型数量**（逻辑报告份数） |
+| `total_files` | 写入磁盘的**文件数量**（MD 和 PDF 分别计数） |
+| `total_md_size` | 所有 Markdown 内容的总字节数 |
+| `chart_count` | 收集到的 Mermaid 图表数量 |
+
 ## Mermaid Builder
 
-The `mermaid_builder.py` module provides standalone Mermaid diagram generation:
+The `mermaid_builder.py` module provides standalone Mermaid diagram generation with automatic escaping of special characters (quotes, pipes, brackets, newlines) to prevent broken chart syntax:
 
 ```python
 from mermaid_builder import build_evolution_flowchart, build_dependency_graph
@@ -54,6 +91,11 @@ from mermaid_builder import build_evolution_flowchart, build_dependency_graph
 evolution_chart = build_evolution_flowchart(evolution_chains)
 dependency_chart = build_dependency_graph(dependencies, documents)
 ```
+
+Main `generate.py` automatically collects three chart types from upstream data:
+- **Evolution flowchart** — from `insights.evolution` (falls back to building from `evolution_chains`)
+- **Dependency graph** — from `classify.dependencies`
+- **Version chain timeline** — from `classify.version_chains`
 
 ### Chart Types
 
@@ -66,10 +108,10 @@ dependency_chart = build_dependency_graph(dependencies, documents)
 
 ## PDF Generation
 
-PDF generation requires `reportlab`:
+PDF generation requires `reportlab` and uses the built-in **STSong-Light** CID font for Chinese character support:
 
 ```bash
-pip install reportlab
+pip3 install reportlab
 ```
 
 If reportlab is not installed, PDF generation is silently skipped and Markdown output is still produced.
@@ -82,4 +124,4 @@ The `--polish` flag uses an LLM to refine the report text. This:
 - Unifies terminology
 - Does NOT add new conclusions
 
-Requires `ANTHROPIC_API_KEY` environment variable.
+Requires `ANTHROPIC_API_KEY` environment variable and the `anthropic` package (`pip3 install anthropic`).

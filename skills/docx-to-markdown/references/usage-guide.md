@@ -12,8 +12,8 @@
 
 ## convert_docx.py 详解
 
-> **执行目录前提**：以下所有 `python scripts/...` 命令均假设当前工作目录为 skill 根目录 `skills/docx-to-markdown/`。
-> 若从仓库根目录执行，需加上路径前缀：`python skills/docx-to-markdown/scripts/...`
+> **执行目录前提**：以下所有 `python3 scripts/...` 命令均假设当前工作目录为 skill 根目录 `skills/docx-to-markdown/`。
+> 若从仓库根目录执行，需加上路径前缀：`python3 skills/docx-to-markdown/scripts/...`
 
 ### 核心功能
 
@@ -23,12 +23,12 @@
 
 ```bash
 # 在 skills/docx-to-markdown/ 目录下执行
-python scripts/convert_docx.py <docx文件路径> <输出目录>
+python3 scripts/convert_docx.py <docx文件路径> <输出目录>
 ```
 
 **示例：**
 ```bash
-python scripts/convert_docx.py report.docx ./output
+python3 scripts/convert_docx.py report.docx ./output
 ```
 
 **输出（自动创建以文件名命名的子文件夹）：**
@@ -162,7 +162,7 @@ mammoth 通常忽略文本框/形状中的内容，此函数作为补充提取�
 ### 命令行用法
 
 ```bash
-python scripts/batch_convert.py [源目录] [输出目录] [--force]
+python3 scripts/batch_convert.py [源目录] [输出目录] [--force]
 ```
 
 **默认值：**
@@ -171,10 +171,10 @@ python scripts/batch_convert.py [源目录] [输出目录] [--force]
 
 **示例：**
 ```bash
-python scripts/batch_convert.py ./documents ./markdown_output
+python3 scripts/batch_convert.py ./documents ./markdown_output
 
 # 强制重新转换已存在的输出目录
-python scripts/batch_convert.py ./documents ./markdown_output --force
+python3 scripts/batch_convert.py ./documents ./markdown_output --force
 ```
 
 ### 核心函数
@@ -222,15 +222,15 @@ output_dir/
 ### 命令行用法
 
 ```bash
-python scripts/md_to_pdf.py <markdown文件路径> [pdf输出路径] [--engine auto|pandoc|python]
+python3 scripts/md_to_pdf.py <markdown文件路径> [pdf输出路径] [--engine auto|pandoc|python]
 ```
 
 **示例：**
 ```bash
-python scripts/md_to_pdf.py document.md                           # 默认 auto（优先 pandoc）
-python scripts/md_to_pdf.py document.md output.pdf --engine auto
-python scripts/md_to_pdf.py document.md output.pdf --engine pandoc
-python scripts/md_to_pdf.py document.md output.pdf --engine python
+python3 scripts/md_to_pdf.py document.md                           # 默认 auto（优先 pandoc）
+python3 scripts/md_to_pdf.py document.md output.pdf --engine auto
+python3 scripts/md_to_pdf.py document.md output.pdf --engine pandoc
+python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 ```
 
 ### 核心函数
@@ -315,7 +315,7 @@ python scripts/md_to_pdf.py document.md output.pdf --engine python
 
 使用 `--force` 参数强制重新转换：
 ```bash
-python scripts/batch_convert.py ./documents ./output --force
+python3 scripts/batch_convert.py ./documents ./output --force
 ```
 该模式会删除已有输出目录后重新生成。
 

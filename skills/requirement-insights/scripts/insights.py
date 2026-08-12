@@ -2,7 +2,7 @@
 """requirement-insights: 需求洞察（演进追踪+缺口分析）。
 
 用法:
-    python insights.py <classify_json> <analysis_dir> <output_json> [options]
+    python3 insights.py <classify_json> <analysis_dir> <output_json> [options]
 
 输入: prd-overview-classify输出JSON + prd-per-analysis输出目录
 输出: 演进追踪+缺口分析结果JSON + 可选Mermaid图
@@ -214,7 +214,17 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
             analysis = doc_data.get("analysis", {})
 
             issues = analysis.get("boundary_issues", [])
-            raised = [bi.get("issue", "") for bi in issues if bi.get("issue")]
+            # Assign stable issue_id for downstream conservation tracking
+            raised = []
+            for idx, bi in enumerate(issues):
+                issue_text = bi.get("issue", "") if isinstance(bi, dict) else str(bi)
+                if not issue_text:
+                    continue
+                raised.append({
+                    "issue_id": f"{doc_id}_issue_{idx:03d}",
+                    "issue": issue_text,
+                    "severity": bi.get("severity", "medium") if isinstance(bi, dict) else "medium",
+                })
 
             chain_versions.append({
                 "version": v_info.get("version", doc_data.get("version", "")),
@@ -225,7 +235,8 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
             })
 
         for i, cv in enumerate(chain_versions):
-            if not cv["boundary_issues_raised"]:
+            raised = cv["boundary_issues_raised"]
+            if not raised:
                 cv["boundary_issues_resolved"] = []
                 cv["boundary_issues_remaining"] = []
                 continue
@@ -233,12 +244,14 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
             subsequent = chain_versions[i + 1:]
             if not subsequent:
                 cv["boundary_issues_resolved"] = []
-                cv["boundary_issues_remaining"] = cv["boundary_issues_raised"]
-                for _ in cv["boundary_issues_raised"]:
+                cv["boundary_issues_remaining"] = [r["issue"] for r in raised]
+                for _ in raised:
                     unresolved += 1
                     total_issues += 1
                 continue
 
+            # Inject structured analysis content (not just metadata) so the
+            # LLM can cite evidence for resolved/partial status.
             subsequent_summary = []
             for s in subsequent:
                 subsequent_summary.append({
@@ -247,16 +260,37 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
                     "title": s["title"],
                     "core_problem": s.get("analysis", {}).get("core_problem", ""),
                     "boundary_in": s.get("analysis", {}).get("boundary_in", []),
+                    "boundary_out": s.get("analysis", {}).get("boundary_out", []),
                     "key_points": s.get("analysis", {}).get("key_points", {}),
+                    "excerpt": (s.get("analysis", {}).get("core_problem", "") or "")[:500],
                 })
 
             user_msg = (f"## 当前版本的边界外问题\n"
-                        f"{json.dumps(cv['boundary_issues_raised'], ensure_ascii=False)}\n\n"
+                        f"{json.dumps(raised, ensure_ascii=False)}\n\n"
                         f"## 后续版本文档内容\n"
                         f"{json.dumps(subsequent_summary, ensure_ascii=False, indent=2)}")
 
             result = call_llm(client, system_prompt, user_msg, text_model)
-            matches = result.get("matches", [])
+            matches = result.get("matches", []) if isinstance(result.get("matches"), list) else []
+
+            # Conservation: every raised issue must appear in matches.
+            # If the model dropped any, backfill as unresolved with low confidence.
+            seen_ids = {
+                m.get("issue_id") for m in matches
+                if isinstance(m, dict) and m.get("issue_id")
+            }
+            for r in raised:
+                if r["issue_id"] not in seen_ids:
+                    matches.append({
+                        "issue_id": r["issue_id"],
+                        "issue": r["issue"],
+                        "resolved_in": None,
+                        "resolved_version": None,
+                        "status": "unresolved",
+                        "evidence": None,
+                        "confidence": "low",
+                        "note": "模型漏返回，已由代码回填为 unresolved",
+                    })
 
             resolved_issues = []
             remaining_issues = []
@@ -286,7 +320,7 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
                 "version": cv["version"],
                 "doc_id": cv["doc_id"],
                 "title": cv["title"],
-                "boundary_issues_raised": cv["boundary_issues_raised"],
+                "boundary_issues_raised": [r["issue"] for r in cv["boundary_issues_raised"]],
                 "boundary_issues_resolved": cv["boundary_issues_resolved"],
                 "boundary_issues_remaining": cv["boundary_issues_remaining"],
             })
@@ -298,6 +332,8 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
         "resolved": resolved,
         "partial": partial,
         "unresolved": unresolved,
+        # Conservation invariant: total_issues == resolved + partial + unresolved
+        "conservation_valid": total_issues == resolved + partial + unresolved,
     }
 
     return {"evolution_chains": evolution_chains, "summary": summary}
@@ -340,7 +376,8 @@ def generate_mermaid(evolution_chains: list[dict]) -> str:
 
 def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
                      categories: list[dict], text_model: str,
-                     feature_dims: list[str] = None) -> dict:
+                     feature_dims: list[str] = None,
+                     target_baseline: list[str] = None) -> dict:
     boundary_data = []
     for a in analyses:
         doc_id = a.get("doc_id", "")
@@ -351,6 +388,9 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
             "category": a.get("category", ""),
         })
 
+    # Baseline warning: without an independent target capability baseline,
+    # only "coverage analysis" is meaningful, not "absolute gap identification".
+    baseline_warning = ""
     if feature_dims:
         feature_dimensions = feature_dims
     else:
@@ -360,14 +400,34 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
             feature_dimensions = list(set(
                 bi for bd in boundary_data for bi in bd.get("boundary_in", [])
             ))
+            baseline_warning = (
+                "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
+                "下列'缺口'实为'现有文档未覆盖的能力'，可能源于文档缺失或未提及，"
+                "需结合产品能力地图或行业模板人工确认。"
+            )
         else:
+            # P1-4.4: If target_baseline is provided, inject it into the
+            # feature-extraction prompt so the LLM has an independent
+            # reference for gap identification. Without it, only coverage
+            # analysis is meaningful, not absolute gap identification.
+            if target_baseline:
+                baseline_json = json.dumps(target_baseline, ensure_ascii=False, indent=2)
+                baseline_section = f"{baseline_json}\n（用户提供的目标能力基线）"
+                baseline_warning = ""
+            else:
+                baseline_section = "[]\n（空--未提供独立基线，请在 baseline_warning 中说明限制）"
+
             user_msg = (f"## 所有文档的边界信息\n"
                         f"{json.dumps(boundary_data, ensure_ascii=False, indent=2)}\n\n"
                         f"## 文档分类\n"
-                        f"{json.dumps(categories, ensure_ascii=False, indent=2)}")
+                        f"{json.dumps(categories, ensure_ascii=False, indent=2)}\n\n"
+                        f"## 目标能力基线\n"
+                        f"{baseline_section}")
 
             result = call_llm(client, extraction_prompt, user_msg, text_model)
             raw_dims = result.get("feature_dimensions", [])
+            if not target_baseline:
+                baseline_warning = result.get("baseline_warning", "")
             if isinstance(raw_dims, list):
                 feature_dimensions = []
                 for d in raw_dims:
@@ -379,6 +439,14 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
                 feature_dimensions = list(set(
                     bi for bd in boundary_data for bi in bd.get("boundary_in", [])
                 ))
+                baseline_warning = baseline_warning or (
+                    "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
+                )
+
+    if not baseline_warning:
+        baseline_warning = (
+            "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
+        )
 
     coverage_matrix = []
     for dim in feature_dimensions:
@@ -417,7 +485,9 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
                         f"## 重叠列表\n"
                         f"{json.dumps(overlaps, ensure_ascii=False, indent=2)}\n\n"
                         f"## 文档分类\n"
-                        f"{json.dumps(categories, ensure_ascii=False, indent=2)}")
+                        f"{json.dumps(categories, ensure_ascii=False, indent=2)}\n\n"
+                        f"## 基线限制说明\n"
+                        f"{baseline_warning}")
 
             result = call_llm(client, assessment_prompt, user_msg, text_model)
             gap_assessments = result.get("gap_assessments", [])
@@ -452,6 +522,7 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
         "coverage_matrix": coverage_matrix,
         "gaps": gaps_final,
         "overlaps": overlaps_final,
+        "baseline_warning": baseline_warning,
         "summary": {
             "total_features": len(feature_dimensions),
             "covered": covered_count,
@@ -471,6 +542,8 @@ def main():
                         help="输出类型（默认：all）")
     parser.add_argument("--feature-dims", default="",
                         help="自定义功能维度JSON路径（跳过LLM提取）")
+    parser.add_argument("--target-baseline", default="",
+                        help="目标能力基线JSON路径（提供独立基线用于缺口分析）")
     parser.add_argument("--include-mermaid", action="store_true",
                         help="在输出中包含Mermaid演进图")
     args = parser.parse_args()
@@ -519,6 +592,21 @@ def main():
         except Exception as e:
             print(f"警告：加载功能维度失败：{e}", file=sys.stderr)
 
+    target_baseline = None
+    if args.target_baseline:
+        try:
+            with open(args.target_baseline, "r", encoding="utf-8") as f:
+                bl_data = json.load(f)
+                if isinstance(bl_data, list):
+                    target_baseline = bl_data
+                elif isinstance(bl_data, dict):
+                    target_baseline = bl_data.get("target_baselines", []) or bl_data.get("capabilities", [])
+                else:
+                    target_baseline = []
+            print(f"使用目标能力基线：{len(target_baseline)}项")
+        except Exception as e:
+            print(f"警告：加载目标能力基线失败：{e}", file=sys.stderr)
+
     evolution_result = None
     gap_result = None
 
@@ -535,12 +623,13 @@ def main():
         if args.include_mermaid:
             evolution_result["mermaid_graph"] = generate_mermaid(
                 evolution_result.get("evolution_chains", []))
-            print(f"  ✓ Mermaid图已生成")
+            print("  ✓ Mermaid图已生成")
 
     if args.output_type in [OUTPUT_TYPE_GAP, OUTPUT_TYPE_ALL]:
-        print(f"\n正在执行缺口分析...")
+        print("\n正在执行缺口分析...")
         gap_result = run_gap_analysis(
-            client, doc_index, analyses, categories, text_model, feature_dims)
+            client, doc_index, analyses, categories, text_model, feature_dims,
+            target_baseline=target_baseline)
         gap_summary = gap_result.get("summary", {})
         print(f"  ✓ 缺口分析完成：{gap_summary.get('total_features', 0)}个功能维度，"
               f"{gap_summary.get('gaps', 0)}个缺口，"

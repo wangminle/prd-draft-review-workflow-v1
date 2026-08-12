@@ -3,7 +3,7 @@
 ## Full System Review
 
 ```
-python scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
 ```
 
 ### Arguments
@@ -25,7 +25,6 @@ python scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
 | `--competition-refs` | none | Path to competitor reference file |
 | `--rubric` | none | Path to PM scoring rubric JSON (overrides default) |
 | `--review-context` | none | Path to Review Context JSON (scoring rubrics, domain rules, writing standards) |
-| `--enable-vision` | off | Enable vision engine for original document images |
 
 ### Environment Variables
 
@@ -33,12 +32,11 @@ python scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
 |----------|---------|-------------|
 | `ANTHROPIC_API_KEY` | required | API key for LLM calls |
 | `TEXT_MODEL` | claude-sonnet-4-20250514 | Model for text analysis |
-| `VISION_MODEL` | claude-sonnet-4-20250514 | Model for image analysis |
 
 ## Standalone PM Assessment
 
 ```
-python scripts/pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
 ```
 
 ### Options

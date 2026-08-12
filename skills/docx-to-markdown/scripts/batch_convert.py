@@ -14,7 +14,7 @@ script_dir = os.path.dirname(os.path.abspath(__file__))
 if script_dir not in sys.path:
     sys.path.insert(0, script_dir)
 
-from convert_docx import convert_docx_to_markdown, sanitize_stem
+from convert_docx import convert_docx_to_markdown, sanitize_stem  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -55,21 +55,29 @@ def batch_convert(source_dir, output_dir, force=False):
         base_name = os.path.splitext(os.path.basename(docx_path))[0]
         folder_name = sanitize_stem(base_name)
         target_dir = os.path.join(output_dir, folder_name)
-        
+        md_file = os.path.join(target_dir, f"{folder_name}.md")
+        sentinel = os.path.join(target_dir, ".converted")
+
         logger.info("[%d/%d] 正在处理: %s", i, len(docx_files), base_name)
-        
-        # 检查是否已经处理过（--force 时跳过此检查）
-        if not force and os.path.exists(target_dir):
-            logger.info("  已存在，跳过（使用 --force 强制重新转换）")
+
+        # 检查是否已完整转换：同时验证目录、Markdown 文件和完成标记都存在。
+        # 仅检查目录是否存在会导致中途失败的半成品被永久跳过。
+        # --force 时跳过此检查。
+        if not force and os.path.isdir(target_dir) and os.path.isfile(md_file) and os.path.isfile(sentinel):
+            logger.info("  已完整转换，跳过（使用 --force 强制重新转换）")
             skip_count += 1
             continue
 
         try:
-            if force and os.path.exists(target_dir):
+            # 清理半成品目录（无完成标记）或 --force 时清理已有输出。
+            needs_cleanup = force and os.path.exists(target_dir)
+            if not force and os.path.isdir(target_dir) and not os.path.isfile(sentinel):
+                needs_cleanup = True
+            if needs_cleanup:
                 import shutil
                 if os.path.isdir(target_dir) and not os.path.islink(target_dir):
                     shutil.rmtree(target_dir)
-                else:
+                elif os.path.exists(target_dir):
                     os.remove(target_dir)
 
             convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True)
@@ -77,6 +85,13 @@ def batch_convert(source_dir, output_dir, force=False):
             success_count += 1
         except Exception as e:
             logger.error("  失败: %s", e)
+            # 转换失败时清理半成品目录，避免下次被误判为已完成。
+            try:
+                import shutil
+                if os.path.isdir(target_dir) and not os.path.islink(target_dir):
+                    shutil.rmtree(target_dir)
+            except Exception:
+                pass
             fail_count += 1
     
     logger.info("处理完成: 成功 %d 个, 跳过 %d 个, 失败 %d 个",

@@ -32,7 +32,8 @@
       "type": "object",
       "required": ["total_reports", "total_md_size", "chart_count"],
       "properties": {
-        "total_reports": {"type": "integer"},
+        "total_reports": {"type": "integer", "description": "生成的报告类型数量"},
+        "total_files": {"type": "integer", "description": "写入磁盘的文件数量（MD + PDF 分别计数）"},
         "total_md_size": {"type": "integer"},
         "chart_count": {"type": "integer"}
       }

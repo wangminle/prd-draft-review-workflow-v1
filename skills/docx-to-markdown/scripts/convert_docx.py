@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import sys
+import tempfile
 import zipfile
 import re
 import xml.etree.ElementTree as ET
@@ -21,6 +22,62 @@ import posixpath
 from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
+
+# ── 资源限制 ──────────────────────────────────────────────────────
+# 防御异常或恶意 DOCX 文件造成的内存/磁盘资源耗尽。
+MAX_TOTAL_UNCOMPRESSED = 500 * 1024 * 1024   # 500 MB 总解压上限
+MAX_SINGLE_ENTRY_UNCOMPRESSED = 100 * 1024 * 1024  # 100 MB 单个 entry
+MAX_COMPRESSION_RATIO = 100  # 压缩比上限（解压后/压缩前）
+MAX_IMAGE_COUNT = 500  # 单文档最大图片数
+MAX_XLSX_SIZE = 50 * 1024 * 1024  # 50 MB 单个嵌入 Excel
+MAX_IMAGE_PIXELS = 50_000_000  # 单张图片最大像素数（约 7000x7000）
+MAX_SINGLE_IMAGE_SIZE = 20 * 1024 * 1024  # 20 MB 单张图片文件大小
+
+
+class DocxSecurityError(ValueError):
+    """安全拒绝异常——ZIP bomb、超大 entry、超高压缩比等。
+
+    与普通 ValueError 区分，使上层调用方能区分安全拒绝（不可降级）
+    与格式/转换错误（可降级到 mammoth 等备选路径）。
+    """
+
+
+def validate_zip_safety(docx_path: str) -> None:
+    """检查 ZIP 文件是否存在 zip bomb 或超大 entry 风险。
+
+    在解压前检查每个 entry 的压缩大小和解压大小，
+    如果总解压大小、单个 entry 大小或压缩比超限则抛出 DocxSecurityError。
+    """
+    total_compressed = 0
+    total_uncompressed = 0
+    with zipfile.ZipFile(docx_path, "r") as zf:
+        for info in zf.infolist():
+            total_compressed += info.compress_size
+            total_uncompressed += info.file_size
+            if info.file_size > MAX_SINGLE_ENTRY_UNCOMPRESSED:
+                raise DocxSecurityError(
+                    f"ZIP entry 过大（{info.file_size} 字节 > {MAX_SINGLE_ENTRY_UNCOMPRESSED}）：{info.filename}"
+                )
+            if info.compress_size > 0:
+                ratio = info.file_size / info.compress_size
+                if ratio > MAX_COMPRESSION_RATIO:
+                    raise DocxSecurityError(
+                        f"ZIP entry 压缩比过高（{ratio:.1f}x > {MAX_COMPRESSION_RATIO}x）：{info.filename}"
+                    )
+
+    if total_uncompressed > MAX_TOTAL_UNCOMPRESSED:
+        raise DocxSecurityError(
+            f"ZIP 总解压大小超限（{total_uncompressed} > {MAX_TOTAL_UNCOMPRESSED} 字节）"
+        )
+
+
+def _safe_xml_fromstring(data: bytes):
+    """安全解析 XML，优先使用 defusedxml（如已安装），否则回退到标准库。"""
+    try:
+        import defusedxml.ElementTree as DefusedET
+        return DefusedET.fromstring(data)
+    except ImportError:
+        return ET.fromstring(data)
 
 
 _FORBIDDEN_FILENAME_CHARS_RE = re.compile(r'[\\/:*?"<>|]')
@@ -402,13 +459,24 @@ def promote_leading_bold_title(markdown: str) -> str:
 def sanitize_stem(stem: str) -> str:
     raw = stem  # 保留原始值用于 hash
     stem = unicodedata.normalize("NFKC", stem or "")
+    # 记录是否发生了可能引起碰撞的字符替换。
+    chars_removed = False
     for ch in _QUOTE_CHARS:
-        stem = stem.replace(ch, "")
+        if ch in stem:
+            chars_removed = True
+            stem = stem.replace(ch, "")
+    if _FORBIDDEN_FILENAME_CHARS_RE.search(stem):
+        chars_removed = True
     stem = _FORBIDDEN_FILENAME_CHARS_RE.sub("_", stem)
     stem = _WHITESPACE_RE.sub(" ", stem).strip()
     stem = stem.strip(". ").strip()
     if not stem:
         return "document"
+    # 当发生了字符清洗（如 "A:B"→"A_B"）时，附加原始文件名的短 hash，
+    # 确保不同原始名称不会映射到同一输出目录。
+    if chars_removed and len(stem) <= 120:
+        suffix = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
+        return f"{stem}_{suffix}"
     if len(stem) <= 120:
         return stem
     # 截断时附加原始全名的短 hash，避免不同长文件名映射到同一输出目录
@@ -450,7 +518,7 @@ def extract_heading_level_map(docx_path: str) -> Dict[str, int]:
     level_map: Dict[str, int] = {}
     try:
         with zipfile.ZipFile(docx_path, "r") as zip_ref:
-            doc_xml = ET.fromstring(zip_ref.read("word/document.xml"))
+            doc_xml = _safe_xml_fromstring(zip_ref.read("word/document.xml"))
         for p in doc_xml.findall(f".//{tag_p}"):
             bm = p.find(f".//{tag_bm}")
             if bm is None:
@@ -509,7 +577,7 @@ def parse_relationships(docx_path):
     with zipfile.ZipFile(docx_path, 'r') as zip_ref:
         try:
             rels_content = zip_ref.read('word/_rels/document.xml.rels')
-            rels_root = ET.fromstring(rels_content)
+            rels_root = _safe_xml_fromstring(rels_content)
             for rel in rels_root.findall(f'.//{{{NS_REL}}}Relationship'):
                 rid = rel.get('Id')
                 rel_type = rel.get('Type', '').split('/')[-1]
@@ -527,7 +595,7 @@ def parse_relationships(docx_path):
 
         try:
             doc_xml = zip_ref.read('word/document.xml')
-            doc_root = ET.fromstring(doc_xml)
+            doc_root = _safe_xml_fromstring(doc_xml)
 
             # 查找所有 <w:object> 节点（可能嵌套在 mc:AlternateContent 等下面）
             for obj_node in doc_root.iter(f'{{{NS_W}}}object'):
@@ -706,6 +774,65 @@ def detect_image_format(image_data):
         return '.png'  # 默认
 
 
+def _get_image_pixel_count(image_data: bytes) -> Optional[int]:
+    """Estimate image pixel count from header bytes (decompression bomb check).
+
+    Does not require PIL. Returns None if format is unknown (not blocked).
+    """
+    import struct
+    try:
+        if image_data[:8] == b'\x89PNG\r\n\x1a\n':
+            if len(image_data) >= 24:
+                w, h = struct.unpack('>II', image_data[16:24])
+                return w * h
+        elif image_data[:2] == b'\xff\xd8':
+            idx = 2
+            while idx < len(image_data) - 1:
+                if image_data[idx] != 0xFF:
+                    idx += 1
+                    continue
+                marker = image_data[idx + 1]
+                if marker in (0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7,
+                              0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+                    if idx + 8 < len(image_data):
+                        h, w = struct.unpack('>HH', image_data[idx+5:idx+9])
+                        return w * h
+                    break
+                elif marker == 0xD8 or marker == 0xD9:
+                    break
+                elif marker in (0xD0, 0xD1, 0xD2, 0xD3, 0xD4, 0xD5, 0xD6, 0xD7, 0x01):
+                    idx += 2
+                else:
+                    if idx + 3 < len(image_data):
+                        length = struct.unpack('>H', image_data[idx+2:idx+4])[0]
+                        idx += 2 + length
+                    else:
+                        break
+        elif image_data[:6] in (b'GIF87a', b'GIF89a'):
+            if len(image_data) >= 10:
+                w, h = struct.unpack('<HH', image_data[6:10])
+                return w * h
+        elif image_data[:4] == b'RIFF' and image_data[8:12] == b'WEBP':
+            return None
+        elif image_data[:2] == b'BM':
+            if len(image_data) >= 26:
+                w, h = struct.unpack('<ii', image_data[18:26])
+                return abs(w) * abs(h)
+    except Exception:
+        pass
+    return None
+
+
+def _image_resource_rejection_reason(image_data: bytes) -> Optional[str]:
+    """返回图片资源拒绝原因；符合限制时返回 None。"""
+    if len(image_data) > MAX_SINGLE_IMAGE_SIZE:
+        return f"图片文件过大（{len(image_data)} 字节 > {MAX_SINGLE_IMAGE_SIZE}）"
+    pixel_count = _get_image_pixel_count(image_data)
+    if pixel_count is not None and pixel_count > MAX_IMAGE_PIXELS:
+        return f"图片像素超限（{pixel_count} > {MAX_IMAGE_PIXELS}）"
+    return None
+
+
 def extract_content_from_docx(docx_path, assets_dir):
     """从docx中提取图片和Excel数据，并构建“内容hash -> 内容”的映射
 
@@ -729,6 +856,10 @@ def extract_content_from_docx(docx_path, assets_dir):
         for file_info in zip_ref.filelist:
             if file_info.filename.startswith('word/embeddings/') and file_info.filename.lower().endswith('.xlsx'):
                 excel_file = file_info.filename
+                # 资源限制：超大嵌入 Excel 可能导致内存耗尽。
+                if file_info.file_size > MAX_XLSX_SIZE:
+                    logger.warning("嵌入 Excel 过大（%d 字节），跳过: %s", file_info.file_size, excel_file)
+                    continue
                 xlsx_data = zip_ref.read(file_info.filename)
 
                 markdown_table = excel_to_markdown(xlsx_data)
@@ -753,8 +884,13 @@ def extract_content_from_docx(docx_path, assets_dir):
             logger.info("转换Excel为表格: %s", excel_path)
 
         # 处理图片
+        image_count = 0
         for file_info in zip_ref.filelist:
             if file_info.filename.startswith('word/media/'):
+                # 资源限制：防止超大图片集导致内存/磁盘耗尽。
+                if image_count >= MAX_IMAGE_COUNT:
+                    logger.warning("图片数量超过上限（%d），跳过剩余图片", MAX_IMAGE_COUNT)
+                    break
                 image_name = os.path.basename(file_info.filename)
                 
                 # 检查这个图片是否是Excel的预览图
@@ -763,6 +899,10 @@ def extract_content_from_docx(docx_path, assets_dir):
                 
                 # 普通图片，直接提取
                 image_data = zip_ref.read(file_info.filename)
+                rejection_reason = _image_resource_rejection_reason(image_data)
+                if rejection_reason:
+                    logger.warning("%s，跳过：%s", rejection_reason, file_info.filename)
+                    continue
                 digest = hashlib.sha256(image_data).hexdigest()
                 
                 # 检测真实的图片格式并修正扩展名
@@ -789,6 +929,7 @@ def extract_content_from_docx(docx_path, assets_dir):
 
                 image_by_hash.setdefault(digest, f"assets/{corrected_name}")
                 logger.info("提取图片: %s", corrected_name)
+                image_count += 1
     
     return image_by_hash, table_queue_by_hash, table_repeat_by_hash
 
@@ -809,7 +950,7 @@ def extract_textbox_content(docx_path: str) -> List[str]:
     blocks: List[str] = []
     try:
         with zipfile.ZipFile(docx_path, "r") as zf:
-            doc_xml = ET.fromstring(zf.read("word/document.xml"))
+            doc_xml = _safe_xml_fromstring(zf.read("word/document.xml"))
 
         for txbx_tag in (tag_txbx, tag_txbx_wps):
             for txbx in doc_xml.iter(txbx_tag):
@@ -842,7 +983,7 @@ def extract_math_text(docx_path: str) -> List[str]:
     formulas: List[str] = []
     try:
         with zipfile.ZipFile(docx_path, "r") as zf:
-            doc_xml = ET.fromstring(zf.read("word/document.xml"))
+            doc_xml = _safe_xml_fromstring(zf.read("word/document.xml"))
 
         seen = set()
         for parent_tag in (tag_omath_para, tag_omath):
@@ -883,6 +1024,9 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
     except zipfile.BadZipFile as exc:
         raise ValueError(f"输入文件不是有效的 DOCX/ZIP: {docx_path}") from exc
 
+    # 资源安全检查：防止异常或恶意文档造成资源耗尽。
+    validate_zip_safety(docx_path)
+
     # 获取文件名（不含扩展名）
     if output_name:
         base_name = os.path.splitext(output_name)[0]
@@ -915,6 +1059,10 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
         """根据图片内容hash，返回对应的assets路径或表格占位符"""
         with image.open() as image_bytes:
             image_data = image_bytes.read()
+        rejection_reason = _image_resource_rejection_reason(image_data)
+        if rejection_reason:
+            logger.warning("Mammoth 图片回调拒绝资源：%s", rejection_reason)
+            return {"src": ""}
         digest = hashlib.sha256(image_data).hexdigest()
 
         table_queue = table_queue_by_hash.get(digest)
@@ -998,10 +1146,45 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
             logger.info("追加了 %d 个数学公式", len(missing_math))
 
     md_path = os.path.join(final_output_dir, f"{folder_name}.md")
-    
-    with open(md_path, 'w', encoding='utf-8') as f:
-        f.write(markdown)
-    
+
+    # 原子写入：先写入同目录临时文件，再 rename 到目标路径。
+    # 这样批处理或其他并发读取方不会看到半成品 .md 文件。
+    # 同目录 rename 在 POSIX 上是原子的；Windows 上若目标存在会失败，故先 remove。
+    final_md_dir = os.path.dirname(md_path)
+    fd, tmp_md_path = tempfile.mkstemp(
+        prefix=f".{folder_name}.", suffix=".md.tmp", dir=final_md_dir
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(markdown)
+        if os.path.exists(md_path):
+            os.remove(md_path)
+        os.rename(tmp_md_path, md_path)
+        tmp_md_path = None
+    finally:
+        if tmp_md_path and os.path.exists(tmp_md_path):
+            try:
+                os.remove(tmp_md_path)
+            except OSError:
+                pass
+
+    # 写入完成标记，使批处理可以区分"完整转换"和"中途失败的半成品目录"。
+    # 同样使用原子 rename，保证 .converted 要么完整存在、要么不存在。
+    sentinel_path = os.path.join(final_output_dir, ".converted")
+    sentinel_tmp = sentinel_path + ".tmp"
+    try:
+        with open(sentinel_tmp, "w", encoding="utf-8") as f:
+            f.write(folder_name)
+        if os.path.exists(sentinel_path):
+            os.remove(sentinel_path)
+        os.rename(sentinel_tmp, sentinel_path)
+    except Exception:
+        if os.path.exists(sentinel_tmp):
+            try:
+                os.remove(sentinel_tmp)
+            except OSError:
+                pass
+
     logger.info("转换完成: %s", md_path)
     return md_path
 
@@ -1163,8 +1346,8 @@ if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if len(sys.argv) < 3:
-        print("用法: python scripts/convert_docx.py <docx文件路径> <输出目录>  (在skill目录执行)")
-        print("或:   python convert_docx.py <docx文件路径> <输出目录>          (在scripts目录执行)")
+        print("用法: python3 scripts/convert_docx.py <docx文件路径> <输出目录>  (在skill目录执行)")
+        print("或:   python3 convert_docx.py <docx文件路径> <输出目录>          (在scripts目录执行)")
         sys.exit(1)
     
     docx_path = sys.argv[1]

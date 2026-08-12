@@ -2,8 +2,6 @@ import asyncio
 import json
 import logging
 import os
-import uuid
-from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
@@ -16,7 +14,6 @@ from app.database import async_session, get_db
 from app.log_writers.audit_log_writer import AuditLogWriter
 from app.middleware.auth import get_current_user, require_admin
 from app.services.review_helpers import (
-    build_context_injection,
     default_review_context,
     extract_pm_assessment_payload,
     merge_review_context_defaults,
@@ -31,7 +28,7 @@ from app.models.review import (
     SystemReview,
 )
 from app.models.user import ModelConfig, User
-from app.runtime_paths import runtime_path
+from app.runtime_paths import runtime_path  # noqa: F401  # used via monkeypatch in tests
 from app.storage.review_file_storage import ReviewFileStorage
 from app.schemas.review import (
     AnalysisInfo,
@@ -50,27 +47,21 @@ from app.services.crypto import decrypt_key
 from app.services.auth import consume_sse_ticket
 from app.utils import now_cn
 from app.services.retry import (
-    ContextOverflowError,
-    LLMRetryError,
     RetryConfig,
-    structured_chat,
 )
 from app.repositories.review_task_repository import (
     DocAnalysisPayload,
     NewReviewTask,
     ReviewTaskRepository,
     SystemReviewPayload,
-    TaskProgressPatch,
 )
 from app.repositories.review_project_repository import ReviewProjectRepository
 from app.repositories.review_context_repository import (
     ReviewContextRepository,
-    ContextCreateData,
 )
 from app.repositories.review_prompt_repository import (
     ReviewPromptRepository,
     ReviewPromptCreateData,
-    ReviewPromptPatch,
 )
 from app.services.review_pipeline_persistence import ReviewPipelinePersistenceService
 from app.services.skill_runner import SkillRunner, normalize_dimension_result
@@ -127,7 +118,7 @@ async def _load_review_context(db: AsyncSession, project_id: int) -> dict | None
     """Load active ReviewContext for a project, return parsed context_data."""
     result = await db.execute(
         select(ReviewContext)
-        .where(ReviewContext.project_id == project_id, ReviewContext.is_active == True)
+        .where(ReviewContext.project_id == project_id, ReviewContext.is_active)
         .order_by(ReviewContext.version.desc())
         .limit(1)
     )
@@ -259,9 +250,14 @@ def _analysis_has_required_expert_review(analysis: DocAnalysis) -> bool:
     return ReviewTaskRepository._analysis_has_required_expert_review(analysis)
 
 
-async def _find_cached_analyses(db: AsyncSession, doc_ids: list[int], context_version: int | None = None) -> dict[int, DocAnalysis]:
+async def _find_cached_analyses(
+    db: AsyncSession,
+    doc_ids: list[int],
+    context_version: int | None = None,
+    model_id: str | None = None,
+) -> dict[int, DocAnalysis]:
     repo = ReviewTaskRepository(db)
-    return await repo.find_cached_analyses(doc_ids, context_version)
+    return await repo.find_cached_analyses(doc_ids, context_version, model_id)
 
 
 progress_queues: dict[int, asyncio.Queue] = {}
@@ -309,13 +305,13 @@ async def _get_model_config(model_id: str | None, db: AsyncSession) -> dict:
         result = await db.execute(
             select(ModelConfig).where(
                 ModelConfig.model_id == model_id,
-                ModelConfig.deleted_by_user == False,
+                not ModelConfig.deleted_by_user,
             )
         )
     else:
         result = await db.execute(
             select(ModelConfig)
-            .where(ModelConfig.enabled == True, ModelConfig.deleted_by_user == False)
+            .where(ModelConfig.enabled, not ModelConfig.deleted_by_user)
             .order_by(ModelConfig.display_order, ModelConfig.name, ModelConfig.id)
             .limit(1)
         )
@@ -464,7 +460,6 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
     legacy_visible = default_ws is not None and default_ws.id in active_ws_ids
 
     # P4.Pre.1: 按用户活跃 workspace 过滤项目可见性，不再限制 created_by
-    from app.services.workspace_access import can
     result = await db.execute(select(ReviewProject).order_by(ReviewProject.updated_at.desc()))
     all_projects = result.scalars().all()
     out = []
@@ -489,7 +484,7 @@ async def list_projects(user: User = Depends(get_current_user), db: AsyncSession
             )
         )
         report_count = rc.scalar() or 0
-        cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == p.id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
+        cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == p.id, ReviewContext.is_active).order_by(ReviewContext.version.desc()).limit(1))
         ctx_ver = cv.scalar_one_or_none()
         out.append(_project_to_info(p, doc_count, report_count, ctx_ver))
     return out
@@ -537,7 +532,7 @@ async def get_project(project_id: int, user: User = Depends(get_current_user), d
         )
     )
     report_count = rc.scalar() or 0
-    cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == p.id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
+    cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == p.id, ReviewContext.is_active).order_by(ReviewContext.version.desc()).limit(1))
     ctx_ver = cv.scalar_one_or_none()
 
     info = _project_to_info(p, doc_count, report_count, ctx_ver)
@@ -842,7 +837,7 @@ async def start_review(
         )
         model_cfg["extra_body"] = extra_body
 
-    cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == project_id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
+    cv = await db.execute(select(ReviewContext.version).where(ReviewContext.project_id == project_id, ReviewContext.is_active).order_by(ReviewContext.version.desc()).limit(1))
     ctx_ver = cv.scalar_one_or_none() or 1
 
     mode_steps = {
@@ -1131,6 +1126,73 @@ def _raise_if_step_failed(step_name: str, result):
     return result
 
 
+def _require_classification_coverage(classifications, expected_doc_ids: list[int]) -> list[dict]:
+    if not isinstance(classifications, list) or not classifications:
+        raise RuntimeError("分类步骤失败，中止管线: 未返回任何有效分类结果")
+
+    normalized: list[dict] = []
+    covered_doc_ids: set[str] = set()
+    for item in classifications:
+        if not isinstance(item, dict):
+            continue
+        doc_id = str(item.get("doc_id") or "").strip()
+        category = str(item.get("category") or "").strip()
+        if not doc_id or not category:
+            continue
+        normalized.append(item)
+        covered_doc_ids.add(doc_id)
+
+    missing_doc_ids = [str(doc_id) for doc_id in expected_doc_ids if str(doc_id) not in covered_doc_ids]
+    if missing_doc_ids:
+        raise RuntimeError(
+            "分类步骤失败，中止管线: 以下文档缺少可用分类结果: "
+            + ", ".join(missing_doc_ids)
+        )
+    return normalized
+
+
+def _analysis_cache_is_stale(cached_analysis, current_content_hash: str | None) -> tuple[bool, str]:
+    if not isinstance(cached_analysis, dict):
+        return True, "cached analysis is not a dict"
+
+    cached_hash = str(cached_analysis.get("_source_content_hash") or "").strip()
+    current_hash = str(current_content_hash or "").strip()
+    if not cached_hash:
+        return True, "missing _source_content_hash"
+    if not current_hash:
+        return True, "missing current content_hash"
+    if cached_hash != current_hash:
+        return True, f"content hash changed ({cached_hash[:12]} -> {current_hash[:12]})"
+    return False, ""
+
+
+def _restore_cached_review_dimensions_meta(cached_sr: SystemReview, dim_results: dict[str, object]) -> dict | None:
+    raw_meta = getattr(cached_sr, "dimensions_meta", None)
+    if raw_meta:
+        try:
+            parsed = json.loads(raw_meta)
+            if isinstance(parsed, dict):
+                return parsed
+        except (json.JSONDecodeError, TypeError):
+            logger.warning("Invalid cached dimensions_meta on system review %s", getattr(cached_sr, "id", "?"))
+
+    failed = [
+        dim_name for dim_name, dim_data in dim_results.items()
+        if isinstance(dim_data, dict) and dim_data.get("error")
+    ]
+    if not dim_results:
+        return None
+    executed = [dim_name for dim_name in dim_results if dim_name not in failed]
+    return {
+        "dimensions_executed": executed,
+        "dimensions_failed": failed,
+        "total": len(dim_results),
+        "success_count": len(executed),
+        "failed_count": len(failed),
+        "status": "partial" if failed else "success",
+    }
+
+
 @router.get("/projects/{project_id}/reviews/{review_id}/report")
 async def get_report(
     project_id: int, review_id: int,
@@ -1185,7 +1247,7 @@ async def get_report(
 @router.get("/projects/{project_id}/context", response_model=ContextInfo)
 async def get_context(project_id: int, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     await _verify_project_owner(db, project_id, user.id)
-    result = await db.execute(select(ReviewContext).where(ReviewContext.project_id == project_id, ReviewContext.is_active == True).order_by(ReviewContext.version.desc()).limit(1))
+    result = await db.execute(select(ReviewContext).where(ReviewContext.project_id == project_id, ReviewContext.is_active).order_by(ReviewContext.version.desc()).limit(1))
     ctx = result.scalar_one_or_none()
     if ctx is None:
         return ContextInfo(context_id=0, version=1, is_active=True, updated_at=None, context_data=default_review_context())
@@ -1293,6 +1355,62 @@ async def _run_pipeline(
             user_id=task.created_by,
         )
 
+        # P1-4.3: Preflight Skill status gate. Load inactive skill_ids from
+        # SkillConfigRepository and pass to the runner so a required Skill
+        # marked inactive refuses to start (rather than silently executing).
+        from app.repositories.skill_config_repository import SkillConfigRepository
+        skill_repo = SkillConfigRepository(db)
+        all_skills = await skill_repo.list_all(include_inactive=True)
+        inactive_skills = {
+            s.skill_id for s in all_skills if s.status == "inactive"
+        }
+        if inactive_skills:
+            context_data["inactive_skills"] = list(inactive_skills)
+            runner.context = context_data
+
+        # P1-4.3 fix: Preflight gate on production path. Check ALL required
+        # skills (classify, per_analysis, system_review, report) before
+        # setting task.status=running. The per-step gate at lines 1598+
+        # only covers steps 3+; steps 1 (分类) and 2 (逐篇分析) were
+        # previously unguarded, making the inactive switch dead code for them.
+        _FULL_STEP_TO_SKILL_ID = {
+            "分类": "prd-overview-classify",
+            "逐篇分析": "prd-per-analysis",
+            "体系Review": "system-review",
+            "需求洞察": "requirement-insights",
+            "报告生成": "report-generator",
+            "PRD草稿生成": "report-generator",
+        }
+        _OPTIONAL_STEP_NAMES = {"需求洞察"}
+        blocked_required = [
+            _FULL_STEP_TO_SKILL_ID[s]
+            for s in steps
+            if s in _FULL_STEP_TO_SKILL_ID
+            and _FULL_STEP_TO_SKILL_ID[s] in inactive_skills
+            and s not in _OPTIONAL_STEP_NAMES
+        ]
+        if blocked_required:
+            err_msg = (
+                f"必需 Skill 处于 inactive 状态，管线拒绝启动："
+                f"{', '.join(blocked_required)}。"
+                f"请在管理后台重新启用后再发起审查任务。"
+            )
+            logger.error(err_msg)
+            task.status = "failed"
+            task.error_message = err_msg
+            task.completed_at = now_cn()
+            _early_step_statuses = {str(i): "skipped" for i in range(len(steps))}
+            task.step_statuses = json.dumps(_early_step_statuses, ensure_ascii=False)
+            await db.commit()
+            _early_queue = progress_queues.get(task_id)
+            if _early_queue:
+                await _early_queue.put({
+                    "task_status": "failed",
+                    "error": err_msg,
+                    "step_statuses": _early_step_statuses,
+                })
+            return
+
         # P0.C.3: Freeze snapshot versions for project source refs
         from app.repositories.knowledge_source_repository import ProjectSourceRefRepository
         ref_repo = ProjectSourceRefRepository(db)
@@ -1327,7 +1445,8 @@ async def _run_pipeline(
                 await queue.put({"task_status": "running", "current_step": step_idx, "step_statuses": step_statuses})
 
             for doc in docs:
-                if await _check_cancelled(): return
+                if await _check_cancelled():
+                    return
                 try:
                     source_path = _resolve_stored_file_path(doc.file_path)
                     md_path = await _convert_docx(source_path, doc.id, doc.filename)
@@ -1339,7 +1458,9 @@ async def _run_pipeline(
                     doc.status = "failed"
                 await db.commit()
 
-            if await _check_cancelled(): return
+            if await _check_cancelled():
+
+                return
 
             step_statuses[str(step_idx)] = "completed"
             task.step_statuses = json.dumps(step_statuses)
@@ -1382,7 +1503,8 @@ async def _run_pipeline(
                 hist_docs = hist_result.scalars().all()
                 hist_dicts = []
                 for hdoc in hist_docs:
-                    if await _check_cancelled(): return
+                    if await _check_cancelled():
+                        return
                     try:
                         source_path = _resolve_stored_file_path(hdoc.file_path)
                         md_path = await _convert_docx(source_path, hdoc.id, hdoc.filename)
@@ -1409,7 +1531,9 @@ async def _run_pipeline(
                         })
                 runner.state["historical_docs"] = hist_dicts
 
-            if await _check_cancelled(): return
+            if await _check_cancelled():
+
+                return
 
             # Step 1: 分类 (SkillRunner)
             step_idx = 1
@@ -1423,13 +1547,50 @@ async def _run_pipeline(
             classify_inputs = runner.build_step_inputs("classify", runner.state)
             classify_result = await runner.run_skill("classify", classify_inputs)
 
+            # P1-5.5: Abort pipeline if classification critically failed.
+            # Without this guard, an error result with empty classifications
+            # would silently propagate through version-chain and downstream
+            # steps, producing a meaningless "completed" review.
+            if classify_result.is_error:
+                _classify_err = classify_result.data.get("error", "未知错误")
+                raise RuntimeError(f"分类步骤失败，中止管线: {_classify_err}")
+
             # Run version-chain as second classify sub-step
-            classifications = classify_result.data.get("classifications", [])
+            classifications = _require_classification_coverage(
+                classify_result.data.get("classifications", []),
+                [doc.id for doc in converted_docs],
+            )
+
+            # P1-4.4: Enforce category whitelist on LLM-returned classifications.
+            # The standalone classify.py script already does this, but the route
+            # path was missing this guard. Categories not in the configured
+            # whitelist are marked as "待确认" for human review.
+            _cat_whitelist = {"未分类", "待确认"}
+            _cat_cfg_path = Path(SKILLS_DIR) / "prd-overview-classify" / "templates" / "default-categories.json"
+            try:
+                if _cat_cfg_path.exists():
+                    _cat_cfg = json.loads(_cat_cfg_path.read_text(encoding="utf-8"))
+                    _cat_whitelist |= {c["name"] for c in _cat_cfg.get("categories", []) if isinstance(c, dict) and "name" in c}
+            except Exception as e:
+                logger.warning("Failed to load category whitelist: %s", e)
+            for _c in classifications:
+                _cat_val = _c.get("category", "未分类")
+                if _cat_val not in _cat_whitelist:
+                    logger.warning(
+                        "分类白名单：文档 %s 类别 %r 不在白名单，标记为待确认",
+                        _c.get("doc_id"), _cat_val,
+                    )
+                    _c["category"] = "待确认"
             categories = list({c.get("category", "未分类") for c in classifications})
             doc_list_str = json.dumps(runner.state["docs"], ensure_ascii=False)
             categories_str = json.dumps(categories, ensure_ascii=False)
             version_chain_inputs = {"doc_list": doc_list_str, "categories": categories_str}
             version_chain_result = await runner.run_skill_with_retry("classify_version_chain", version_chain_inputs)
+
+            # P1-5.5: Check version-chain result for critical failure.
+            if version_chain_result.is_error:
+                _vc_err = version_chain_result.data.get("error", "未知错误")
+                raise RuntimeError(f"版本链分析失败，中止管线: {_vc_err}")
 
             # Store combined classify result in pipeline_state
             classify_combined = {
@@ -1441,10 +1602,11 @@ async def _run_pipeline(
             runner.state["classify"] = classify_combined
 
             # Map classify result back to per-doc DB updates
+            # 仅按 DB doc_id 精确匹配，不再回退到文件名，避免重名文件误匹配。
             for doc in converted_docs:
                 matched = None
                 for c in classifications:
-                    if str(c.get("doc_id")) == str(doc.id) or c.get("doc_id") == doc.filename:
+                    if str(c.get("doc_id")) == str(doc.id):
                         matched = c
                         break
                 if matched:
@@ -1467,7 +1629,9 @@ async def _run_pipeline(
             if queue:
                 await queue.put({"task_status": "running", "current_step": step_idx + 1, "step_statuses": step_statuses})
 
-            if await _check_cancelled(): return
+            if await _check_cancelled():
+
+                return
 
             # Step 2: 逐篇分析 (SkillRunner per_analysis) — with caching
             step_idx = 2
@@ -1486,7 +1650,7 @@ async def _run_pipeline(
 
             # Check cache: docs already analyzed in previous tasks can skip LLM
             doc_ids_to_analyze = [doc.id for doc in converted_docs]
-            cached_analyses = {} if force_reanalysis else await _find_cached_analyses(db, doc_ids_to_analyze, task.context_version)
+            cached_analyses = {} if force_reanalysis else await _find_cached_analyses(db, doc_ids_to_analyze, task.context_version, task.model_id)
 
             # Only run LLM analysis for docs not in cache
             docs_needing_analysis = []
@@ -1501,6 +1665,21 @@ async def _run_pipeline(
                         "boundary_out": json.loads(ca.boundary_out) if ca.boundary_out else [],
                         "quality_score": ca.quality_score,
                     }
+                    # P1-4.5: Invalidate cache if source file content changed
+                    # since the cached analysis was created. The _source_content_hash
+                    # is injected when saving new analyses (see below).
+                    # P2-4.5: Fail-closed -- if the cached analysis has no
+                    # _source_content_hash (old format or pre-fix cache), we
+                    # cannot prove it corresponds to the current file content.
+                    # Treat missing hash as cache-invalid and re-analyze.
+                    _is_stale, _stale_reason = _analysis_cache_is_stale(cached_analysis, doc.content_hash)
+                    if _is_stale:
+                        logger.info(
+                            "Cached analysis invalid for doc %d (%s): %s - will re-analyze",
+                            doc.id, doc.filename, _stale_reason,
+                        )
+                        docs_needing_analysis.append(doc)
+                        continue
                     analyses = runner.state.get("analyses", None)
                     if analyses is None:
                         analyses = {}
@@ -1528,13 +1707,17 @@ async def _run_pipeline(
             if docs_needing_analysis:
                 uncached_ids = [str(doc.id) for doc in docs_needing_analysis]
                 cancelled = await runner._run_per_analysis(only_doc_ids=uncached_ids, should_cancel=_check_cancelled)
-                if cancelled or await _check_cancelled(): return
+                if cancelled or await _check_cancelled():
+                    return
                 analyses_state = runner.state.get("analyses", {})
 
                 for doc in docs_needing_analysis:
                     doc_id = str(doc.id)
                     analysis = analyses_state.get(doc_id, {})
                     if analysis and not analysis.get("error"):
+                        # P1-4.6: Stamp source content hash into the analysis
+                        # so future cache lookups can detect source file changes.
+                        analysis["_source_content_hash"] = doc.content_hash
                         await repo.save_doc_analysis(DocAnalysisPayload(
                             document_id=doc.id, task_id=task_id,
                             core_problem=analysis.get("core_problem"),
@@ -1586,13 +1769,52 @@ async def _run_pipeline(
             step_retry_delay = pipeline_cfg.get("step_retry_delay", 5)
 
             for si in range(3, len(steps)):
-                if await _check_cancelled(): return
+                if await _check_cancelled():
+                    return
                 step_idx = si
                 step_name = steps[si]
                 step_result = None
 
+                # P1-4.3: Per-step Skill status gate. If the underlying Skill is
+                # inactive, required steps must fail; optional steps degrade.
+                # Steps 1 (分类) and 2 (逐篇分析) are covered by the preflight
+                # gate above; this per-step gate covers steps 3+.
+                _STEP_TO_SKILL_ID = {
+                    "体系Review": "system-review",
+                    "需求洞察": "requirement-insights",
+                    "报告生成": "report-generator",
+                    "PRD草稿生成": "report-generator",
+                }
+                _skill_id_for_step = _STEP_TO_SKILL_ID.get(step_name)
+                if _skill_id_for_step and _skill_id_for_step in inactive_skills:
+                    if step_name in ("需求洞察",):
+                        # Optional — degraded mode, skip with warning
+                        logger.warning("Skill %s inactive — 需求洞察 step degraded (skipped)",
+                                       _skill_id_for_step)
+                        runner.state.setdefault("degraded_steps", []).append(step_name)
+                        step_statuses[str(step_idx)] = "skipped"
+                        task.step_statuses = json.dumps(step_statuses)
+                        await db.commit()
+                        if queue:
+                            await queue.put({"task_status": "running", "current_step": step_idx + 1, "step_statuses": step_statuses})
+                        continue
+                    else:
+                        # Required — fail the task
+                        err_msg = f"必需 Skill { _skill_id_for_step } 处于 inactive 状态，{step_name} 无法执行"
+                        logger.error(err_msg)
+                        step_statuses[str(step_idx)] = "failed"
+                        task.step_statuses = json.dumps(step_statuses)
+                        task.status = "failed"
+                        task.error_message = err_msg
+                        task.completed_at = now_cn()
+                        await db.commit()
+                        if queue:
+                            await queue.put({"task_status": "failed", "current_step": step_idx, "step_statuses": step_statuses, "error": err_msg})
+                        return
+
                 for attempt in range(step_max_retries):
-                    if await _check_cancelled(): return
+                    if await _check_cancelled():
+                        return
                     step_statuses[str(step_idx)] = "running" if attempt == 0 else "retrying"
                     task.current_step = step_idx
                     task.step_statuses = json.dumps(step_statuses)
@@ -1634,6 +1856,16 @@ async def _run_pipeline(
                                             dim_results[dim_name] = raw
                                 runner.pipeline_state["review_dimensions"] = dim_results
 
+                                # P1-3.2: Restore review_dimensions_meta from
+                                # the cached SystemReview so the final status
+                                # check can still detect "partial" state.
+                                # Without this, cache reuse would lose partial-
+                                # failure info and mark the task "completed".
+                                _cached_meta = _restore_cached_review_dimensions_meta(cached_sr, dim_results)
+                                if _cached_meta:
+                                    runner.state["review_dimensions_meta"] = _cached_meta
+                                    _merge_task_step_details(task, review_dimensions_meta=_cached_meta)
+
                                 # Copy cached SystemReview into current task's record
                                 await repo.save_system_review(SystemReviewPayload(
                                     task_id=task_id, project_id=project_id,
@@ -1645,6 +1877,10 @@ async def _run_pipeline(
                                     pm_growth=cached_sr.pm_growth,
                                     action_plan=cached_sr.action_plan,
                                     pm_scores=cached_sr.pm_scores,
+                                    dimensions_meta=(
+                                        getattr(cached_sr, "dimensions_meta", None)
+                                        or (json.dumps(_cached_meta, ensure_ascii=False) if _cached_meta else None)
+                                    ),
                                 ))
                                 await db.commit()
 
@@ -1653,7 +1889,17 @@ async def _run_pipeline(
                             else:
                                 # No cache — run 7 dimensions fresh
                                 cancelled = await runner._run_system_review(should_cancel=_check_cancelled)
-                                if cancelled or await _check_cancelled(): return
+                                if cancelled or await _check_cancelled():
+                                    return
+                                # Fail-fast: if every dimension errored, do NOT persist
+                                # error objects as a completed SystemReview.
+                                sr_meta = runner.state.get("review_dimensions_meta", {}) or {}
+                                if sr_meta.get("status") == "all_failed":
+                                    failed_list = sr_meta.get("dimensions_failed", [])
+                                    raise RuntimeError(
+                                        f"七维评审全部失败（{len(failed_list)}个维度），"
+                                        f"已拒绝缓存与持久化：{','.join(failed_list)}"
+                                    )
                                 # Persist dimension results to SystemReview
                                 dim_results = runner.state.get("review_dimensions", {})
                                 # Merge all dimension results into a flat dict for DB storage
@@ -1673,6 +1919,12 @@ async def _run_pipeline(
                                     merged[col] = dim_data
 
                                 pm_scores = extract_pm_assessment_payload(merged.get("pm_scores"))
+                                # P1-3.2: Persist review_dimensions_meta into
+                                # the SystemReview row itself, not just
+                                # step_details, so cache reuse can restore
+                                # partial-failure status.
+                                _sr_meta_fresh = runner.state.get("review_dimensions_meta", {}) or {}
+                                _sr_meta_json = json.dumps(_sr_meta_fresh, ensure_ascii=False) if _sr_meta_fresh else None
                                 await repo.save_system_review(SystemReviewPayload(
                                     task_id=task_id, project_id=project_id,
                                     business_value=json.dumps(merged.get("business_value"), ensure_ascii=False) if merged.get("business_value") else None,
@@ -1683,8 +1935,17 @@ async def _run_pipeline(
                                     pm_growth=json.dumps(merged.get("pm_growth"), ensure_ascii=False) if merged.get("pm_growth") else None,
                                     action_plan=json.dumps(merged.get("action_plan"), ensure_ascii=False) if merged.get("action_plan") else None,
                                     pm_scores=json.dumps(pm_scores, ensure_ascii=False) if pm_scores else None,
+                                    dimensions_meta=_sr_meta_json,
                                 ))
                                 await db.commit()
+
+                                # P1-3.2: Persist review_dimensions_meta to
+                                # step_details so partial failures are visible
+                                # to downstream consumers and the final status
+                                # check can detect "partial" state.
+                                _sr_meta = runner.state.get("review_dimensions_meta", {})
+                                if _sr_meta:
+                                    _merge_task_step_details(task, review_dimensions_meta=_sr_meta)
 
                                 # Emit dimension-level progress
                                 if queue:
@@ -1751,8 +2012,22 @@ async def _run_pipeline(
                 if queue:
                     await queue.put({"task_status": "running", "current_step": step_idx + 1, "step_statuses": step_statuses})
 
-            # Final task status: completed or completed_with_warnings
-            task.status = "completed_with_warnings" if task.completed_docs < task.total_docs else "completed"
+            # Final task status: completed or completed_with_warnings.
+            # P1-3.2: In addition to incomplete doc analysis, partial dimension
+            # failures and degraded steps (optional Skill inactive) must also
+            # trigger completed_with_warnings so users are aware of issues.
+            _has_doc_warnings = task.completed_docs < task.total_docs
+            _sr_meta_final = runner.state.get("review_dimensions_meta", {}) or {}
+            _has_dim_warnings = _sr_meta_final.get("status") == "partial"
+            _has_degraded = bool(runner.state.get("degraded_steps"))
+            task.status = (
+                "completed_with_warnings"
+                if (_has_doc_warnings or _has_dim_warnings or _has_degraded)
+                else "completed"
+            )
+            # P1-4.3: Persist degraded_steps to step_details for visibility
+            if _has_degraded:
+                _merge_task_step_details(task, degraded_steps=runner.state.get("degraded_steps", []))
             task.completed_at = now_cn()
             await db.commit()
             if queue:
@@ -1792,7 +2067,7 @@ def _render_markdown_report(analyses: list[AnalysisInfo], sr_data: dict, pm_asse
     if artifacts.get("report_markdown"):
         return str(artifacts["report_markdown"])
 
-    lines = [f"# 需求审查报告", ""]
+    lines = ["# 需求审查报告", ""]
     if task:
         lines.append(f"- 审查模式: {task.mode}")
         lines.append(f"- 评审上下文版本: V{task.context_version}")

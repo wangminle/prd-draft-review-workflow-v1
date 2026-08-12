@@ -54,10 +54,66 @@
           "type": "object",
           "description": "Dimension 3: Competitive positioning",
           "properties": {
-            "market_landscape": {"type": "object"},
-            "competitor_comparison": {"type": "array"},
-            "differentiation": {"type": "object"}
-          }
+            "market_landscape": {
+              "type": "object",
+              "properties": {
+                "position": {"type": "string", "enum": ["leading", "following", "exploring"]},
+                "key_players": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {"type": "string"},
+                      "source": {"type": "string", "enum": ["input_evidence", "industry_template", "model_inference"]},
+                      "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+                    },
+                    "required": ["name", "source", "confidence"]
+                  }
+                },
+                "tech_route_difference": {"type": "string"},
+                "has_competition_data": {"type": "boolean"}
+              },
+              "required": ["has_competition_data"]
+            },
+            "competitor_comparison": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "dimension": {"type": "string"},
+                  "us": {"type": "string"},
+                  "competitors": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {"type": "string"},
+                        "status": {"type": "string"},
+                        "source": {"type": "string", "enum": ["input_evidence", "industry_template", "model_inference"]},
+                        "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+                      },
+                      "required": ["name", "source", "confidence"]
+                    }
+                  }
+                },
+                "required": ["dimension"]
+              }
+            },
+            "differentiation": {
+              "type": "object",
+              "properties": {
+                "unique_strengths": {"type": "array"},
+                "weaknesses": {"type": "array"},
+                "opportunities": {"type": "array"}
+              }
+            },
+            "open_questions": {
+              "type": "array",
+              "items": {"type": "string"},
+              "description": "当缺少竞品资料时必填，列出待调研问题"
+            }
+          },
+          "required": ["market_landscape"]
         },
         "product_strategy": {
           "type": "object",

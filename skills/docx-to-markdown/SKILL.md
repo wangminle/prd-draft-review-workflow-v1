@@ -29,12 +29,12 @@ Convert Word documents to Markdown with full support for images, embedded Excel 
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/docx-to-markdown/`).
-Install dependencies first: `pip install -r requirements.txt`
+Install dependencies first: `pip3 install -r requirements.txt`
 
 ### Single File Conversion
 
 ```bash
-python scripts/convert_docx.py <input.docx> <output_directory>
+python3 scripts/convert_docx.py <input.docx> <output_directory>
 ```
 
 Output structure (auto-creates subfolder named after the document):
@@ -52,10 +52,10 @@ output_directory/
 When user mentions converting multiple DOCX files, use batch conversion:
 
 ```bash
-python scripts/batch_convert.py <source_dir> <output_dir>
+python3 scripts/batch_convert.py <source_dir> <output_dir>
 
 # Force re-convert even if output already exists
-python scripts/batch_convert.py <source_dir> <output_dir> --force
+python3 scripts/batch_convert.py <source_dir> <output_dir> --force
 ```
 
 Each DOCX creates a separate folder with its MD file and assets.
@@ -63,7 +63,7 @@ Each DOCX creates a separate folder with its MD file and assets.
 ### Markdown to PDF (Optional)
 
 ```bash
-python scripts/md_to_pdf.py <input.md> [output.pdf] [--engine auto|pandoc|python]
+python3 scripts/md_to_pdf.py <input.md> [output.pdf] [--engine auto|pandoc|python]
 ```
 
 If output path is omitted, PDF is saved in the same directory as the input file.
@@ -71,7 +71,7 @@ If output path is omitted, PDF is saved in the same directory as the input file.
 `md_to_pdf.py` is standalone and works independently from this skill:
 - `--engine auto` (default): prefer system `pandoc`, fallback to Python renderer
 - `--engine pandoc`: force pandoc
-- `--engine python`: force Python renderer (`pip install markdown reportlab`)
+- `--engine python`: force Python renderer (`pip3 install markdown reportlab`)
 
 > If pandoc is available, it often produces better results.
 
@@ -138,7 +138,7 @@ Automatically detects Excel spreadsheets embedded in DOCX and converts them to M
 ## Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 # Installs: mammoth, openpyxl (core) + markdown, reportlab (optional PDF engine)
 ```
 

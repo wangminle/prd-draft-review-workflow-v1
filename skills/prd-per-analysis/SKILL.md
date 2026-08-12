@@ -68,39 +68,42 @@ Vision is **opt-in** because images consume significantly more tokens. When enab
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/prd-per-analysis/`).
-Install dependencies first: `pip install -r requirements.txt`
+Install dependencies first: `pip3 install -r requirements.txt`
 
 ### Analyze a single document
 
 ```bash
-python scripts/analyze.py <md_path> <output_json> [options]
+python3 scripts/analyze.py <md_path> <output_json> [options]
 
 # Basic text-only analysis
-python scripts/analyze.py /path/to/doc.md result.json
+python3 scripts/analyze.py /path/to/doc.md result.json
 
 # With category and version from prd-overview-classify
-python scripts/analyze.py /path/to/doc.md result.json --category "核心策略" --version "V2.3.6"
+python3 scripts/analyze.py /path/to/doc.md result.json --category "核心策略" --version "V2.3.6"
 
 # Enable vision for images in assets/ folder
-python scripts/analyze.py /path/to/doc.md result.json --enable-vision
+python3 scripts/analyze.py /path/to/doc.md result.json --enable-vision
 
 # With other docs' excerpts for resolution tracking
-python scripts/analyze.py /path/to/doc.md result.json --context context.json
+python3 scripts/analyze.py /path/to/doc.md result.json --context context.json
 ```
 
 ### Analyze a batch of documents
 
 ```bash
-python scripts/batch_analyze.py <classify_result_json> <output_dir> [options]
+python3 scripts/batch_analyze.py <classify_result_json> <output_dir> [options]
 
 # Basic batch analysis (text only)
-python scripts/batch_analyze.py classify-result.json ./analysis-results/
+python3 scripts/batch_analyze.py classify-result.json ./analysis-results/
 
 # With vision enabled
-python scripts/batch_analyze.py classify-result.json ./analysis-results/ --enable-vision
+python3 scripts/batch_analyze.py classify-result.json ./analysis-results/ --enable-vision
 
 # Control concurrency (default: 3)
-python scripts/batch_analyze.py classify-result.json ./analysis-results/ --max-concurrent 5
+python3 scripts/batch_analyze.py classify-result.json ./analysis-results/ --max-concurrent 5
+
+# Force re-analyze all documents (ignore incremental cache)
+python3 scripts/batch_analyze.py classify-result.json ./analysis-results/ --force
 ```
 
 ## Input
@@ -115,6 +118,8 @@ The `batch_analyze.py` script takes the **output JSON from `prd-overview-classif
 
 ### Context JSON (for resolution tracking)
 
+后续文档的上下文包含结构化分析内容和原文摘要，使解决追踪有据可依：
+
 ```json
 {
   "other_docs_excerpts": [
@@ -122,7 +127,11 @@ The `batch_analyze.py` script takes the **output JSON from `prd-overview-classif
       "doc_id": "abc123",
       "version": "V2.3.5",
       "title": "智能判定下发策略V2",
-      "boundary_issues": ["edge case not handled"]
+      "core_problem": "新旧算法混合判定流程",
+      "boundary_in": ["混合判定规则", "算法版本标记"],
+      "boundary_out": ["纯新算法场景"],
+      "key_points": {"type": "technical", "solution_highlights": ["3阶段过渡"]},
+      "excerpt": "# 智能判定下发策略V2\n核心方案是..."
     }
   ]
 }
@@ -182,12 +191,12 @@ The `batch_analyze.py` script takes the **output JSON from `prd-overview-classif
 - **Resolution tracking**: Cross-references boundary issues with other documents
 - **Type-aware extraction**: Different extraction rules for technical/survey/competitive docs
 - **Batch processing**: Concurrent analysis with configurable rate limiting
-- **Incremental**: Analyze only new or changed documents
+- **Incremental cache**: Automatically skips documents whose source content hasn't changed (based on content hash + model version + prompt version); use `--force` to override
 
 ## Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 # Core: anthropic, pydantic
 # Optional: Pillow (image format detection)
 ```

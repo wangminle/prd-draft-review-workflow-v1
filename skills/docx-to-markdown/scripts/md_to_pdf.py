@@ -4,7 +4,7 @@
 将 Markdown 文件转换为 PDF，支持中文字体回退。
 
 用法:
-  python scripts/md_to_pdf.py <input.md> [output.pdf]
+  python3 scripts/md_to_pdf.py <input.md> [output.pdf]
 """
 
 import argparse

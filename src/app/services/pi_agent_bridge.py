@@ -23,11 +23,10 @@ from typing import AsyncGenerator, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import AgentProfile, AgentRun, PiAgentConfig
+from app.models.user import AgentProfile, AgentRun
 from app.repositories.agent_repository import AgentApprovalRepository, AgentRunRepository
 from app.repositories.pi_agent_config_repository import PiAgentConfigRepository
 from app.services.crypto import decrypt_key
-from app.utils import now_cn
 
 # Extension sidecar：审批通过后写入沙盒 cwd，活着的 Pi 进程可消费（不依赖重启注入 env）
 ONE_SHOT_SIDECAR_FILENAME = ".agent_one_shot_approved"
@@ -318,7 +317,7 @@ class PiAgentBridge:
                 unregister_active_bridge(run.id)
                 return False
             return True
-        except Exception as e:
+        except Exception:
             logger.exception("[PiAgentBridge] 启动异常")
             unregister_active_bridge(run.id)
             return False
@@ -474,11 +473,11 @@ class PiAgentBridge:
                         # 精确解析工具名；优先指定系统管理员为审批人，避免申请人自行放行
                         blocked_tool = extract_blocked_tool(line)
                         if blocked_tool:
-                            from sqlalchemy import select
+                            from sqlalchemy import select as sa_select
                             from app.models.user import User as _User
                             admin_row = (
                                 await self._db.execute(
-                                    select(_User).where(
+                                    sa_select(_User).where(
                                         _User.role == "admin",
                                         _User.is_active == True,  # noqa: E712
                                     ).limit(1)

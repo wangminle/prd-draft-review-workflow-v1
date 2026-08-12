@@ -90,7 +90,7 @@ JWT_SECRET=<至少32字符随机串>
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.7"}
+# 预期返回: {"status":"ok","version":"0.3.8"}
 ```
 
 ### 常用启停命令
@@ -202,7 +202,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.7"}
+# Expected: {"status":"ok","version":"0.3.8"}
 ```
 
 ### Common start / stop commands

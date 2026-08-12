@@ -7,6 +7,7 @@
 - 所有文档的边界信息（boundary_in）：{{boundary_data}}
 - 文档分类信息：{{categories}}
 - 版本链信息：{{version_chains}}
+- 目标能力基线（target_baseline）：{{target_baseline}}
 
 ## 提取原则
 
@@ -24,23 +25,38 @@
 - 同一功能在不同分类的文档中都被提及，只提取一次
 - 子集关系合并（如"联动判定"包含"服务端判定"和"端侧判定"，不拆分）
 
+### 来源守恒（强制）
+- 每个 `feature_id` 必须稳定，使用 `feat_001`、`feat_002`... 形式
+- `source_doc_ids` 必须真实反映哪些文档覆盖了该功能；**只能**从输入 `boundary_data` 中列出的 doc_id 中选取
+- 不允许编造未出现在输入中的 doc_id
+
+### 目标基线优先
+- 当 `target_baseline` 非空时，必须以基线中的功能维度为全集
+- 基线中存在但当前文档未覆盖的维度，`source_doc_ids` 设为空数组 `[]`，`status` 设为 `"gap"`
+- 基线中不存在的维度，若文档中明确提到仍可补充，但 `status` 设为 `"supplementary"`
+- 当 `target_baseline` 为空时（无独立目标基线），所有维度 `status` 设为 `"extracted"`，并在 `baseline_warning` 中说明"未提供独立目标基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口"
+
 ## 输出格式
 严格按以下 JSON 格式输出，不要添加额外文本：
 ```json
 {
   "feature_dimensions": [
     {
+      "feature_id": "feat_001",
       "name": "功能维度名称",
       "description": "该维度的简要描述",
       "source_doc_ids": ["doc1", "doc2"],
-      "category": "所属产品模块"
+      "category": "所属产品模块",
+      "status": "covered|gap|overlap|extracted|supplementary"
     }
-  ]
+  ],
+  "baseline_warning": "当 target_baseline 为空时填入限制说明；非空时为空字符串"
 }
 ```
 
 ## 规则
 1. 功能维度数量控制在5-15个之间
-2. 每个维度必须有明确的来源文档
+2. 每个维度必须有明确的来源文档或显式标注为 gap（来自基线但未被覆盖）
 3. 维度名称使用产品术语，不使用文档中的具体技术术语
 4. 如果用户提供了自定义功能维度（feature_dimensions），优先使用用户定义的，不重新提取
+5. `feature_id` 必须唯一且稳定，便于下游缺口评估引用

@@ -3,7 +3,7 @@
 ## Command Reference
 
 ```
-python scripts/classify.py <input_dir> <output_json> [options]
+python3 scripts/classify.py <input_dir> <output_json> [options]
 ```
 
 ### Arguments

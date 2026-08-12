@@ -22,33 +22,33 @@ Automatically classify PRD documents by category, extract version numbers, build
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/prd-overview-classify/`).
-Install dependencies first: `pip install -r requirements.txt`
+Install dependencies first: `pip3 install -r requirements.txt`
 
 ### Classify a batch of Markdown documents
 
 ```bash
-python scripts/classify.py <input_dir> <output_json> [options]
+python3 scripts/classify.py <input_dir> <output_json> [options]
 
 # Basic usage
-python scripts/classify.py /path/to/converted_docs result.json
+python3 scripts/classify.py /path/to/converted_docs result.json
 
 # With custom category config
-python scripts/classify.py /path/to/converted_docs result.json --categories templates/default-categories.json
+python3 scripts/classify.py /path/to/converted_docs result.json --categories templates/default-categories.json
 
 # With LLM fallback for uncertain classifications (requires ANTHROPIC_API_KEY)
-python scripts/classify.py /path/to/converted_docs result.json --use-llm
+python3 scripts/classify.py /path/to/converted_docs result.json --use-llm
 
 # Override version pattern
-python scripts/classify.py /path/to/converted_docs result.json --version-pattern "V\\d+\\.\\d+\\.\\d+"
+python3 scripts/classify.py /path/to/converted_docs result.json --version-pattern "V\\d+\\.\\d+\\.\\d+"
 
 # Skip LLM, use keyword-only classification (faster, no API cost)
-python scripts/classify.py /path/to/converted_docs result.json --keyword-only
+python3 scripts/classify.py /path/to/converted_docs result.json --keyword-only
 
 # Include document excerpts in output (disabled by default to keep JSON small)
-python scripts/classify.py /path/to/converted_docs result.json --include-excerpts
+python3 scripts/classify.py /path/to/converted_docs result.json --include-excerpts
 
 # Customize excerpt length for LLM context
-python scripts/classify.py /path/to/converted_docs result.json --excerpt-lines 300
+python3 scripts/classify.py /path/to/converted_docs result.json --excerpt-lines 300
 ```
 
 ### Input directory structure
@@ -177,7 +177,7 @@ Steps:
 ## Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 # Core: pydantic (data validation)
 # Optional: anthropic (LLM fallback classification)
 ```

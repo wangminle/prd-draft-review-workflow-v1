@@ -1,3 +1,19 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py313"
+
+[tool.ruff.lint]
+# E402: Module level import not at top of file - intentional in test files
+#   (sys.path manipulation) and database.py (model registration after config).
+# E712 excluded: `== True/False` is required for SQLAlchemy WHERE clauses;
+#   `not Model.x` evaluates eagerly in Python instead of building SQL.
+# E402 ignored: intentional sys.path manipulation in tests and database.py.
+select = ["E701", "E731", "E741", "F401", "F541", "F811", "F821", "F823", "F841"]
+ignore = ["E402", "E712"]
+
+[tool.ruff.lint.per-file-ignores]
+"src/app/database.py" = ["F401"]  # Re-export models for table registration
+"src/app/services/knowledge_vector_service.py" = ["F401"]  # lancedb availability check

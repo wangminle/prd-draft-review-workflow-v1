@@ -12,10 +12,9 @@
 也包含可手动执行的扫描脚本（输出详细行号列表）。
 """
 
-import ast
-import os
 import re
 from pathlib import Path
+import pytest
 
 # ── Configuration ──
 
@@ -121,8 +120,8 @@ WHITELIST = {
         "shutil_rmtree": 0,
     },
     "review.py": {
-        "db_add": 0,       # 已迁移到 ReviewTaskRepository + ReviewProjectRepository + ReviewContextRepository + ReviewPromptRepository — D.1 + E.1 完成
-        "db_commit": 32,   # router 控制事务边界 — D.1 + D.2 + workspace_id update
+        "db_add": 1,       # covered_doc_ids.add() - set op, not db.add. Persistence in repos + ReviewProjectRepository + ReviewContextRepository + ReviewPromptRepository — D.1 + E.1 完成
+        "db_commit": 35,   # P1-4.3 preflight gate on production path: +1 (early fail for inactive required skill)
         "db_flush": 1,     # freeze_snapshot flush — P0.C.3
         "builtin_open": 0,   # 已迁移到 ReviewFileStorage.read_markdown() — WBS C.1 + F 完成
         "os_makedirs": 0,    # 已迁移到 ReviewFileStorage — WBS C.1 完成

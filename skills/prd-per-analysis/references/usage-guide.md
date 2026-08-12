@@ -3,7 +3,7 @@
 ## Single Document Analysis
 
 ```
-python scripts/analyze.py <md_path> <output_json> [options]
+python3 scripts/analyze.py <md_path> <output_json> [options]
 ```
 
 ### Arguments
@@ -34,7 +34,7 @@ python scripts/analyze.py <md_path> <output_json> [options]
 ## Batch Analysis
 
 ```
-python scripts/batch_analyze.py <classify_result_json> <output_dir> [options]
+python3 scripts/batch_analyze.py <classify_result_json> <output_dir> [options]
 ```
 
 ### How it works

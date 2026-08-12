@@ -167,6 +167,11 @@ async def _ensure_review_schema(conn):
         await conn.execute(text(
             "ALTER TABLE system_reviews ADD COLUMN tech_evolution TEXT"
         ))
+    # P1-3.2: dimensions_meta column for caching partial-failure status
+    if "dimensions_meta" not in sr_columns:
+        await conn.execute(text(
+            "ALTER TABLE system_reviews ADD COLUMN dimensions_meta TEXT"
+        ))
 
     # ContextItem: add extracted_text column for URL content
     ctx_result = await conn.execute(text("PRAGMA table_info(chat_context_items)"))

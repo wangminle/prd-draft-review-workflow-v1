@@ -6,6 +6,7 @@
   "properties": {
     "classifications": {
       "type": "array",
+      "minItems": 1,
       "items": {
         "type": "object",
         "required": ["doc_id", "category", "confidence"],

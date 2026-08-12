@@ -2,7 +2,7 @@
 """system-review: 体系化7维度Review，支持多种输出模式。
 
 用法:
-    python review.py <classify_json> <analysis_dir> <output_json> [options]
+    python3 review.py <classify_json> <analysis_dir> <output_json> [options]
 
 输入: prd-overview-classify输出JSON + prd-per-analysis输出目录
 输出: 7维度分析结果JSON + 指定输出类型的Markdown报告
@@ -23,7 +23,6 @@ except ImportError:
     sys.exit(1)
 
 DEFAULT_TEXT_MODEL = "claude-sonnet-4-20250514"
-DEFAULT_VISION_MODEL = "claude-sonnet-4-20250514"
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
 TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 
@@ -46,6 +45,13 @@ DIMENSION_PROMPT_FILES = {
     6: "pm-assessment.md",
     7: "action-plan.md",
 }
+
+
+def _escape_md_cell(text) -> str:
+    """转义 Markdown 表格单元格中的竖线和换行，避免破坏表格结构。"""
+    if text is None:
+        return ""
+    return str(text).replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
 
 OUTPUT_TYPE_FULL_REPORT = "full_report"
 OUTPUT_TYPE_NEXT_DIRECTIONS = "next_directions"
@@ -527,7 +533,7 @@ def generate_full_report_md(dimensions: dict, project_name: str) -> str:
                                ("market_scale", "市场规模"), ("strategic_synergy", "战略协同"),
                                ("feasibility", "实现可行性")]:
                 item = sv.get(key, {})
-                lines.append(f"| {label} | {item.get('score', '-')} | {item.get('evidence', '-')} |")
+                lines.append(f"| {label} | {_escape_md_cell(item.get('score', '-'))} | {_escape_md_cell(item.get('evidence', '-'))} |")
             lines.append("")
         goals = bv.get("business_goals", [])
         if goals:
@@ -761,7 +767,7 @@ def generate_quality_assessment_md(dimensions: dict, project_name: str) -> str:
         for key, label in [("logic", "逻辑结构"), ("tech_depth", "技术深度"),
                            ("boundary", "边界意识"), ("business", "商业视角")]:
             s = ws.get(key, {})
-            lines.append(f"| {label} | {s.get('score', '-')} | {s.get('evidence', '-')} |")
+            lines.append(f"| {label} | {_escape_md_cell(s.get('score', '-'))} | {_escape_md_cell(s.get('evidence', '-'))} |")
         lines.append("")
 
     ts = pm.get("thinking_scores", {})
@@ -772,7 +778,7 @@ def generate_quality_assessment_md(dimensions: dict, project_name: str) -> str:
         for key, label in [("iteration", "迭代思维"), ("experience", "体验思维"),
                            ("data", "数据思维"), ("business", "商业思维")]:
             s = ts.get(key, {})
-            lines.append(f"| {label} | {s.get('score', '-')} | {s.get('evidence', '-')} |")
+            lines.append(f"| {label} | {_escape_md_cell(s.get('score', '-'))} | {_escape_md_cell(s.get('evidence', '-'))} |")
         lines.append("")
 
     highlights = pm.get("highlights", [])
@@ -869,7 +875,7 @@ def generate_prd_draft_md(dimensions: dict, project_name: str, target_doc: str,
             lines.append("| 参数 | 值 | 来源 |")
             lines.append("|------|------|------|")
             for m in metrics:
-                lines.append(f"| {m.get('name', '')} | {m.get('value', '')} | {', '.join(m.get('source_doc_ids', []))} |")
+                lines.append(f"| {_escape_md_cell(m.get('name', ''))} | {_escape_md_cell(m.get('value', ''))} | {_escape_md_cell(', '.join(m.get('source_doc_ids', [])))} |")
             lines.append("")
 
     lines.append("## 五、需求文档初稿\n")
@@ -916,7 +922,6 @@ def main():
                         help="PM评分量规JSON路径（覆盖默认标准）")
     parser.add_argument("--review-context", default="",
                         help="Review Context JSON路径（评分量规/写作规范/领域规则）")
-    parser.add_argument("--enable-vision", action="store_true", help="启用图片理解引擎")
     args = parser.parse_args()
 
     classify_path = Path(args.classify_json)
@@ -938,7 +943,6 @@ def main():
 
     client = anthropic.Anthropic(api_key=api_key)
     text_model = os.environ.get("TEXT_MODEL", DEFAULT_TEXT_MODEL)
-    vision_model = os.environ.get("VISION_MODEL", DEFAULT_VISION_MODEL)
 
     print("=== 体系化7维度Review ===")
     print(f"输出类型：{args.output_type}")
@@ -1048,7 +1052,7 @@ def main():
             total_docs=len(classify_data.get("documents", [])),
             dimensions_executed=target_dims,
             output_type=args.output_type,
-            models_used={"text": text_model, "vision": vision_model},
+            models_used={"text": text_model},
             target_doc=args.target_doc,
         ),
     )

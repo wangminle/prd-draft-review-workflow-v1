@@ -50,62 +50,58 @@ The dimensions execute in order because later dimensions depend on earlier ones:
 
 **`--target-doc`**: When specified, generates an additional context report for a specific target document (historical evolution, related boundary issues, existing solutions). Useful when preparing to review a new PRD.
 
-## Dual Engine Architecture
+## Engine Architecture
 
 | Engine | Purpose | Default Model | When Used |
 |--------|---------|---------------|-----------|
 | `text_engine` | All 7 dimensions analysis | `claude-sonnet-4-20250514` | Always |
-| `vision_engine` | Image understanding in original docs | `claude-sonnet-4-20250514` | When `--enable-vision` |
 
 Override via environment variables:
-- `TEXT_MODEL` / `VISION_MODEL` — override default models
+- `TEXT_MODEL` — override default model
 - `ANTHROPIC_API_KEY` — required
 
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/system-review/`).
-Install dependencies first: `pip install -r requirements.txt`
+Install dependencies first: `pip3 install -r requirements.txt`
 
 ### Full system review
 
 ```bash
-python scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
 
 # Full 7-dimension review report
-python scripts/review.py classify.json ./analysis/ result.json --output-type full_report
+python3 scripts/review.py classify.json ./analysis/ result.json --output-type full_report
 
 # Next directions only
-python scripts/review.py classify.json ./analysis/ result.json --output-type next_directions
+python3 scripts/review.py classify.json ./analysis/ result.json --output-type next_directions
 
 # PM quality assessment
-python scripts/review.py classify.json ./analysis/ result.json --output-type quality_assessment
+python3 scripts/review.py classify.json ./analysis/ result.json --output-type quality_assessment
 
 # Generate PRD draft for a specific document
-python scripts/review.py classify.json ./analysis/ result.json --output-type prd_draft --target-doc doc123
+python3 scripts/review.py classify.json ./analysis/ result.json --output-type prd_draft --target-doc doc123
 
 # All output types
-python scripts/review.py classify.json ./analysis/ result.json --output-type all
-
-# With vision for original document images
-python scripts/review.py classify.json ./analysis/ result.json --output-type full_report --enable-vision
+python3 scripts/review.py classify.json ./analysis/ result.json --output-type all
 
 # Specific dimensions only
-python scripts/review.py classify.json ./analysis/ result.json --dimensions 1,6,7
+python3 scripts/review.py classify.json ./analysis/ result.json --dimensions 1,6,7
 
 # With industry context for competition dimension
-python scripts/review.py classify.json ./analysis/ result.json --industry smart_home
+python3 scripts/review.py classify.json ./analysis/ result.json --industry smart_home
 ```
 
 ### PM assessment only (standalone)
 
 ```bash
-python scripts/pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/pm_assess.py <classify_json> <analysis_dir> <output_json> [options]
 
 # Basic PM assessment
-python scripts/pm_assess.py classify.json ./analysis/ result.json
+python3 scripts/pm_assess.py classify.json ./analysis/ result.json
 
 # With custom scoring rubric
-python scripts/pm_assess.py classify.json ./analysis/ result.json --rubric templates/pm-scoring-rubric.json
+python3 scripts/pm_assess.py classify.json ./analysis/ result.json --rubric templates/pm-scoring-rubric.json
 ```
 
 ## Input
@@ -173,7 +169,7 @@ The output JSON structure varies by `--output-type`:
   "metadata": {
     "total_docs": 29,
     "dimensions_executed": [1, 2, 3, 4, 5, 6, 7],
-    "models_used": {"text": "claude-sonnet-4-20250514", "vision": "..."}
+    "models_used": {"text": "claude-sonnet-4-20250514"}
   }
 }
 ```
@@ -225,7 +221,7 @@ Based on blind-spot dimensions, generate short/mid/long term action items:
 ## Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 # Core: anthropic, pydantic
 ```
 

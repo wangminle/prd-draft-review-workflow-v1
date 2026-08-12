@@ -2,7 +2,7 @@
 """prd-per-analysis: 逐篇 6+1 维度分析 PRD 文档，支持图片理解。
 
 用法:
-    python analyze.py <md_path> <output_json> [options]
+    python3 analyze.py <md_path> <output_json> [options]
 
 输入: Markdown文件（docx-to-markdown输出）及可选上下文
 输出: 包含 6 个基础维度和 1 个专家意见维度的 JSON
@@ -210,13 +210,44 @@ def build_image_descriptions(image_insights: list[ImageInsight]) -> str:
     return "\n".join(lines)
 
 
+def _fill_prompt_placeholders(template: str, doc_id: str, category: str,
+                               version: str, image_descriptions: str) -> str:
+    """Fill {{...}} placeholders in the prompt template.
+
+    The standalone analyze.py previously loaded the prompt with literal
+    `{{doc_id}}` etc. visible to the LLM, while providing actual values
+    only via user_msg. This was confusing and could cause the model to
+    echo placeholder text. We now fill the placeholders explicitly.
+
+    `{{md_content}}` is intentionally NOT filled here — md_content is
+    large and is provided in the user message body instead.
+    """
+    if not template:
+        return template
+    return (template
+            .replace("{{doc_id}}", doc_id or "（未提供）")
+            .replace("{{category}}", category or "未分类")
+            .replace("{{version}}", version or "未知")
+            .replace("{{image_descriptions}}", image_descriptions or "无图片"))
+
+
 def analyze_with_llm(client, md_content: str, category: str, version: str,
-                      image_descriptions: str, text_model: str) -> dict:
+                      image_descriptions: str, text_model: str,
+                      doc_id: str = "") -> dict:
     system_prompt = load_prompt("per-doc-analysis.md")
     if not system_prompt:
         system_prompt = "你是一位资深产品经理，擅长分析需求文档。"
 
-    user_msg = f"""## 文档全文
+    # Fill placeholders so the model sees concrete values, not {{...}} text.
+    system_prompt = _fill_prompt_placeholders(
+        system_prompt, doc_id, category, version, image_descriptions
+    )
+
+    # doc_id 作为显式参数传入用户消息，确保模型原样返回正确的 ID。
+    user_msg = f"""## 文档ID（必须原样填入输出 JSON 的 doc_id 字段）
+{doc_id or "（未提供）"}
+
+## 文档全文
 {md_content}
 
 ## 文档分类
@@ -324,7 +355,8 @@ def main():
 
     print(f"正在分析文档（引擎：{text_model}）...")
     raw_result = analyze_with_llm(client, md_content, args.category, args.version,
-                                   image_descriptions, text_model)
+                                   image_descriptions, text_model,
+                                   doc_id=args.doc_id or md_path.stem)
 
     if "raw_output" in raw_result:
         print("警告：LLM未返回有效JSON，已保存原始输出", file=sys.stderr)
@@ -344,7 +376,9 @@ def main():
             client, raw_result["boundary_issues"], other_docs, text_model
         )
 
-    raw_result.setdefault("doc_id", args.doc_id or md_path.stem)
+    # 强制覆盖 doc_id，防止模型自行生成错误 ID。
+    # 之前使用 setdefault 不会覆盖模型返回的错误值。
+    raw_result["doc_id"] = args.doc_id or md_path.stem
     raw_result.setdefault("image_insights", [ins.model_dump() for ins in image_insights])
 
     try:

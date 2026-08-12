@@ -72,22 +72,22 @@ Install dependencies first: `pip install -r requirements.txt`
 ### Run insights analysis
 
 ```bash
-python scripts/insights.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/insights.py <classify_json> <analysis_dir> <output_json> [options]
 
 # Full insights (evolution + gap)
-python scripts/insights.py classify.json ./analysis/ result.json
+python3 scripts/insights.py classify.json ./analysis/ result.json
 
 # Evolution tracking only
-python scripts/insights.py classify.json ./analysis/ result.json --output-type evolution
+python3 scripts/insights.py classify.json ./analysis/ result.json --output-type evolution
 
 # Gap analysis only
-python scripts/insights.py classify.json ./analysis/ result.json --output-type gap
+python3 scripts/insights.py classify.json ./analysis/ result.json --output-type gap
 
 # With custom feature dimensions
-python scripts/insights.py classify.json ./analysis/ result.json --feature-dims dims.json
+python3 scripts/insights.py classify.json ./analysis/ result.json --feature-dims dims.json
 
 # Include Mermaid diagram in output
-python scripts/insights.py classify.json ./analysis/ result.json --include-mermaid
+python3 scripts/insights.py classify.json ./analysis/ result.json --include-mermaid
 ```
 
 ## Input

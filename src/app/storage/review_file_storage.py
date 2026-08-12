@@ -11,10 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import os
 import shutil
+import signal
 import sys
+import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +25,7 @@ from pathlib import Path
 from app.runtime_paths import runtime_path
 
 logger = logging.getLogger(__name__)
+DEFAULT_DOCX_CONVERSION_TIMEOUT_SECONDS = 60.0
 
 
 @dataclass
@@ -89,6 +93,20 @@ class ReviewFileStorage:
 
         return str(path)
 
+    def _docx_conversion_timeout_seconds(self) -> float:
+        from app.config import get_settings
+
+        review_cfg = get_settings().get("review", {})
+        raw_timeout = (
+            review_cfg.get("docx_conversion_timeout_seconds")
+            or review_cfg.get("docx", {}).get("timeout_seconds")
+        )
+        try:
+            timeout = float(raw_timeout)
+        except (TypeError, ValueError):
+            timeout = DEFAULT_DOCX_CONVERSION_TIMEOUT_SECONDS
+        return timeout if timeout > 0 else DEFAULT_DOCX_CONVERSION_TIMEOUT_SECONDS
+
     def to_runtime_relative_path(self, file_path: str | os.PathLike[str] | None) -> str | None:
         if not file_path:
             return None
@@ -129,6 +147,104 @@ class ReviewFileStorage:
         with open(resolved_md_path, "r", encoding="utf-8") as f:
             return f.read()
 
+    def _build_conversion_worker_command(
+        self, *, file_path: str, output_dir: str,
+        original_filename: str | None, skills_dir: str,
+    ) -> list[str]:
+        worker_path = Path(__file__).with_name("docx_conversion_worker.py")
+        command = [
+            sys.executable,
+            str(worker_path),
+            "--file-path", file_path,
+            "--output-dir", output_dir,
+            "--skills-dir", skills_dir,
+        ]
+        if original_filename:
+            command.extend(["--original-filename", original_filename])
+        return command
+
+    async def _terminate_conversion_worker(self, process: asyncio.subprocess.Process) -> None:
+        """终止转换进程及其进程组，并等待操作系统完成回收。"""
+        if process.returncode is not None:
+            return
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            return
+        try:
+            await asyncio.wait_for(process.wait(), timeout=2.0)
+            return
+        except asyncio.TimeoutError:
+            pass
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGKILL)
+            else:
+                process.kill()
+        except ProcessLookupError:
+            return
+        await process.wait()
+
+    async def _run_conversion_worker(
+        self, command: list[str], *, timeout: float, document_id: int
+    ) -> dict:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            start_new_session=(os.name == "posix"),
+        )
+        communicate_task = asyncio.create_task(process.communicate())
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                asyncio.shield(communicate_task), timeout=timeout
+            )
+        except asyncio.TimeoutError as exc:
+            await self._terminate_conversion_worker(process)
+            await communicate_task
+            raise TimeoutError(
+                f"DOCX 转换超时（>{timeout:.0f}s），工作进程已终止"
+            ) from exc
+        except asyncio.CancelledError:
+            await self._terminate_conversion_worker(process)
+            await communicate_task
+            raise
+
+        stdout_text = stdout.decode("utf-8", errors="replace").strip()
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        try:
+            payload = json.loads(stdout_text.splitlines()[-1]) if stdout_text else {}
+        except (json.JSONDecodeError, IndexError) as exc:
+            raise RuntimeError(
+                f"DOCX 转换工作进程返回无效结果（doc_{document_id}）：{stderr_text or stdout_text}"
+            ) from exc
+
+        if process.returncode != 0 or payload.get("status") != "ok":
+            error_type = payload.get("error_type", "RuntimeError")
+            error_message = payload.get("error") or stderr_text or "未知错误"
+            if error_type == "DocxSecurityError":
+                raise ValueError(f"DOCX 安全拒绝：{error_message}")
+            raise RuntimeError(f"DOCX 转换失败（{error_type}）：{error_message}")
+        return payload
+
+    def _publish_converted_directory(self, staging_dir: str, output_dir: str) -> None:
+        """将完整临时产物作为一个目录发布，失败时恢复旧目录。"""
+        backup_dir = f"{output_dir}.backup-{uuid.uuid4().hex}"
+        had_existing = os.path.exists(output_dir)
+        if had_existing:
+            os.replace(output_dir, backup_dir)
+        try:
+            os.replace(staging_dir, output_dir)
+        except Exception:
+            if had_existing and os.path.exists(backup_dir):
+                os.replace(backup_dir, output_dir)
+            raise
+        if had_existing and os.path.exists(backup_dir):
+            shutil.rmtree(backup_dir)
+
     async def convert_docx(
         self, *, file_path: str, document_id: int,
         original_filename: str | None = None, force: bool = False,
@@ -158,50 +274,32 @@ class ReviewFileStorage:
                     rel = self.to_runtime_relative_path(md_path_candidate)
                     return ConvertedDocument(md_path=md_path_candidate, runtime_relative_md_path=rel)
 
-        os.makedirs(output_dir, exist_ok=True)
         source_hash = self.compute_file_hash(file_path)
-        hash_file = os.path.join(output_dir, ".source_hash")
-
         resolved_skills = skills_dir or ""
-        md_path = ""
+        conversion_timeout = self._docx_conversion_timeout_seconds()
+        output_parent = os.path.dirname(output_dir)
+        os.makedirs(output_parent, exist_ok=True)
+        staging_dir = tempfile.mkdtemp(prefix=f".doc_{document_id}-", dir=output_parent)
+        try:
+            command = self._build_conversion_worker_command(
+                file_path=file_path,
+                output_dir=staging_dir,
+                original_filename=original_filename,
+                skills_dir=resolved_skills,
+            )
+            payload = await self._run_conversion_worker(
+                command, timeout=conversion_timeout, document_id=document_id
+            )
+            worker_md_path = Path(str(payload["md_path"]))
+            relative_md_path = worker_md_path.resolve().relative_to(Path(staging_dir).resolve())
+            self._publish_converted_directory(staging_dir, output_dir)
+            staging_dir = ""
+        finally:
+            if staging_dir and os.path.isdir(staging_dir):
+                shutil.rmtree(staging_dir)
 
-        skill_script_dir = os.path.join(resolved_skills, "docx-to-markdown", "scripts")
-        if resolved_skills and os.path.isdir(skill_script_dir):
-            try:
-                if skill_script_dir not in sys.path:
-                    sys.path.insert(0, skill_script_dir)
-                from convert_docx import convert_docx_to_markdown
-                kwargs = {}
-                if original_filename:
-                    kwargs["output_name"] = original_filename
-                result = await asyncio.to_thread(convert_docx_to_markdown, file_path, output_dir, **kwargs)
-                if isinstance(result, dict):
-                    md_path = result.get("output_path") or result.get("md_path") or result.get("path") or ""
-                elif isinstance(result, (str, os.PathLike)):
-                    md_path = str(result)
-            except Exception as e:
-                logger.warning("Skill docx-to-markdown failed, falling back to mammoth: %s", e)
-
-        if not md_path:
-            try:
-                import mammoth
-                with open(file_path, "rb") as f:
-                    result = await asyncio.to_thread(mammoth.convert_to_markdown, f)
-                md_content = result.value
-                stem = os.path.splitext(original_filename)[0] if original_filename else "output"
-                safe_stem = "".join(c if c.isalnum() or c in "._- " else "_" for c in stem).strip(". ")
-                out_file = os.path.join(output_dir, f"{safe_stem}.md")
-                with open(out_file, "w", encoding="utf-8") as f:
-                    f.write(md_content)
-                md_path = out_file
-            except ImportError:
-                logger.error("mammoth not installed, cannot convert docx")
-                raise
-
-        if not md_path:
-            md_files = list(Path(output_dir).rglob("*.md"))
-            md_path = str(md_files[0]) if md_files else ""
-
+        md_path = str(Path(output_dir) / relative_md_path)
+        hash_file = os.path.join(output_dir, ".source_hash")
         self._write_source_hash(hash_file, source_hash)
 
         rel = self.to_runtime_relative_path(md_path)

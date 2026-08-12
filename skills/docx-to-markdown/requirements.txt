@@ -2,3 +2,5 @@ mammoth
 openpyxl
 markdown
 reportlab
+# 安全 XML 解析（可选，如未安装则回退到标准库 xml.etree）
+defusedxml>=0.7.0

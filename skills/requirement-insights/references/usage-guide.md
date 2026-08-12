@@ -3,7 +3,7 @@
 ## Run Insights Analysis
 
 ```
-python scripts/insights.py <classify_json> <analysis_dir> <output_json> [options]
+python3 scripts/insights.py <classify_json> <analysis_dir> <output_json> [options]
 ```
 
 ### Arguments

@@ -82,6 +82,7 @@ class SystemReviewPayload:
     pm_growth: str | None = None
     action_plan: str | None = None
     pm_scores: str | None = None
+    dimensions_meta: str | None = None
 
 
 class ReviewTaskRepository:
@@ -216,13 +217,21 @@ class ReviewTaskRepository:
         return da
 
     async def find_cached_analyses(
-        self, doc_ids: list[int], context_version: int | None = None
+        self,
+        doc_ids: list[int],
+        context_version: int | None = None,
+        model_id: str | None = None,
     ) -> dict[int, DocAnalysis]:
         query = select(DocAnalysis).where(DocAnalysis.document_id.in_(doc_ids))
-        if context_version is not None:
-            query = query.join(ReviewTask, DocAnalysis.task_id == ReviewTask.id).where(
-                ReviewTask.context_version == context_version
-            )
+        # P1-4.5: Treat (document_id, context_version, model_id) as the cache
+        # key, mirroring find_cached_system_review. Without model_id, switching
+        # the LLM would silently reuse analyses produced by a different model.
+        if context_version is not None or model_id is not None:
+            query = query.join(ReviewTask, DocAnalysis.task_id == ReviewTask.id)
+            if context_version is not None:
+                query = query.where(ReviewTask.context_version == context_version)
+            if model_id is not None:
+                query = query.where(ReviewTask.model_id == model_id)
         query = query.order_by(DocAnalysis.id.desc())
         result = await self._db.execute(query)
         all_analyses = result.scalars().all()
@@ -252,6 +261,7 @@ class ReviewTaskRepository:
             pm_growth=payload.pm_growth,
             action_plan=payload.action_plan,
             pm_scores=payload.pm_scores,
+            dimensions_meta=payload.dimensions_meta,
         )
         self._db.add(sr)
         await self._db.flush()

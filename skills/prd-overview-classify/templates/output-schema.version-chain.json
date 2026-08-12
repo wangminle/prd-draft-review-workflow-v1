@@ -2,23 +2,38 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "PRD Version Chain Output",
   "type": "object",
-  "required": ["chains"],
+  "required": [
+    "chains",
+    "dependencies"
+  ],
   "properties": {
     "chains": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["chain_name", "versions"],
+        "required": [
+          "chain_name",
+          "versions"
+        ],
         "properties": {
           "chain_name": {
             "type": "string",
             "description": "Short name for the evolution chain"
           },
+          "category": {
+            "type": "string",
+            "description": "Category that all versions in this chain belong to"
+          },
           "versions": {
             "type": "array",
+            "minItems": 2,
             "items": {
               "type": "object",
-              "required": ["version", "doc_id", "title"],
+              "required": [
+                "version",
+                "doc_id",
+                "title"
+              ],
               "properties": {
                 "version": {
                   "type": "string",
@@ -34,6 +49,38 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "from_doc_id",
+          "to_doc_id",
+          "relation"
+        ],
+        "properties": {
+          "from_doc_id": {
+            "type": "string"
+          },
+          "to_doc_id": {
+            "type": "string"
+          },
+          "relation": {
+            "type": "string",
+            "enum": [
+              "references",
+              "supplements",
+              "compatible_with",
+              "resolves",
+              "version_successor"
+            ]
+          },
+          "evidence": {
+            "type": "string"
           }
         }
       }

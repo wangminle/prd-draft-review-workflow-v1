@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 import sys
 
@@ -11,11 +12,12 @@ async def test_docx_conversion_accepts_skill_string_return(tmp_path, monkeypatch
     skills_dir = tmp_path / "skills"
     scripts_dir = skills_dir / "docx-to-markdown" / "scripts"
     scripts_dir.mkdir(parents=True)
-    output_md = tmp_path / "converted.md"
-
     (scripts_dir / "convert_docx.py").write_text(
+        "from pathlib import Path\n"
         "def convert_docx_to_markdown(file_path, output_dir):\n"
-        f"    return {str(output_md)!r}\n",
+        "    output_md = Path(output_dir) / 'converted.md'\n"
+        "    output_md.write_text('# converted', encoding='utf-8')\n"
+        "    return str(output_md)\n",
         encoding="utf-8",
     )
     source_docx = tmp_path / "input.docx"
@@ -24,7 +26,9 @@ async def test_docx_conversion_accepts_skill_string_return(tmp_path, monkeypatch
     monkeypatch.setattr(review, "SKILLS_DIR", str(skills_dir))
     sys.modules.pop("convert_docx", None)
 
-    assert await review._convert_docx(str(source_docx), 123) == str(output_md)
+    result = Path(await review._convert_docx(str(source_docx), 123))
+    assert result.name == "converted.md"
+    assert result.read_text(encoding="utf-8") == "# converted"
 
 
 def test_context_injection_includes_professional_guidance():
@@ -194,6 +198,68 @@ def test_system_review_cache_requires_pm_scores():
     assert _system_review_has_complete_dimensions(complete) is True
 
 
+@pytest.mark.asyncio
+async def test_find_cached_analyses_filters_by_model_id():
+    """P1-4.5: per-doc analysis cache key must include model_id.
+
+    Switching the LLM must not silently reuse analyses produced by a
+    different model — model_id is now part of the cache key, mirroring
+    find_cached_system_review.
+    """
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.models.review import DocAnalysis, ReviewDocument, ReviewProject, ReviewTask
+    from app.models.user import Base
+    from app.repositories.review_task_repository import ReviewTaskRepository
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:", connect_args={"check_same_thread": False}
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+    session_maker = async_sessionmaker(engine, expire_on_commit=False)
+
+    # A valid expert_review block so the analysis passes the cache gate.
+    full_analysis = json.dumps({
+        "expert_review": {
+            "summary": "通过",
+            "checks": [{"rule_key": k} for k in (
+                "scope_realism", "boundary_completeness", "structured_entitlements",
+                "user_facing_naming", "copy_consistency", "phased_tech_plan",
+            )],
+        },
+        "_source_content_hash": "hash-1",
+    })
+
+    async with session_maker() as db:
+        proj = ReviewProject(name="p")
+        db.add(proj)
+        await db.flush()
+        doc = ReviewDocument(project_id=proj.id, filename="d.docx")
+        db.add(doc)
+        await db.flush()
+        task_a = ReviewTask(project_id=proj.id, mode="quick", model_id="model-A")
+        task_b = ReviewTask(project_id=proj.id, mode="quick", model_id="model-B")
+        db.add_all([task_a, task_b])
+        await db.flush()
+        # Only model-A produced an analysis for this document.
+        db.add(DocAnalysis(document_id=doc.id, task_id=task_a.id, full_analysis=full_analysis))
+        await db.commit()
+
+        repo = ReviewTaskRepository(db)
+        # Same model -> cache hit
+        hit = await repo.find_cached_analyses([doc.id], model_id="model-A")
+        assert doc.id in hit, "same-model analysis should be cached"
+        # Different model -> cache miss (forces re-analysis)
+        miss = await repo.find_cached_analyses([doc.id], model_id="model-B")
+        assert doc.id not in miss, "analysis from a different model must not be reused"
+        # No model filter -> backward-compatible hit
+        any_model = await repo.find_cached_analyses([doc.id])
+        assert doc.id in any_model
+
+    await engine.dispose()
+
+
 def test_analysis_cache_requires_expert_review_block():
     from types import SimpleNamespace
 
@@ -229,7 +295,8 @@ def test_legacy_runtime_file_path_resolves_to_workspace_runtime(tmp_path, monkey
     source.parent.mkdir(parents=True)
     source.write_bytes(b"legacy docx")
 
-    fake_runtime_path = lambda *parts: runtime_root.joinpath(*parts)
+    def fake_runtime_path(*parts):
+        return runtime_root.joinpath(*parts)
     monkeypatch.setattr(review, "runtime_path", fake_runtime_path)
     monkeypatch.setattr(review_file_storage, "runtime_path", fake_runtime_path)
 
@@ -247,7 +314,8 @@ def test_parent_relative_runtime_file_path_resolves_to_workspace_runtime(tmp_pat
     source.parent.mkdir(parents=True)
     source.write_bytes(b"legacy docx")
 
-    fake_runtime_path = lambda *parts: runtime_root.joinpath(*parts)
+    def fake_runtime_path(*parts):
+        return runtime_root.joinpath(*parts)
     monkeypatch.setattr(review, "runtime_path", fake_runtime_path)
     monkeypatch.setattr(review_file_storage, "runtime_path", fake_runtime_path)
 
@@ -451,7 +519,6 @@ def test_pm_assessment_dimension_inputs_include_original_docs(tmp_path):
 
 
 def test_review_pipeline_passes_cancel_callback_into_long_skill_loops():
-    from pathlib import Path
 
     source = Path(__file__).resolve().parents[1].joinpath("src/app/routers/review.py").read_text(encoding="utf-8")
 
@@ -468,7 +535,6 @@ def test_re_review_request_can_force_fresh_analysis():
 
 
 def test_review_pipeline_skips_analysis_cache_when_forced():
-    from pathlib import Path
 
     source = Path(__file__).resolve().parents[1].joinpath("src/app/routers/review.py").read_text(encoding="utf-8")
 
@@ -512,7 +578,6 @@ def test_source_hash_write_failure_is_non_fatal(tmp_path, caplog):
 
 
 def test_all_conversion_failure_marks_preprocess_step_failed():
-    from pathlib import Path
 
     source = Path(__file__).resolve().parents[1].joinpath("src/app/routers/review.py").read_text(encoding="utf-8")
     conversion_failure_block = source.split("if not converted_docs:", 1)[1].split("doc_dicts = []", 1)[0]

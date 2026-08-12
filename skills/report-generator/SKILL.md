@@ -30,37 +30,37 @@ Generate structured Markdown and PDF reports from all upstream Skill analysis re
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/report-generator/`).
-Install dependencies first: `pip install -r requirements.txt`
+Install dependencies first: `pip3 install -r requirements.txt`
 
 ### Generate reports
 
 ```bash
-python scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
+python3 scripts/generate.py <classify_json> <analysis_dir> <review_json> <output_dir> [options]
 
 # Generate all reports from all upstream results
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/
 
 # Specific report type only
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type per_analysis
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type full_review
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type pm_development
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type next_directions
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type insights
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type per_analysis
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type full_review
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type pm_development
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type next_directions
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --report-type insights
 
 # Include insights data (Skill 5 output)
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --insights-json insights.json
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --insights-json insights.json
 
-# Generate PDF output
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --format pdf
+# Generate PDF output only (no Markdown file written)
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --format pdf
 
 # Both MD and PDF
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --format all
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --format all
 
 # Polish report with LLM (optional)
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --polish
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --polish
 
-# Select specific sections
-python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --sections overview,per_analysis,evolution
+# Select specific sections (overrides --report-type)
+python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --sections overview,per_analysis,evolution
 ```
 
 ## Input
@@ -105,14 +105,25 @@ python scripts/generate.py classify.json ./analysis/ review.json ./reports/ --se
   "mermaid_charts": [
     {
       "type": "evolution",
-      "chart_id": "dynamic-delay",
+      "chart_id": "evolution_overview",
       "code": "flowchart TD\n  ..."
+    },
+    {
+      "type": "dependency",
+      "chart_id": "dependency_graph",
+      "code": "graph LR\n  ..."
+    },
+    {
+      "type": "timeline",
+      "chart_id": "version_timeline",
+      "code": "gantt\n  ..."
     }
   ],
   "summary": {
-    "total_reports": 3,
+    "total_reports": 2,
+    "total_files": 3,
     "total_md_size": 143810,
-    "chart_count": 5
+    "chart_count": 3
   }
 }
 ```
@@ -178,9 +189,10 @@ Same structure as Skill 4's `generate_full_report_md()` output — 7 sections ma
 ## Dependencies
 
 ```bash
-pip install -r requirements.txt
+pip3 install -r requirements.txt
 # Core: pydantic
-# PDF: reportlab (optional, for PDF output)
+# PDF: reportlab (with STSong-Light CJK font for Chinese)
+# Polish: anthropic (optional, for --polish)
 ```
 
 ## Scripts Reference

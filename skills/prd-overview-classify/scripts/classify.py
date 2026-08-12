@@ -2,7 +2,7 @@
 """prd-overview-classify: 分类 PRD 文档并构建版本演化链。
 
 用法:
-    python classify.py <input_dir> <output_json> [options]
+    python3 classify.py <input_dir> <output_json> [options]
 
 输入: 转换后的 Markdown 文档目录（docx-to-markdown 技能的输出）
 输出: 包含分类、版本链、依赖关系、文档、摘要的 JSON
@@ -198,19 +198,32 @@ def scan_documents(input_dir: Path, categories_config: dict, version_pattern: st
 
 def classify_documents(docs: list[DocumentInfo], categories_config: dict, keyword_only: bool = True, use_llm: bool = False) -> None:
     cat_list = categories_config.get("categories", [])
+    # Build a category whitelist — LLM-returned categories not in this list
+    # must be sent to "待确认" rather than silently accepted.
+    whitelist = {c["name"] for c in cat_list}
+    whitelist.add("未分类")
+    whitelist.add("待确认")
+
     for doc in docs:
         category, confidence = classify_by_keywords(doc.filename, doc.title, cat_list)
         doc.category = category
 
     if use_llm and not keyword_only:
-        _classify_with_llm(docs, cat_list)
+        _classify_with_llm(docs, cat_list, whitelist)
+
+    # Enforce category whitelist on every doc (defensive — catches LLM drift)
+    for doc in docs:
+        if doc.category not in whitelist:
+            print(f"警告：文档 {doc.doc_id} 类别 {doc.category!r} 不在白名单，标记为待确认", file=sys.stderr)
+            doc.category = "待确认"
 
     classified = sum(1 for d in docs if d.category != "未分类")
     unclassified = sum(1 for d in docs if d.category == "未分类")
-    print(f"分类完成：{classified} 篇已分类，{unclassified} 篇未分类")
+    pending = sum(1 for d in docs if d.category == "待确认")
+    print(f"分类完成：{classified} 篇已分类，{unclassified} 篇未分类，{pending} 篇待确认")
 
 
-def _classify_with_llm(docs: list[DocumentInfo], cat_list: list[dict]) -> None:
+def _classify_with_llm(docs: list[DocumentInfo], cat_list: list[dict], whitelist: set[str]) -> None:
     api_key = os.environ.get("ANTHROPIC_API_KEY")
     if not api_key:
         print("警告：未设置 ANTHROPIC_API_KEY，跳过 LLM 分类", file=sys.stderr)
@@ -258,7 +271,15 @@ def _classify_with_llm(docs: list[DocumentInfo], cat_list: list[dict]) -> None:
             id_to_cat = {c["doc_id"]: c["category"] for c in result.get("classifications", [])}
             for doc in unclassified:
                 if doc.doc_id in id_to_cat:
-                    doc.category = id_to_cat[doc.doc_id]
+                    returned_cat = id_to_cat[doc.doc_id]
+                    if returned_cat in whitelist:
+                        doc.category = returned_cat
+                    else:
+                        # LLM returned a category not in the whitelist —
+                        # do NOT silently accept; mark for human confirmation.
+                        print(f"警告：LLM 返回类别 {returned_cat!r} 不在白名单，"
+                              f"文档 {doc.doc_id} 标记为待确认", file=sys.stderr)
+                        doc.category = "待确认"
     except Exception as e:
         print(f"警告：LLM 分类失败：{e}", file=sys.stderr)
 
@@ -271,41 +292,60 @@ def _extract_name_prefix(filename: str, version: Optional[str]) -> Optional[str]
 
 
 def build_version_chains(docs: list[DocumentInfo], use_llm: bool = False) -> list[VersionChain]:
-    chains_dict: dict[str, list[VersionEntry]] = {}
+    """Build version chains deterministically.
+
+    Constraints enforced:
+      1. Same chain MUST share the same `category` — docs from different
+         categories are NEVER merged, even if they share a subcategory_name
+         or filename prefix.
+      2. Same subcategory_name OR same filename prefix groups docs into a
+         candidate chain.
+      3. Versions are sorted in ascending order.
+      4. A chain must have ≥2 entries to be valid; otherwise the doc is
+         treated as an independent version.
+
+    The `use_llm` parameter is reserved for future LLM-based chain
+    validation. When True, this function still enforces all deterministic
+    constraints above — the LLM may only *reject* candidate chains, never
+    bypass category closure.
+    """
+    chains_dict: dict[tuple[str, str], list[VersionEntry]] = {}
     chained_doc_ids: set[str] = set()
 
+    # Group by (subcategory_name, category) — the category is part of the
+    # key so that two docs with the same subcategory_name but different
+    # categories cannot end up in the same chain.
     for doc in docs:
         if doc.subcategory_name and doc.version:
-            key = doc.subcategory_name
-            if key not in chains_dict:
-                chains_dict[key] = []
-            chains_dict[key].append(VersionEntry(
+            key = (doc.subcategory_name, doc.category)
+            chains_dict.setdefault(key, []).append(VersionEntry(
                 version=doc.version,
                 doc_id=doc.doc_id,
                 title=doc.title or doc.filename,
             ))
             chained_doc_ids.add(doc.doc_id)
 
-    prefix_groups: dict[str, list[VersionEntry]] = {}
+    # Fallback grouping: filename prefix + category
+    prefix_groups: dict[tuple[str, str], list[VersionEntry]] = {}
     for doc in docs:
         if doc.doc_id in chained_doc_ids or not doc.version:
             continue
         prefix = _extract_name_prefix(doc.filename, doc.version)
         if prefix:
-            if prefix not in prefix_groups:
-                prefix_groups[prefix] = []
-            prefix_groups[prefix].append(VersionEntry(
+            key = (prefix, doc.category)
+            prefix_groups.setdefault(key, []).append(VersionEntry(
                 version=doc.version,
                 doc_id=doc.doc_id,
                 title=doc.title or doc.filename,
             ))
 
-    for prefix, entries in prefix_groups.items():
+    for key, entries in prefix_groups.items():
         if len(entries) >= 2:
-            chains_dict[prefix] = entries
+            # Use prefix as chain_name; category is enforced via the key tuple
+            chains_dict.setdefault(key, []).extend(entries)
 
     chains = []
-    for name, entries in chains_dict.items():
+    for (name, _category), entries in chains_dict.items():
         entries.sort(key=lambda e: _version_sort_key(e.version))
         if len(entries) >= 2:
             chains.append(VersionChain(chain_name=name, versions=entries))
@@ -318,6 +358,8 @@ def build_version_chains(docs: list[DocumentInfo], use_llm: bool = False) -> lis
     )
 
     print(f"版本链：{len(chains)} 条链，{single_count} 篇独立版本")
+    if use_llm:
+        print("（use_llm=True：当前实现仅做确定性约束校验，LLM 链验证待接入）")
     return chains
 
 
@@ -327,7 +369,19 @@ def _version_sort_key(version: str) -> tuple:
 
 
 def detect_dependencies(docs: list[DocumentInfo], chains: list[VersionChain]) -> list[Dependency]:
-    deps = []
+    """Detect inter-document dependencies.
+
+    Relation types produced:
+      - version_successor: adjacent versions in the same chain
+        (curr.version is the successor of prev.version)
+      - references: doc A's excerpt explicitly mentions doc B's title
+        or doc_id (cross-document reference, not version-related)
+      - same_topic: two docs in different chains share a category and
+        have overlapping title tokens (possible parallel/redundant coverage)
+    """
+    deps: list[Dependency] = []
+
+    # 1. Version successors within a chain
     for chain in chains:
         for i in range(1, len(chain.versions)):
             prev = chain.versions[i - 1]
@@ -338,6 +392,76 @@ def detect_dependencies(docs: list[DocumentInfo], chains: list[VersionChain]) ->
                 relation="version_successor",
                 description=f"{curr.version} is successor to {prev.version} in chain '{chain.chain_name}'",
             ))
+
+    # 2. Cross-document references (title or doc_id mention in excerpt)
+    # Build lookup: title → doc_id (only for non-empty titles)
+    title_to_doc: dict[str, str] = {}
+    for doc in docs:
+        if doc.title and len(doc.title) >= 4:
+            title_to_doc[doc.title] = doc.doc_id
+
+    for src in docs:
+        if not src.excerpt:
+            continue
+        for title, target_id in title_to_doc.items():
+            if target_id == src.doc_id:
+                continue
+            if title in src.excerpt:
+                deps.append(Dependency(
+                    from_doc_id=src.doc_id,
+                    to_doc_id=target_id,
+                    relation="references",
+                    description=f"{src.filename} mentions '{title}'",
+                ))
+
+    # 3. Same-topic parallel coverage (different chains, same category,
+    # overlapping title tokens) — heuristic for "redundant coverage" flags.
+    chain_doc_categories: dict[str, str] = {}
+    for chain in chains:
+        for v in chain.versions:
+            for doc in docs:
+                if doc.doc_id == v.doc_id:
+                    chain_doc_categories[v.doc_id] = doc.category
+                    break
+
+    # Compare docs across different chains in the same category
+    chain_members: dict[str, list[str]] = {}
+    for chain in chains:
+        for v in chain.versions:
+            chain_members.setdefault(v.doc_id, []).append(chain.chain_name)
+
+    docs_by_id = {d.doc_id: d for d in docs}
+    seen_pairs: set[tuple[str, str]] = set()
+    for chain in chains:
+        for v in chain.versions:
+            src = docs_by_id.get(v.doc_id)
+            if not src:
+                continue
+            for other_doc in docs:
+                if other_doc.doc_id == src.doc_id:
+                    continue
+                if other_doc.category != src.category:
+                    continue
+                # Must be in a DIFFERENT chain (else it's version_successor)
+                src_chains = set(chain_members.get(src.doc_id, []))
+                other_chains = set(chain_members.get(other_doc.doc_id, []))
+                if src_chains & other_chains:
+                    continue  # same chain — skip
+                pair = tuple(sorted([src.doc_id, other_doc.doc_id]))
+                if pair in seen_pairs:
+                    continue
+                seen_pairs.add(pair)
+                # Token overlap heuristic (≥2 shared title tokens of len ≥2)
+                src_tokens = {t for t in re.split(r"[\s\-_/，,。:：()（）]+", src.title or src.filename) if len(t) >= 2}
+                other_tokens = {t for t in re.split(r"[\s\-_/，,。:：()（）]+", other_doc.title or other_doc.filename) if len(t) >= 2}
+                if len(src_tokens & other_tokens) >= 2:
+                    deps.append(Dependency(
+                        from_doc_id=src.doc_id,
+                        to_doc_id=other_doc.doc_id,
+                        relation="same_topic",
+                        description=f"{src.filename} and {other_doc.filename} share topic tokens: {sorted(src_tokens & other_tokens)}",
+                    ))
+
     print(f"依赖关系：检测到 {len(deps)} 条")
     return deps
 
@@ -357,7 +481,7 @@ def main():
     parser.add_argument("input_dir", help="包含转换后 Markdown 文档的目录")
     parser.add_argument("output_json", help="输出 JSON 文件路径")
     parser.add_argument("--categories", help="自定义分类 JSON 配置文件路径")
-    parser.add_argument("--version-pattern", default=DEFAULT_VERSION_PATTERN, help="版本号提取正则表达式")
+    parser.add_argument("--version-pattern", default=None, help="版本号提取正则表达式")
     parser.add_argument("--use-llm", action="store_true", help="使用 LLM 进行不确定分类")
     parser.add_argument("--keyword-only", action="store_true", help="仅使用关键词分类（不使用 LLM）")
     parser.add_argument("--include-excerpts", action="store_true", help="在输出 JSON 中包含文档摘要（默认不包含）")
@@ -373,7 +497,14 @@ def main():
         sys.exit(1)
 
     config = load_categories(args.categories)
-    version_pattern = config.get("version_pattern", args.version_pattern)
+    # CLI 优先级：--version-pattern > 配置文件 version_pattern > 内置默认值。
+    # argparse 默认值为 None，可准确区分"用户未传"和"用户传了默认值"。
+    if args.version_pattern is not None:
+        version_pattern = args.version_pattern
+    elif config.get("version_pattern"):
+        version_pattern = config["version_pattern"]
+    else:
+        version_pattern = DEFAULT_VERSION_PATTERN
     subcategory_pattern = config.get("subcategory_pattern", DEFAULT_SUBCATEGORY_PATTERN)
 
     print("=== PRD 概览与分类 ===")

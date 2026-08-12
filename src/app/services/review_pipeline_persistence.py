@@ -174,9 +174,10 @@ class ReviewPipelinePersistenceService:
             pm_growth=cached_sr.pm_growth,
             action_plan=cached_sr.action_plan,
             pm_scores=cached_sr.pm_scores,
+            dimensions_meta=getattr(cached_sr, "dimensions_meta", None),
         ))
 
-    async def save_new_system_review(self, merged: dict, pm_scores, task_id: int, project_id: int) -> None:
+    async def save_new_system_review(self, merged: dict, pm_scores, task_id: int, project_id: int, dimensions_meta: dict | None = None) -> None:
         await self._repo.save_system_review(SystemReviewPayload(
             task_id=task_id,
             project_id=project_id,
@@ -188,4 +189,5 @@ class ReviewPipelinePersistenceService:
             pm_growth=json.dumps(merged.get("pm_growth"), ensure_ascii=False) if merged.get("pm_growth") else None,
             action_plan=json.dumps(merged.get("action_plan"), ensure_ascii=False) if merged.get("action_plan") else None,
             pm_scores=json.dumps(pm_scores, ensure_ascii=False) if pm_scores else None,
+            dimensions_meta=json.dumps(dimensions_meta, ensure_ascii=False) if dimensions_meta else None,
         ))

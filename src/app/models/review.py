@@ -102,6 +102,11 @@ class SystemReview(Base):
     pm_growth: Mapped[str | None] = mapped_column(Text)
     action_plan: Mapped[str | None] = mapped_column(Text)
     pm_scores: Mapped[str | None] = mapped_column(Text)
+    # P1-3.2: Persist review_dimensions_meta alongside dimension results so
+    # cached SystemReviews can restore partial-failure status. Without this,
+    # cache reuse loses the "partial" state and the task is incorrectly marked
+    # "completed" instead of "completed_with_warnings".
+    dimensions_meta: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=now_cn)
 
     task = relationship("ReviewTask", back_populates="system_review")

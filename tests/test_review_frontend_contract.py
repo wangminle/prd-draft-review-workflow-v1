@@ -490,7 +490,7 @@ def test_auth_init_keeps_token_on_network_failure():
 
 
 def test_last_page_is_restored_after_refresh():
-    init_block = APP_JS.split("async init()", 1)[1].split("_showLoading()", 1)[0]
+    APP_JS.split("async init()", 1)[1].split("_showLoading()", 1)[0]
     assert "const loggedIn = await Auth.init();" in APP_JS
     assert "const lastPage = sessionStorage.getItem('lastPage') || 'review';" in APP_JS
     assert "this._navigateTo(lastPage);" in APP_JS
@@ -573,7 +573,7 @@ def test_review_js_show_progress_keeps_workspace_visible():
 def test_review_js_show_result_keeps_workspace_visible():
     result_block = REVIEW_JS.split("async _showResult(options = {})", 1)[1].split("// All 6 tabs", 1)[0]
     assert "review-workspace" in result_block
-    workspace_line = [l for l in result_block.splitlines() if "review-workspace" in l][0]
+    workspace_line = [line for line in result_block.splitlines() if "review-workspace" in line][0]
     assert "style.display = ''" in workspace_line
 
 
@@ -592,7 +592,7 @@ def test_review_shell_css_includes_transition_animation():
 
 
 def test_review_navigate_on_doc_switch_shows_empty_state_not_collapse():
-    switch_block = REVIEW_JS.split("_navigateOnDocSwitch()", 1)[1].split("_showResult()", 1)[1].split("}", 1)[0]
+    REVIEW_JS.split("_navigateOnDocSwitch()", 1)[1].split("_showResult()", 1)[1].split("}", 1)[0]
     assert "_showResultEmptyState" in REVIEW_JS
     # When doc has no history, show empty state in result panel (not collapse to two-column)
     else_block = REVIEW_JS.split("新文档没有当前模式的历史", 1)[1].split("}", 1)[0]
