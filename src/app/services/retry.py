@@ -3,11 +3,23 @@ import json
 import logging
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+
+# max_tokens 安全上限 -- 防止 DB 中的不合理值（如模型上下文窗口大小）
+# 被当作输出 token 上限传给 API，导致 400 错误。
+_MAX_OUTPUT_TOKENS_HARD_LIMIT = 32768
+
+
+def _cap_max_tokens(max_tokens: int) -> int:
+    """对 max_tokens 做安全上限。"""
+    if max_tokens is None or max_tokens <= 0:
+        return 4096
+    return min(max_tokens, _MAX_OUTPUT_TOKENS_HARD_LIMIT)
 
 
 class ContextOverflowError(Exception):
@@ -102,7 +114,7 @@ async def retryable_chat(
             payload = {
                 "model": llm_model,
                 "messages": messages,
-                "max_tokens": max_tokens,
+                "max_tokens": _cap_max_tokens(max_tokens),
                 "temperature": temperature,
                 "stream": False,
             }

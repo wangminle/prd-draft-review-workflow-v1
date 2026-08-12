@@ -16,7 +16,7 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.8"}
+# 预期返回: {"status":"ok","version":"0.3.9"}
 ```
 
 ---
@@ -180,7 +180,7 @@ curl http://localhost:17957/api/health
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.8"}
+  # 预期返回: {"status":"ok","version":"0.3.9"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -216,7 +216,7 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.8"}
+# Expected: {"status":"ok","version":"0.3.9"}
 ```
 
 ---
@@ -380,7 +380,7 @@ curl http://localhost:17957/api/health
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.8"}
+  # Expected: {"status":"ok","version":"0.3.9"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).

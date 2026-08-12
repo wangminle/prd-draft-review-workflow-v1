@@ -628,8 +628,14 @@ const Admin = {
                 </div>
             </div>
             <div class="field">
-                <label>Max Tokens</label>
+                <label>Max Tokens（最大输出）</label>
                 <input type="number" id="modal-new-max-tokens" value="4096">
+                <small style="color:var(--color-text-muted)">输出 token 上限（1-32768），控制单次回复长度</small>
+            </div>
+            <div class="field">
+                <label>Context Window（上下文窗口）</label>
+                <input type="number" id="modal-new-context-window" value="0">
+                <small style="color:var(--color-text-muted)">模型上下文窗口大小（如 200000），设为 0 不启用自动压缩。达到上限时自动截断早期对话</small>
             </div>
             <div class="field">
                 <label>Temperature</label>
@@ -681,6 +687,7 @@ const Admin = {
         const llmModel = document.getElementById('modal-new-llm-model').value.trim();
         const apiKey = document.getElementById('modal-new-api-key').value;
         const maxTokens = parseInt(document.getElementById('modal-new-max-tokens').value);
+        const contextWindow = parseInt(document.getElementById('modal-new-context-window').value) || 0;
         const temperature = parseFloat(document.getElementById('modal-new-temperature').value);
         const thinkingSupported = document.getElementById('modal-new-thinking-supported').value === 'true';
         const thinkingLevel = document.getElementById('modal-new-thinking-level').value;
@@ -700,7 +707,7 @@ const Admin = {
         try {
             await API.createModel({
                 model_id: modelId, name, api_base: apiBase, llm_model: llmModel,
-                api_key: apiKey || undefined, max_tokens: maxTokens, temperature,
+                api_key: apiKey || undefined, max_tokens: maxTokens, context_window: contextWindow, temperature,
                 thinking_supported: thinkingSupported,
                 thinking_level: thinkingSupported ? thinkingLevel : 'off',
                 thinking_adapter: thinkingSupported ? thinkingAdapter : 'none',
@@ -741,8 +748,14 @@ const Admin = {
                 <input id="modal-llm-model" placeholder="model-name">
             </div>
             <div class="field">
-                <label>Max Tokens</label>
+                <label>Max Tokens（最大输出）</label>
                 <input type="number" id="modal-max-tokens" value="4096">
+                <small style="color:var(--color-text-muted)">输出 token 上限（1-32768），控制单次回复长度</small>
+            </div>
+            <div class="field">
+                <label>Context Window（上下文窗口）</label>
+                <input type="number" id="modal-context-window" value="0">
+                <small style="color:var(--color-text-muted)">模型上下文窗口大小（如 200000），设为 0 不启用自动压缩。达到上限时自动截断早期对话</small>
             </div>
             <div class="field">
                 <label>Temperature</label>
@@ -802,6 +815,7 @@ const Admin = {
                 document.getElementById('modal-api-base').value = m.api_base || '';
                 document.getElementById('modal-llm-model').value = m.llm_model || '';
                 document.getElementById('modal-max-tokens').value = m.max_tokens || 4096;
+                document.getElementById('modal-context-window').value = m.context_window || 0;
                 document.getElementById('modal-temperature').value = m.temperature || 0.7;
                 document.getElementById('modal-enabled').value = String(m.enabled);
                 document.getElementById('modal-thinking-supported').value = String(m.thinking_supported || false);
@@ -819,6 +833,7 @@ const Admin = {
         const apiBase = document.getElementById('modal-api-base').value;
         const llmModel = document.getElementById('modal-llm-model').value;
         const maxTokens = parseInt(document.getElementById('modal-max-tokens').value);
+        const contextWindow = parseInt(document.getElementById('modal-context-window').value) || 0;
         const temperature = parseFloat(document.getElementById('modal-temperature').value);
         const enabled = document.getElementById('modal-enabled').value === 'true';
         const thinkingSupported = document.getElementById('modal-thinking-supported').value === 'true';
@@ -835,7 +850,7 @@ const Admin = {
             if (apiKey) await API.updateModelApiKey(modelId, apiKey);
             await API.updateModelConfig(modelId, {
                 name, api_base: apiBase, llm_model: llmModel,
-                max_tokens: maxTokens, temperature, enabled,
+                max_tokens: maxTokens, context_window: contextWindow, temperature, enabled,
                 thinking_supported: thinkingSupported,
                 thinking_level: thinkingSupported ? thinkingLevel : 'off',
                 thinking_adapter: thinkingSupported ? thinkingAdapter : 'none',

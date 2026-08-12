@@ -104,7 +104,12 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 #### models(预置 4 个模型,以 deepseek 为例)
 
-每个模型对象字段:`id`、`name`、`adapter`(`openai_compatible`)、`base_url`、`api_key`(引用 `${ENV}`)、`model`、`max_tokens`、`temperature`、`enabled`。
+每个模型对象字段:`id`、`name`、`adapter`(`openai_compatible`)、`base_url`、`api_key`(引用 `${ENV}`)、`model`、`max_tokens`(最大输出 token)、`context_window`(上下文窗口大小,0 表示不启用自动压缩)、`temperature`、`enabled`。
+
+| 字段 | 说明 |
+|------|------|
+| `max_tokens` | 单次最大输出 token 数,传给 LLM API 控制回复长度 |
+| `context_window` | 模型上下文窗口大小(如 200000)。对话历史预估 token 超过 `context_window - max_tokens - 512`(安全余量)时,自动从最旧消息开始截断并插入压缩提示。设为 `0` 表示不启用自动压缩(向后兼容) |
 
 | 模型 | id | base_url | model | max_tokens | temperature | 默认 enabled |
 |------|----|----------|-------|-----------|-------------|--------------|
@@ -341,7 +346,12 @@ The values below are defaults and usually need no change; any change **requires 
 
 #### models (4 preset models, deepseek shown as example)
 
-Each model object has: `id`, `name`, `adapter` (`openai_compatible`), `base_url`, `api_key` (references `${ENV}`), `model`, `max_tokens`, `temperature`, `enabled`.
+Each model object has: `id`, `name`, `adapter` (`openai_compatible`), `base_url`, `api_key` (references `${ENV}`), `model`, `max_tokens` (max output tokens), `context_window` (context window size; 0 = auto-compression disabled), `temperature`, `enabled`.
+
+| Field | Description |
+|-------|-------------|
+| `max_tokens` | Maximum output tokens per call, sent to the LLM API to control response length |
+| `context_window` | Model's total context window (e.g., 200000). When estimated conversation tokens exceed `context_window - max_tokens - 512` (safety margin), older history messages are truncated from the head and a compression notice is inserted. Set to `0` to disable auto-compression (backward compatible) |
 
 | Model | id | base_url | model | max_tokens | temperature | Default enabled |
 |-------|----|----------|-------|-----------|-------------|-----------------|

@@ -186,6 +186,7 @@ class ChatApplicationService:
             "api_key": api_key,
             "llm_model": mc.llm_model,
             "max_tokens": mc.max_tokens,
+            "context_window": mc.context_window,
             "temperature": mc.temperature,
             "enabled": mc.enabled,
             "thinking_supported": mc.thinking_supported,
@@ -264,7 +265,11 @@ class ChatApplicationService:
                 context_parts.append(presentation_context)
 
         context = "\n\n".join(context_parts) if context_parts else None
-        llm_messages = build_messages(template, history, message, context)
+        llm_messages = build_messages(
+            template, history, message, context,
+            context_window=model_cfg.get("context_window", 0),
+            max_tokens=model_cfg.get("max_tokens", 4096),
+        )
 
         if model_cfg.get("thinking_supported") and model_cfg.get("thinking_adapter") != "none":
             from app.services.thinking_adapter import build_thinking_payload

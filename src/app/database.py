@@ -210,6 +210,10 @@ async def _ensure_review_schema(conn):
         await conn.execute(text(
             "ALTER TABLE model_configs ADD COLUMN thinking_payload TEXT"
         ))
+    if "context_window" not in mc_columns:
+        await conn.execute(text(
+            "ALTER TABLE model_configs ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0"
+        ))
 
     # ReviewProject: add workspace_id column for team workspace
     rp_result = await conn.execute(text("PRAGMA table_info(review_projects)"))
@@ -382,6 +386,7 @@ async def _ensure_model_configs():
                 encrypted_api_key=encrypted_key,
                 llm_model=m.get("model", m["id"]),
                 max_tokens=m.get("max_tokens", 4096),
+                context_window=m.get("context_window", 0),
                 temperature=m.get("temperature", 0.7),
                 enabled=m.get("enabled", True),
                 deleted_by_user=False,

@@ -75,6 +75,7 @@ class ModelConfigUpdate(BaseModel):
     api_base: str | None = None
     llm_model: str | None = None
     max_tokens: int | None = None
+    context_window: int | None = None
     temperature: float | None = None
     enabled: bool | None = None
     thinking_supported: bool | None = None
@@ -96,6 +97,20 @@ class ModelConfigUpdate(BaseModel):
             raise ValueError("invalid thinking_adapter")
         return v
 
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v):
+        if v is not None and (v < 1 or v > 32768):
+            raise ValueError("max_tokens 取值范围 1-32768（输出 token 上限，非上下文窗口大小）")
+        return v
+
+    @field_validator("context_window")
+    @classmethod
+    def validate_context_window(cls, v):
+        if v is not None and v < 0:
+            raise ValueError("context_window 不能为负数（0 表示不启用自动压缩）")
+        return v
+
 
 class ModelConfigCreate(BaseModel):
     model_id: str
@@ -104,6 +119,7 @@ class ModelConfigCreate(BaseModel):
     api_base: str
     llm_model: str
     max_tokens: int = 4096
+    context_window: int = 0
     temperature: float = 0.7
     enabled: bool = True
     api_key: str | None = None
@@ -124,6 +140,20 @@ class ModelConfigCreate(BaseModel):
     def validate_thinking_adapter(cls, v):
         if v not in ("none", "openai_reasoning", "deepseek_reasoner", "qwen_thinking", "custom_json"):
             raise ValueError("invalid thinking_adapter")
+        return v
+
+    @field_validator("max_tokens")
+    @classmethod
+    def validate_max_tokens(cls, v):
+        if v < 1 or v > 32768:
+            raise ValueError("max_tokens 取值范围 1-32768（输出 token 上限，非上下文窗口大小）")
+        return v
+
+    @field_validator("context_window")
+    @classmethod
+    def validate_context_window(cls, v):
+        if v < 0:
+            raise ValueError("context_window 不能为负数（0 表示不启用自动压缩）")
         return v
 
 
@@ -344,6 +374,7 @@ def _serialize_model(mc: ModelConfig, masked_key: str = "") -> dict:
         "has_api_key": bool(mc.encrypted_api_key),
         "llm_model": mc.llm_model,
         "max_tokens": mc.max_tokens,
+        "context_window": mc.context_window,
         "temperature": mc.temperature,
         "enabled": mc.enabled,
         "thinking_supported": mc.thinking_supported,
@@ -403,6 +434,7 @@ async def create_model(
         api_base=req.api_base,
         llm_model=req.llm_model,
         max_tokens=req.max_tokens,
+        context_window=req.context_window,
         temperature=req.temperature,
         enabled=req.enabled,
         deleted_by_user=False,
@@ -476,6 +508,7 @@ async def update_model_config(
         api_base=req.api_base,
         llm_model=req.llm_model,
         max_tokens=req.max_tokens,
+        context_window=req.context_window,
         temperature=req.temperature,
         enabled=req.enabled,
         thinking_supported=req.thinking_supported,

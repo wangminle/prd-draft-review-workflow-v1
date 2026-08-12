@@ -113,7 +113,7 @@ export ADMIN_INITIAL_PASSWORD='<你的强随机口令>'
 | 操作 | 方法与端点 | 说明 |
 | --- | --- | --- |
 | 列出模型 | `GET /models` | API Key **脱敏显示**(如 `sk-****...ab12`),绝不回显明文 |
-| 创建模型 | `POST /models` | provider 默认 `openai_compatible`,含 api_base、llm_model、max_tokens、temperature、thinking 等字段 |
+| 创建模型 | `POST /models` | provider 默认 `openai_compatible`,含 api_base、llm_model、max_tokens(最大输出)、context_window(上下文窗口,0=不压缩)、temperature、thinking 等字段 |
 | 更新配置 | `PUT /models/{model_id}` | 改名称、base、参数、enabled、thinking 系列字段 |
 | 删除模型 | `DELETE /models/{model_id}` | 内置模型走逻辑删除(tombstone),用户自建走物理删除 |
 | 调整排序 | `PUT /models/order` | 传入完整 `model_ids` 列表,影响**前端模型列表展示顺序**(把常用模型置顶) |
@@ -516,7 +516,7 @@ Prefix `/api/admin/models`. This manages the "general chat/review models" shown 
 | Action | Method & Endpoint | Notes |
 | --- | --- | --- |
 | List models | `GET /models` | API Key shown **masked** (e.g., `sk-****...ab12`); plaintext is never returned |
-| Create model | `POST /models` | provider defaults to `openai_compatible`; includes api_base, llm_model, max_tokens, temperature, thinking, etc. |
+| Create model | `POST /models` | provider defaults to `openai_compatible`; includes api_base, llm_model, max_tokens (max output), context_window (context window; 0 = no compression), temperature, thinking, etc. |
 | Update config | `PUT /models/{model_id}` | Change name, base, params, enabled, thinking fields |
 | Delete model | `DELETE /models/{model_id}` | Built-in models are soft-deleted (tombstone); user-created ones are physically deleted |
 | Reorder | `PUT /models/order` | Send the full `model_ids` list; controls **frontend display order** (pin frequently used models on top) |

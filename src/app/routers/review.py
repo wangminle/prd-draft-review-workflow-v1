@@ -6,7 +6,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -305,13 +305,13 @@ async def _get_model_config(model_id: str | None, db: AsyncSession) -> dict:
         result = await db.execute(
             select(ModelConfig).where(
                 ModelConfig.model_id == model_id,
-                not ModelConfig.deleted_by_user,
+                not_(ModelConfig.deleted_by_user),
             )
         )
     else:
         result = await db.execute(
             select(ModelConfig)
-            .where(ModelConfig.enabled, not ModelConfig.deleted_by_user)
+            .where(ModelConfig.enabled, not_(ModelConfig.deleted_by_user))
             .order_by(ModelConfig.display_order, ModelConfig.name, ModelConfig.id)
             .limit(1)
         )
@@ -335,6 +335,7 @@ async def _get_model_config(model_id: str | None, db: AsyncSession) -> dict:
         "api_key": api_key,
         "llm_model": mc.llm_model,
         "max_tokens": mc.max_tokens,
+        "context_window": mc.context_window,
         "temperature": 0.3,
         "thinking_supported": mc.thinking_supported,
         "thinking_level": mc.thinking_level,

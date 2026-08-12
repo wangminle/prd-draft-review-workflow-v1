@@ -54,6 +54,7 @@ class ModelConfigRepository:
         api_base: str | None = None,
         llm_model: str | None = None,
         max_tokens: int | None = None,
+        context_window: int | None = None,
         temperature: float | None = None,
         enabled: bool | None = None,
         thinking_supported: bool | None = None,
@@ -74,6 +75,8 @@ class ModelConfigRepository:
             mc.llm_model = llm_model
         if max_tokens is not None:
             mc.max_tokens = max_tokens
+        if context_window is not None:
+            mc.context_window = context_window
         if temperature is not None:
             mc.temperature = temperature
         if enabled is not None:

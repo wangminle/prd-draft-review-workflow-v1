@@ -109,6 +109,7 @@ class ModelConfig(Base):
     encrypted_api_key: Mapped[str | None] = mapped_column(Text)
     llm_model: Mapped[str] = mapped_column(String(100), nullable=False)
     max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    context_window: Mapped[int] = mapped_column(Integer, default=0)  # 0 = 未设置，不触发自动压缩
     temperature: Mapped[float] = mapped_column(default=0.7)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     deleted_by_user: Mapped[bool] = mapped_column(Boolean, default=False)
