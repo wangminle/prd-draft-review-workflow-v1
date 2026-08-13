@@ -54,7 +54,10 @@ const configuredTools = parseList(process.env.AGENT_ALLOWED_TOOLS);
 const effectiveAllowed = configuredTools.length > 0 ? configuredTools : DEFAULT_SAFE_TOOLS;
 const ONE_SHOT_APPROVED = new Set(parseList(process.env.AGENT_ONE_SHOT_APPROVED));
 const AGENT_SCOPE = parseScope(process.env.AGENT_SCOPE_JSON);
-const AGENT_API_BASE = (process.env.AGENT_API_BASE || "http://127.0.0.1:17957").replace(/\/$/, "");
+const AGENT_API_BASE = (
+  process.env.AGENT_API_BASE
+  || `http://127.0.0.1:${process.env.SERVER_PORT || "17957"}`
+).replace(/\/$/, "");
 const AGENT_RUN_ID = process.env.AGENT_RUN_ID || "";
 const AGENT_RUN_TOKEN = process.env.AGENT_RUN_TOKEN || "";
 const ONE_SHOT_FILE = ".agent_one_shot_approved";

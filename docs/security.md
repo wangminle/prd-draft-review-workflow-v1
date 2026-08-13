@@ -37,11 +37,7 @@
 
 - **登录签发**:用户通过 `POST /api/auth/login` 验证账号密码后获取 JWT。密码以 **bcrypt 哈希**存储,明文不可逆。
 - **算法与有效期**:JWT 签名算法 **HS256**,Token 有效期 **480 分钟(8 小时)**,前端存储于 `localStorage`。
-- **JWT_SECRET 安全校验(启动期硬阻断)**:Service 层 `assert_jwt_secret_safe` 在启动时拒绝以下情况,直接抛 `RuntimeError` 阻止进程启动:
-  - 空值或纯空白;
-  - 已知不安全占位值:`change-me-in-production`、`change-this-to-a-random-secret-string`、`secret`、`jwt-secret`、`your-secret-key`;
-  - 长度 < 32 字符(`MIN_JWT_SECRET_LENGTH = 32`)。
-  - 配置方法见 [configuration.md](./configuration.md)。
+- **JWT_SECRET 安全校验(启动期硬阻断)**:Service 层 `assert_jwt_secret_safe` 拒绝已知不安全占位值和不足 32 字符的密钥,直接抛 `RuntimeError` 阻止进程启动。空值不会拒绝启动：`./start.sh` 会先生成随机密钥并写入项目根目录 `.env`；不走官方脚本时 `config.py` 会生成进程内临时密钥（不落盘，重启后 token 失效）。占位值示例:`change-me-in-production`、`change-this-to-a-random-secret-string`、`secret`、`jwt-secret`、`your-secret-key`。配置方法见 [configuration.md](./configuration.md)。
 - **SSE 短票据(避免 Token 泄露)**:SSE 流式端点(通知流、Agent 流)无法使用 `Authorization: Bearer` 头(EventSource 限制),平台改用**一次性短票据**:
   - `POST /api/auth/sse-ticket` 获取票据,**TTL 60 秒**,单次消费即失效;
   - 以 `?ticket=` 查询参数连接 SSE。
@@ -55,7 +51,7 @@
   - `Observer` 只读,无法写入或确认;
   - 发起人 / `Reviewer` / `Approver` / 项目管理员可写可确认;
   - 只读角色(如 `viewer`、`Observer`)无法篡改对象,**阻止只读角色越权写入**。
-- **工作空间成员校验**:所有相关操作经 `require_action` + `is_active_member`;聊天链路校验知识空间成员资格,**拒绝伪造 `workspace_id` 绕过配额**(`WorkspaceBudget` + `BudgetGuard` 硬限)。
+- **工作空间成员校验**:所有相关操作经 `require_action` + `is_active_member`;聊天与审查启动均校验知识空间成员资格,**拒绝伪造 `workspace_id` 绕过配额**(`WorkspaceBudget` + `BudgetGuard` 硬限)。
 - **只读角色防篡改**:`viewer` / `Observer` 等只读角色不可写、不可确认。
 
 ### 四、Agent 安全(重点)
@@ -126,11 +122,7 @@ The platform uses three layers — System → Workspace → Collaborative Review
 
 - **Login issuance**: Users call `POST /api/auth/login`; upon successful credential verification a JWT is returned. Passwords are stored as **bcrypt hashes** (non-reversible).
 - **Algorithm & lifetime**: JWT is signed with **HS256**; the token is valid for **480 minutes (8 hours)** and stored in `localStorage` on the client.
-- **JWT_SECRET safety check (hard-fail at startup)**: The service-layer `assert_jwt_secret_safe` rejects the following cases at startup by raising `RuntimeError`, halting the process:
-  - empty or whitespace-only value;
-  - known insecure placeholders: `change-me-in-production`, `change-this-to-a-random-secret-string`, `secret`, `jwt-secret`, `your-secret-key`;
-  - length < 32 characters (`MIN_JWT_SECRET_LENGTH = 32`).
-  - For configuration see [configuration.md](./configuration.md).
+- **JWT_SECRET safety check (hard-fail at startup)**: The service-layer `assert_jwt_secret_safe` rejects known insecure placeholders and secrets shorter than 32 characters (`MIN_JWT_SECRET_LENGTH = 32`) by raising `RuntimeError`. An empty value does not refuse startup: `./start.sh` generates a random secret and writes it to the project-root `.env`; if you skip the official script, `config.py` generates an in-process ephemeral secret (not persisted; tokens die after restart). Placeholder examples: `change-me-in-production`, `change-this-to-a-random-secret-string`, `secret`, `jwt-secret`, `your-secret-key`. For configuration see [configuration.md](./configuration.md).
 - **SSE short-lived ticket (avoids token leakage)**: SSE streaming endpoints (notification stream, Agent stream) cannot use the `Authorization: Bearer` header (an EventSource limitation), so the platform uses **single-use short-lived tickets** instead:
   - Obtain a ticket via `POST /api/auth/sse-ticket`, **TTL 60 seconds**, consumed once and then invalidated;
   - Connect to SSE with a `?ticket=` query parameter.
@@ -144,7 +136,7 @@ The platform uses three layers — System → Workspace → Collaborative Review
   - `Observer` is read-only and cannot write or confirm;
   - The initiator / `Reviewer` / `Approver` / project admin can write and confirm;
   - Read-only roles (e.g. `viewer`, `Observer`) cannot tamper with objects — **read-only roles are blocked from writing**.
-- **Workspace membership verification**: All relevant operations go through `require_action` + `is_active_member`; the chat path verifies knowledge-space membership and **rejects forged `workspace_id` attempts to bypass quotas** (`WorkspaceBudget` + `BudgetGuard` hard limits).
+- **Workspace membership verification**: All relevant operations go through `require_action` + `is_active_member`; chat and review start both verify knowledge-space membership and **reject forged `workspace_id` attempts to bypass quotas** (`WorkspaceBudget` + `BudgetGuard` hard limits).
 - **Read-only tamper protection**: Read-only roles such as `viewer` / `Observer` cannot write or confirm.
 
 ### 4. Agent Security (Focus Area)

@@ -14,12 +14,11 @@ def test_load_config_default_path():
 
     config = load_config()
     assert config is not None
-    assert "server" in config
     assert "database" in config
     assert "auth" in config
     assert "models" in config
-    assert config["server"]["host"] == "0.0.0.0"
-    assert config["server"]["port"] == 17957
+    # OPT-001: 监听地址只由 start.sh 的 SERVER_HOST/SERVER_PORT 决定，yaml 不再放死配置
+    assert "server" not in config
 
 
 def test_load_config_resolves_env_vars():

@@ -15,6 +15,7 @@ import hashlib
 import json
 import logging
 import re
+import unicodedata
 from typing import TYPE_CHECKING
 
 from sqlalchemy import and_, or_, select, text
@@ -44,6 +45,9 @@ def _sanitize_fts5_query(query: str) -> str:
     但未转义的 `"` `*` `(` `)` 等会导致语法错误。
     策略：用双引号包裹整个查询词，使其作为短语匹配。
     """
+    # BUG-147: 补充 NEAR 关键字过滤和 Unicode 引号处理
+    # NFKC 归一化全角字符（＠->@, Ａ->A 等），但智能引号（U+201C 等）不受 NFKC 影响
+    query = unicodedata.normalize("NFKC", query)
     # 移除控制字符和空字符
     query = re.sub(r"[\x00-\x1f]", "", query)
     # 去除首尾空白
@@ -52,8 +56,9 @@ def _sanitize_fts5_query(query: str) -> str:
         return ""
     # FTS5 MATCH 对引号、括号、星号和布尔操作符等有特殊语法含义；
     # trigram fallback 只需要纯文本匹配，因此统一移除这些语法字符，避免语法错误。
-    query = re.sub(r"[\"'*()\[\]{}^~:+=/\\|-]+", " ", query)
-    query = re.sub(r"\b(?:AND|OR|NOT)\b", " ", query, flags=re.IGNORECASE)
+    # BUG-147: 补充 Unicode 智能引号 “ ” ‘ ’
+    query = re.sub(r"[\"'*“”‘’()\[\]{}^~:+=/\\|-]+", " ", query)
+    query = re.sub(r"\b(?:AND|OR|NOT|NEAR)\b", " ", query, flags=re.IGNORECASE)
     query = re.sub(r"\s+", " ", query).strip()
     return query
 

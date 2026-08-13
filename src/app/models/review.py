@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from app.models.user import Base
@@ -25,6 +25,11 @@ class ReviewProject(Base):
 
 class ReviewDocument(Base):
     __tablename__ = "review_documents"
+    # BUG-151: 唯一约束闭环 BUG-141 的应用层去重——并发上传同名文件时
+    # SELECT-then-INSERT 竞态仍可能产生重复行，DB 级约束是最终防线。
+    __table_args__ = (
+        UniqueConstraint("project_id", "document_type", "filename", name="uq_review_doc_proj_type_filename"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("review_projects.id"), nullable=False)

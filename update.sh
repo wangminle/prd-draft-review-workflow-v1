@@ -17,7 +17,7 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 BACKUP_DIR="$RUNTIME_DIR/update_backups"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-15}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-5}"
-NEW_VERSION="0.3.10"
+NEW_VERSION="0.3.11"
 
 SKIP_MIGRATE=false
 SKIP_BACKUP=false
@@ -110,10 +110,18 @@ get_current_version() {
 get_server_port() {
   local port="${SERVER_PORT:-}"
   if [ -z "$port" ]; then
-    for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/src/.env"; do
-      if [ -f "$env_file" ]; then
-        local value
-        value=$(python3 - "$env_file" <<'PY'
+    PYTHONPATH="$PROJECT_DIR/src" python3 - "$PROJECT_DIR" <<'PY'
+import sys
+from pathlib import Path
+from app.env_file import ensure_canonical_env
+
+_path, warnings = ensure_canonical_env(Path(sys.argv[1]))
+for w in warnings:
+    print(f"[WARN] {w}", file=sys.stderr)
+PY
+    if [ -f "$PROJECT_DIR/.env" ]; then
+      local value
+      value=$(python3 - "$PROJECT_DIR/.env" <<'PY'
 import sys
 from pathlib import Path
 
@@ -127,11 +135,10 @@ for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines():
         break
 PY
 )
-        if [ -n "$value" ]; then
-          port="$value"
-        fi
+      if [ -n "$value" ]; then
+        port="$value"
       fi
-    done
+    fi
   fi
   echo "${port:-17957}"
 }
@@ -446,7 +453,7 @@ restore_backup() {
 }
 
 log "========== 版本更新开始 =========="
-log "目标版本: $NEW_VERSION"
+log "回退目标版本(包内读取失败时使用): $NEW_VERSION"
 
 if ! command -v python3 >/dev/null 2>&1; then
   fail "未找到 python3，请先安装 Python 3.10+"

@@ -509,56 +509,14 @@ async def test_init_db_preserves_existing_data():
     # Run migration logic (mirrors init_db from database.py)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        # Run schema patching
-        result = await conn.execute(sa_text("PRAGMA table_info(users)"))
-        columns = {row[1] for row in result.fetchall()}
-        if "last_active_at" not in columns:
-            await conn.execute(sa_text("ALTER TABLE users ADD COLUMN last_active_at DATETIME"))
-
-        result = await conn.execute(sa_text("PRAGMA table_info(review_documents)"))
-        columns = {row[1] for row in result.fetchall()}
-        if "document_type" not in columns:
-            await conn.execute(sa_text(
-                "ALTER TABLE review_documents ADD COLUMN document_type VARCHAR(20) NOT NULL DEFAULT 'requirement'"
-            ))
-        if "content_hash" not in columns:
-            await conn.execute(sa_text(
-                "ALTER TABLE review_documents ADD COLUMN content_hash VARCHAR(64)"
-            ))
-        # P4.A.6: 版本链
-        if "parent_document_id" not in columns:
-            await conn.execute(sa_text(
-                "ALTER TABLE review_documents ADD COLUMN parent_document_id INTEGER REFERENCES review_documents(id)"
-            ))
-
-        sr_result = await conn.execute(sa_text("PRAGMA table_info(system_reviews)"))
-        sr_columns = {row[1] for row in sr_result.fetchall()}
-        if "product_strategy" not in sr_columns:
-            await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN product_strategy TEXT"))
-        if "tech_evolution" not in sr_columns:
-            await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN tech_evolution TEXT"))
-        if "dimensions_meta" not in sr_columns:
-            await conn.execute(sa_text("ALTER TABLE system_reviews ADD COLUMN dimensions_meta TEXT"))
-
-        ctx_result = await conn.execute(sa_text("PRAGMA table_info(chat_context_items)"))
-        ctx_columns = {row[1] for row in ctx_result.fetchall()}
-        if "extracted_text" not in ctx_columns:
-            await conn.execute(sa_text("ALTER TABLE chat_context_items ADD COLUMN extracted_text TEXT"))
-
-        rp_result = await conn.execute(sa_text("PRAGMA table_info(review_projects)"))
-        rp_columns = {row[1] for row in rp_result.fetchall()}
-        if "workspace_id" not in rp_columns:
-            await conn.execute(sa_text(
-                "ALTER TABLE review_projects ADD COLUMN workspace_id INTEGER REFERENCES workspaces(id)"
-            ))
-
-        # P4.Pre 迁移：补充新列
         from app.database import (
+            _ensure_review_schema,
             _migrate_approval_approver_required,
             _migrate_skill_config_status_version,
             _migrate_message_anchor_fields,
             _migrate_conversation_mode_project,
         )
+        await _ensure_review_schema(conn)
         await _migrate_approval_approver_required(conn)
         await _migrate_skill_config_status_version(conn)
         await _migrate_message_anchor_fields(conn)

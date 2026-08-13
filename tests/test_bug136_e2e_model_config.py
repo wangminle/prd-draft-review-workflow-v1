@@ -55,11 +55,8 @@ async def e2e_client():
     async with AsyncClient(transport=transport, base_url="http://test") as ac:
         yield ac, session_maker
 
-    # 清理后台管线任务
-    from app.routers import review
-    for tid, task in list(review._pipeline_tasks.items()):
-        task.cancel()
-    review._pipeline_tasks.clear()
+    from tests.conftest import drain_review_pipeline_tasks
+    await drain_review_pipeline_tasks(timeout=2.0)
 
     await engine.dispose()
     if os.path.exists(tmp_db):

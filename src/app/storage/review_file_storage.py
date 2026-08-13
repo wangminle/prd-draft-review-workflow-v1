@@ -340,9 +340,10 @@ class ReviewFileStorage:
                     os.remove(resolved)
                 except OSError:
                     pass
-        converted_dir = str(runtime_path("data", "converted", f"doc_{document_id}"))
-        if os.path.isdir(converted_dir):
-            shutil.rmtree(converted_dir)
+        if document_id > 0:
+            converted_dir = str(runtime_path("data", "converted", f"doc_{document_id}"))
+            if os.path.isdir(converted_dir):
+                shutil.rmtree(converted_dir)
 
     def _pick_best_md(self, md_files: list[Path], original_filename: str | None = None) -> str:
         if len(md_files) == 1:

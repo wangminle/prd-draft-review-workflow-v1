@@ -14,35 +14,45 @@ os.environ.setdefault("CONFIG_PATH", str(SRC / "config.yaml"))
 # but we need a stable non-empty secret for API key encryption/decryption.
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests-32chars!!")
 
-import pytest
+import asyncio
+
 import pytest_asyncio
-from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.database import get_db as original_get_db
 from app.models.user import Base, User
 from app.services.auth import hash_password
+from app.version import APP_VERSION
 
 
-@pytest.fixture(autouse=True)
-def clear_review_progress_queues():
+async def drain_review_pipeline_tasks(timeout: float = 2.0) -> None:
+    """Cancel and await leftover review pipeline tasks (BUG-155)."""
+    from app.routers import review
+
+    await review.stop_all_pipeline_tasks(timeout=timeout)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def clear_review_progress_queues():
     """Keep module-level SSE queues isolated between test cases."""
     from app.routers import review
 
     review.progress_queues.clear()
-    if hasattr(review, "_pipeline_tasks"):
-        review._pipeline_tasks.clear()
+    await drain_review_pipeline_tasks(timeout=0.5)
+    # BUG-152: 清理 per-project 启动锁，避免跨 event loop 复用失效的 Lock
+    if hasattr(review, "_review_start_locks"):
+        review._review_start_locks.clear()
     yield
+    await drain_review_pipeline_tasks(timeout=2.0)
+    await asyncio.sleep(0)
     review.progress_queues.clear()
-    if hasattr(review, "_pipeline_tasks"):
-        review._pipeline_tasks.clear()
+    if hasattr(review, "_review_start_locks"):
+        review._review_start_locks.clear()
 
 
 def make_test_app(db_path: str):
     """创建独立的 FastAPI 测试应用"""
-    from contextlib import asynccontextmanager
-
     from fastapi import FastAPI
 
     from app.routers import admin, agent, auth, chat, history, review, upload, workspace, review_request, notification, artifact, governance
@@ -79,7 +89,7 @@ def make_test_app(db_path: str):
 
     @app.get("/api/health")
     async def health_check():
-        return {"status": "ok", "version": "0.3.10"}
+        return {"status": "ok", "version": APP_VERSION}
 
     return app, engine, TestSessionLocal
 

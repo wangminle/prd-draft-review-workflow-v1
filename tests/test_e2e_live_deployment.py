@@ -19,9 +19,12 @@ import json
 import os
 import time
 import uuid
+from pathlib import Path
 
 import httpx
 import pytest
+
+_EXPECTED_VERSION = (Path(__file__).resolve().parents[1] / "VERSION").read_text(encoding="utf-8").strip()
 
 BASE_URL = os.environ.get("E2E_BASE_URL", "http://127.0.0.1:17957")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "Admin@0309")
@@ -94,12 +97,12 @@ class TestLiveDeployment:
     # ── 基础健康检查 ──
 
     def test_health_check(self, client):
-        """服务健康检查通过，返回 0.3.10 版本。"""
+        """服务健康检查通过，返回 VERSION 文件中的当前版本。"""
         r = client.get("/api/health")
         assert r.status_code == 200
         data = r.json()
         assert data["status"] == "ok"
-        assert data["version"] == "0.3.10"
+        assert data["version"] == _EXPECTED_VERSION
 
     # ── BUG-136: 模型配置查询 ──
 

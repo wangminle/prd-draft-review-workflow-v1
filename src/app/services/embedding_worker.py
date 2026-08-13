@@ -50,8 +50,30 @@ async def process_pending_embeddings(
     batch_size: int = DEFAULT_BATCH_SIZE,
     embedding_service: EmbeddingService | None = None,
 ) -> int:
-    """处理一批 pending embedding。返回成功写入向量的条数。"""
+    """处理一批 pending embedding。返回成功写入向量的条数。
+
+    BUG-148: 如果 worker 在 processing 阶段崩溃（OOM、API 异常等），
+    chunks 的 embedding_status 会卡在 "processing" 永远不会被重新消费。
+    每次循环开始时将所有 "processing" chunks 重置为 "pending"——
+    正常流程中 processing -> done/failed 在一次循环内完成，
+    任何残留的 processing 状态都是上次崩溃遗留。
+    """
     chunk_repo = KnowledgeChunkRepository(db)
+
+    # 重置 stale "processing" chunks（worker 崩溃后遗留）
+    from sqlalchemy import update as sa_update
+    stale_result = await db.execute(
+        sa_update(KnowledgeChunk)
+        .where(KnowledgeChunk.embedding_status == "processing")
+        .values(embedding_status="pending")
+    )
+    if stale_result.rowcount > 0:
+        logger.warning(
+            "[EMBED-WORKER] reset %d stale 'processing' chunks to 'pending'",
+            stale_result.rowcount,
+        )
+        await db.commit()
+
     pending = await chunk_repo.list_pending_embedding(limit=batch_size)
     if not pending:
         return 0

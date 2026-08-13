@@ -284,6 +284,7 @@ const App = {
                 await Auth.login(username, password);
                 this._resetSessionState();
                 API.log('info', 'auth.login.frontend_success', { username }, '用户登录');
+                Notification.init();
                 if (password.length < 8) {
                     this._showToast('口令较为简短，有风险');
                 }
@@ -306,6 +307,7 @@ const App = {
                 await Auth.register(username, password);
                 this._resetSessionState();
                 API.log('info', 'auth.register.frontend_success', { username }, '用户注册');
+                Notification.init();
                 this._showReviewPage();
             } catch (err) {
                 errorEl.textContent = err.message || '注册失败';
@@ -353,6 +355,7 @@ const App = {
             e.preventDefault();
             API.log('info', 'auth.logout', { source: 'chat' }, '用户退出');
             this._resetSessionState();
+            Notification.destroy();
             Auth.logout();
             sessionStorage.removeItem('lastPage');
             this._showLoginPage();
@@ -362,6 +365,7 @@ const App = {
             e.preventDefault();
             API.log('info', 'auth.logout', { source: 'admin' }, '用户退出(admin)');
             this._resetSessionState();
+            Notification.destroy();
             Auth.logout();
             sessionStorage.removeItem('lastPage');
             this._showLoginPage();
@@ -371,6 +375,7 @@ const App = {
             e.preventDefault();
             API.log('info', 'auth.logout', { source: 'review' }, '用户退出(review)');
             this._resetSessionState();
+            Notification.destroy();
             Auth.logout();
             sessionStorage.removeItem('lastPage');
             this._showLoginPage();
@@ -380,6 +385,7 @@ const App = {
             e.preventDefault();
             API.log('info', 'auth.logout', { source: 'workspace' }, '用户退出(workspace)');
             this._resetSessionState();
+            Notification.destroy();
             Auth.logout();
             sessionStorage.removeItem('lastPage');
             this._showLoginPage();
@@ -555,4 +561,3 @@ window.addEventListener('resize', () => {
     clearTimeout(_resizeTimer);
     _resizeTimer = setTimeout(() => App._alignSidebarToDivider(), 150);
 });
-

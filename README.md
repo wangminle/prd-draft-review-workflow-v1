@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.10。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.11。
 
 ### 架构设计
 
@@ -68,9 +68,9 @@ flowchart LR
 - OpenAI 兼容模型接入：支持多模型配置、启停、排序、API Key 加密存储，思考级别配置（关/low/high 运行时调档）与思考过程流式展示。
 - Agent 对话与工具注册：支持通过 Pi Agent（方案A：RPC 子进程桥接）进行自主工具调用对话；AgentProfile/AgentRun 管理身份与运行记录；工具白名单默认拒绝（空名单仅 `rag_search`），授权范围由 Extension 与 RAG 端点双重强制；高风险工具（含 `bash`/`write`/`edit`/`read`）需人工审批，非管理员不可自配或自行批准；Pi 子进程 cwd 限制在 `runtime/agent_sandboxes/`；MCP 全局配置限管理员、workspace 级需 manage 权限；前端提供 Agent 模式开关和审批面板。
 - 个人知识与个人 Agent（P5）：个人私有知识作用域，支持"团队资料/我的资料"子视图切换；个人 Agent 默认行为配置（默认范围、名称、状态）；Agent 间对话通知；消息中心完善（批量已读/归档）；评论 @提及和 resolve 功能。
-- 治理与运营（P6）：成本统计服务（LLM 会话日志写入 `workspace_id`/`user_id`/`mode` 并按归属聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget + BudgetGuard 硬限制拦截；聊天校验知识库 workspace 存在且成员可读，拒绝伪造空间绕过配额）。
-- 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。版本号通过 `app_version` 字段配置。
-- 安全启动与密钥治理：`JWT_SECRET` 必填且拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；聊天附件 `file_id` 经安全路径解析防目录穿越；SQLite 连接启用 `foreign_keys=ON`；生命周期结束前先停止审查后台任务与 Embedding Worker，再释放 SQLAlchemy engine。
+- 治理与运营（P6）：成本统计服务（LLM 会话日志写入 `workspace_id`/`user_id`/`mode` 并按归属聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget + BudgetGuard 硬限制拦截；聊天与审查启动均校验 workspace 成员资格并执行硬限，拒绝伪造空间绕过配额）。
+- 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。顶栏展示版本来自品牌配置 `app_version`；应用版本号的唯一事实来源是根目录 `VERSION` 文件（`update.sh` 部署时会把 yaml 中的 `app_version` 同步为该值）。
+- 安全启动与密钥治理：`JWT_SECRET` 可留空（`./start.sh` 首次生成并写入项目根目录 `.env`），拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；聊天附件 `file_id` 经安全路径解析防目录穿越；SQLite 连接启用 `foreign_keys=ON`；生命周期结束前先停止审查后台任务与 Embedding Worker，再释放 SQLAlchemy engine。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
 - 实时任务体验：评审流程支持流式进度反馈，适合长流程 AI 审查任务。
@@ -104,12 +104,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# 编辑 .env：填入 LLM API Key；JWT_SECRET 必填（至少 32 字符随机串，可用
-# python3 -c "import secrets; print(secrets.token_hex(32))" 生成）
+# 编辑 .env：填入 LLM API Key。JWT_SECRET 可留空（首次启动写入根目录 .env），
+# 也可自行填入至少 32 字符随机串。
 ./start.sh
 ```
 
-默认端口为 17957。未设置安全 `JWT_SECRET` 时服务会拒绝启动。
+默认端口为 17957。JWT_SECRET 留空时会生成并保存到项目根目录 `.env`，之后重启复用；示例占位值或过短密钥仍会拒绝启动。
 
 ### 目录说明
 
@@ -166,7 +166,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.10.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.11.
 
 ### Architecture
 
@@ -222,11 +222,11 @@ Supported review modes:
 - Collaborative review (P4): post-approval workflow covers "presentation preparation → artifact confirmation → collaborative review"; ReviewRequest/Round/Participant models support multi-round approval and participant management; presentation mode auto-injects review results and knowledge context; Artifact lifecycle with draft→confirmed freeze; object-level access splits read vs write (Observer is read-only; initiator/Reviewer/Approver/project admins can write and confirm), blocking cross-user BOLA and read-only role tampering; real-time notification system (SSE + bell Inbox) for approval/comment/mention events; comment component with replies and @mention support.
 - Team workspace and knowledge library: shared upload, listing, detail, download, and soft-delete; project source refs with automatic snapshot versioning; background Embedding Worker for async vectorization with personal FTS fallback; four-tier role permissions (owner/admin/member/viewer) for manage, upload, and read access; inactive members automatically blocked from project access and source referencing; unified permission entry point (require_action + is_active_member) covering all workspace and review-domain operations.
 - OpenAI-compatible multi-model integration with encrypted API key storage and configurable thinking settings.
-- Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. Version number configurable through `app_version`.
+- Branding and local customization: override product name, Logo, favicon, theme colors and page copy via `runtime/config/ui-branding.yaml` and `runtime/assets/branding/`. The top-bar version comes from branding `app_version`; the canonical application version is the root `VERSION` file (`update.sh` syncs yaml `app_version` to that value on deploy).
 - Agent conversation and tool registration: autonomous tool-calling conversations via Pi Agent (Architecture A: RPC subprocess bridging); AgentProfile/AgentRun for identity and run tracking; deny-by-default tool allowlist (empty list → `rag_search` only) with authorization scope enforced in the Extension and again on the RAG endpoint; high-risk tools (`bash`/`write`/`edit`/`read`) require human approval; non-admins cannot enable or self-approve high-risk tools; Pi cwd sandboxed under `runtime/agent_sandboxes/`; global MCP config requires admin, workspace-scoped MCP requires manage; frontend Agent mode toggle and approval panel.
 - Personal knowledge and personal Agent (P5): personal private knowledge scope with "Team / Mine" sub-view toggle; personal Agent default behavior configuration (default scope, name, status); inter-Agent conversation notifications; enhanced message center (batch read/archive); comment @mention and resolve features.
-- Governance and operations (P6): cost statistics service (LLM session logs record `workspace_id`/`user_id`/`mode` and aggregate by ownership; daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget + BudgetGuard hard-limit enforcement; chat validates knowledge workspace membership and rejects forged workspace IDs that bypass quotas).
-- Secure startup and secret hygiene: `JWT_SECRET` is required and rejects example/short secrets; optional `ADMIN_INITIAL_PASSWORD`; chat attachment `file_id` is resolved safely to block path traversal; SQLite connections enable `foreign_keys=ON`; lifespan stops review pipeline tasks and the Embedding Worker before disposing the SQLAlchemy engine.
+- Governance and operations (P6): cost statistics service (LLM session logs record `workspace_id`/`user_id`/`mode` and aggregate by ownership; daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget + BudgetGuard hard-limit enforcement; chat and review start both verify workspace membership and enforce the hard limit, rejecting forged workspace IDs that bypass quotas).
+- Secure startup and secret hygiene: `JWT_SECRET` may be empty (`./start.sh` generates one and writes it to the project-root `.env`); example/short secrets are rejected; optional `ADMIN_INITIAL_PASSWORD`; chat attachment `file_id` is resolved safely to block path traversal; SQLite connections enable `foreign_keys=ON`; lifespan stops review pipeline tasks and the Embedding Worker before disposing the SQLAlchemy engine.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
 - Streaming progress for long-running AI review tasks.
@@ -260,12 +260,12 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Edit .env: set at least one LLM API key; JWT_SECRET is required
-# (min 32 chars; e.g. python3 -c "import secrets; print(secrets.token_hex(32))")
+# Edit .env: set at least one LLM API key. JWT_SECRET may be left empty
+# (first start writes it to the project-root .env) or set to >= 32 random chars.
 ./start.sh
 ```
 
-The default server port is 17957. The service refuses to start without a safe `JWT_SECRET`.
+The default server port is 17957. An empty JWT_SECRET is generated and saved to the project-root `.env` for reuse; example placeholders or short secrets still prevent startup.
 
 ### Project Map
 

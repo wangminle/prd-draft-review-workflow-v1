@@ -3723,8 +3723,13 @@ const Review = {
                 this._loadComments(objectType, requestId);
                 this._loadArtifacts(objectType, requestId);
             } else {
-                // 无协作审查请求时，评论基于项目
-                this._loadComments('review_request', 0);
+                // 无协作审查请求时没有合法评论对象，清空上下文并保持面板隐藏。
+                // 不使用 object_id=0 请求 API，避免产生必然的 404 和控制台错误。
+                this._currentCommentObjectType = null;
+                this._currentCommentObjectId = null;
+                this._renderComments([]);
+                const commentCount = document.getElementById('comment-count');
+                if (commentCount) commentCount.textContent = '0 条';
                 const collabSection = document.getElementById('review-collab-section');
                 if (collabSection) collabSection.style.display = 'none';
                 const commentSection = document.getElementById('review-comment-section');

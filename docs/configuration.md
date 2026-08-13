@@ -41,7 +41,7 @@
 | `OPENAI_API_BASE` | 否 | — | OpenAI 兼容 API 基址,留空用官方 endpoint |
 | `EMBEDDING_MODEL` | 否 | — | 知识库向量模型,默认 `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | 否 | — | 向量维度,默认 `1536` |
-| `JWT_SECRET` | **是(生产)** | 🔐 [敏感] | JWT 签名密钥,**至少 32 字符**随机串。生成: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `JWT_SECRET` | 否（可留空） | 🔐 [敏感] | 可留空：`./start.sh` 首次生成 `token_hex(32)`（64 个十六进制字符）并写入根目录 `.env`。生产也可预填至少 32 字符随机串。 |
 | `ADMIN_INITIAL_PASSWORD` | 否 | 🔐 [敏感] | 覆盖首个 admin 账号初始密码;不填则用内置预设并告警 |
 | `SERVER_PORT` | 否 | — | 服务端口,默认 `17957` |
 | `SERVER_HOST` | 否 | — | 监听地址,默认 `127.0.0.1`(仅回环,经反代对外);直连部署设 `0.0.0.0` |
@@ -54,24 +54,25 @@
 
 #### 🔐 JWT_SECRET 安全校验规则(重点,生产必读)
 
-服务层 `assert_jwt_secret_safe()` 在启动时校验,以下三种情况会**抛 RuntimeError 阻止启动**:
+服务层 `assert_jwt_secret_safe()` 校验到达该层的密钥。官方 `./start.sh` 在空值时会先生成并写入项目根目录 `.env`，走官方脚本不会因空值失败。不走 `start.sh`、直接跑 uvicorn 时，`config.py` 会生成进程内临时密钥（不落盘，重启后已签发 token 失效）。
 
-1. **空值** —— 未配置或纯空白。
-2. **已知不安全占位值** —— 命中黑名单将被拒绝:
+以下情况仍会**抛 RuntimeError 阻止启动**:
+
+1. **已知不安全占位值** —— 命中黑名单将被拒绝:
    - `change-me-in-production`
    - `change-this-to-a-random-secret-string`
    - `secret`
    - `jwt-secret`
    - `your-secret-key`
-3. **长度 < 32 字符** —— 过短,易被暴力破解。
+2. **长度 < 32 字符** —— 过短,易被暴力破解。
 
-**生成推荐**(64 字节十六进制,128 字符):
+**生成推荐**（`secrets.token_hex(32)` = 32 字节 = 64 个十六进制字符）:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-**注意**:`start.sh` 在 `JWT_SECRET` 为空时会**自动生成一个临时 session 密钥**(仅适合本地开发试用)。但**生产环境必须显式配置一个持久随机密钥**,否则每次重启后所有已签发 token 全部失效,用户需要重新登录。
+**注意**:`start.sh` 在 `JWT_SECRET` 为空时会**自动生成随机密钥并写入项目根目录 `.env`**，之后重启复用，登录 token 不会因重启失效。示例占位值或不足 32 字符的密钥仍会被拒绝。生产环境也可以预先写入固定密钥。环境文件只认项目根目录 `.env`；若存在遗留的 `src/.env`，根目录已有文件时会忽略并告警，根目录没有时会复制过去并提示迁移。
 
 ---
 
@@ -81,10 +82,12 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 #### server
 
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `server.host` | `"0.0.0.0"` | 配置文件中的默认值;**实际监听受 `SERVER_HOST` 环境变量控制**,`start.sh` 默认用 `127.0.0.1` |
-| `server.port` | `17957` | 端口(同样可被 `SERVER_PORT` 环境变量覆盖) |
+监听地址**不在** `config.yaml` 中配置（已删除无效的 `server.host` / `server.port`）。实际由 `start.sh` 读取：
+
+- `SERVER_HOST`：默认 `127.0.0.1`（仅回环，经反代对外）；直连部署设 `0.0.0.0`
+- `SERVER_PORT`：默认 `17957`
+
+Agent 扩展回调优先使用 `AGENT_API_BASE`；未设置时拼 `http://127.0.0.1:${SERVER_PORT:-17957}`。
 
 #### database
 
@@ -108,7 +111,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 
 | 字段 | 说明 |
 |------|------|
-| `max_tokens` | 单次最大输出 token 数,传给 LLM API 控制回复长度 |
+| `max_tokens` | 单次最大输出 token 数,传给 LLM API 控制回复长度。运行时硬上限 **32768**（超过会被截断）；管理后台创建/更新模型时拒绝 1–32768 以外的值 |
 | `context_window` | 模型上下文窗口大小(如 200000)。对话历史预估 token 超过 `context_window - max_tokens - 512`(安全余量)时,自动从最旧消息开始截断并插入压缩提示。设为 `0` 表示不启用自动压缩(向后兼容) |
 
 | 模型 | id | base_url | model | max_tokens | temperature | 默认 enabled |
@@ -182,7 +185,7 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 | 字段 | 说明 |
 |------|------|
 | `app_title` | 应用标题 |
-| `app_version` | 应用版本号 |
+| `app_version` | 顶栏展示用版本号。应用版本的唯一事实来源是根目录 `VERSION`；`update.sh` 部署时会把此字段同步为 `VERSION` 的值 |
 | `login_title` | 登录页主标题 |
 | `login_subtitle` | 登录页副标题 |
 | `login_notice` | 登录页提示,留空用默认;多行用 YAML block string(`\|`) |
@@ -225,9 +228,9 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 #### 最小配置(本地试用)
 
 ```bash
-# .env —— 仅本地试用,start.sh 会自动生成临时 JWT_SECRET
+# .env —— 项目根目录；JWT_SECRET 可留空，首次启动写入根目录 .env 并在之后复用
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
-# JWT_SECRET 留空,start.sh 自动生成临时 session 密钥(重启后 token 失效)
+# JWT_SECRET 留空即可；start.sh 会生成并保存，重启后 token 仍然有效
 ```
 
 #### 生产配置(推荐)
@@ -239,7 +242,7 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
 # 2) 持久随机 JWT_SECRET(至少 32 字符,生产必填)
 #    生成: python3 -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET=<替换为上面命令生成的 128 字符随机串>
+JWT_SECRET=<替换为上面命令生成的 64 字符随机串>
 
 # 3) 部署相关
 SERVER_HOST=127.0.0.1      # 经反向代理对外暴露(推荐);直连改为 0.0.0.0
@@ -283,7 +286,7 @@ Copy `.env.example` to `.env` and fill in real values. At least one `*`-marked L
 | `OPENAI_API_BASE` | No | — | OpenAI-compatible API base; empty = official endpoint |
 | `EMBEDDING_MODEL` | No | — | Knowledge-base embedding model, default `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | No | — | Vector dimensions, default `1536` |
-| `JWT_SECRET` | **Yes (prod)** | 🔐 [Sensitive] | JWT signing secret, **at least 32 characters** random. Generate: `python3 -c "import secrets; print(secrets.token_hex(32))"` |
+| `JWT_SECRET` | No (may be empty) | 🔐 [Sensitive] | May be empty: `./start.sh` generates `token_hex(32)` (64 hex characters) on first start and writes it to the project-root `.env`. You may also pre-set a random string of at least 32 characters. |
 | `ADMIN_INITIAL_PASSWORD` | No | 🔐 [Sensitive] | Override the first admin account's initial password; uses a built-in preset (with warning) if unset |
 | `SERVER_PORT` | No | — | Service port, default `17957` |
 | `SERVER_HOST` | No | — | Listen address, default `127.0.0.1` (loopback only, exposed via reverse proxy); set `0.0.0.0` for direct deployment |
@@ -296,24 +299,25 @@ Copy `.env.example` to `.env` and fill in real values. At least one `*`-marked L
 
 #### 🔐 JWT_SECRET Safety Rules (Important — Read for Production)
 
-The service `assert_jwt_secret_safe()` validates at startup; the following three cases **raise RuntimeError and block startup**:
+The service `assert_jwt_secret_safe()` validates the secret that reaches it. Official `./start.sh` generates a random secret and writes it to the project-root `.env` when empty, so the official script does not fail on empty. If you run uvicorn directly, `config.py` generates an in-process ephemeral secret (not persisted; issued tokens die after restart).
 
-1. **Empty** — unset or whitespace-only.
-2. **Known unsafe placeholder** — the blacklist is rejected:
+The following cases still **raise RuntimeError and block startup**:
+
+1. **Known unsafe placeholder** — the blacklist is rejected:
    - `change-me-in-production`
    - `change-this-to-a-random-secret-string`
    - `secret`
    - `jwt-secret`
    - `your-secret-key`
-3. **Length < 32 characters** — too short, brute-forceable.
+2. **Length < 32 characters** — too short, brute-forceable.
 
-**Recommended generation** (64-byte hex, 128 chars):
+**Recommended generation** (`secrets.token_hex(32)` = 32 bytes = 64 hex characters):
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-**Note**: When `JWT_SECRET` is empty, `start.sh` **auto-generates a temporary session secret** (suitable for local trial only). In **production you must set a persistent random secret explicitly**, otherwise every restart invalidates all issued tokens and forces users to log in again.
+**Note**: When `JWT_SECRET` is empty, `start.sh` **generates a random secret and writes it to the project-root `.env`**, so later restarts reuse it and issued tokens stay valid. Example placeholders and secrets shorter than 32 characters are still rejected. You may also set a fixed secret yourself. The only env file is the project-root `.env`; a leftover `src/.env` is ignored (with a warning) when the root file exists, or copied to the root with a migration warning when it does not.
 
 ---
 
@@ -323,10 +327,12 @@ The values below are defaults and usually need no change; any change **requires 
 
 #### server
 
-| Field | Default | Description |
-|-------|---------|-------------|
-| `server.host` | `"0.0.0.0"` | Default in the config file; **actual listening is controlled by the `SERVER_HOST` env var** — `start.sh` defaults to `127.0.0.1` |
-| `server.port` | `17957` | Port (also overridable by the `SERVER_PORT` env var) |
+Listen address is **not** configured in `config.yaml` (the unused `server.host` / `server.port` keys were removed). `start.sh` reads:
+
+- `SERVER_HOST`: default `127.0.0.1` (loopback, expose via reverse proxy); set `0.0.0.0` for direct deployment
+- `SERVER_PORT`: default `17957`
+
+Agent extension callbacks prefer `AGENT_API_BASE`; if unset they use `http://127.0.0.1:${SERVER_PORT:-17957}`.
 
 #### database
 
@@ -350,7 +356,7 @@ Each model object has: `id`, `name`, `adapter` (`openai_compatible`), `base_url`
 
 | Field | Description |
 |-------|-------------|
-| `max_tokens` | Maximum output tokens per call, sent to the LLM API to control response length |
+| `max_tokens` | Maximum output tokens per call, sent to the LLM API to control response length. Runtime hard cap is **32768** (larger values are truncated); the admin API rejects values outside 1–32768 |
 | `context_window` | Model's total context window (e.g., 200000). When estimated conversation tokens exceed `context_window - max_tokens - 512` (safety margin), older history messages are truncated from the head and a compression notice is inserted. Set to `0` to disable auto-compression (backward compatible) |
 
 | Model | id | base_url | model | max_tokens | temperature | Default enabled |
@@ -424,7 +430,7 @@ Copy `runtime/config/ui-branding.example.yaml` to `runtime/config/ui-branding.ya
 | Field | Description |
 |-------|-------------|
 | `app_title` | Application title |
-| `app_version` | Application version |
+| `app_version` | Version shown in the top bar. The canonical application version is the root `VERSION` file; `update.sh` syncs this field to that value on deploy |
 | `login_title` | Login page main title |
 | `login_subtitle` | Login page subtitle |
 | `login_notice` | Login page notice; empty = default; multiline via YAML block string (`\|`) |
@@ -467,10 +473,9 @@ Asset fields in the branding config **accept only filenames or safe relative pat
 #### Minimal Config (Local Trial)
 
 ```bash
-# .env — local trial only; start.sh auto-generates a temporary JWT_SECRET
+# .env — project root; JWT_SECRET may be empty (first start saves it for reuse)
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
-# Leave JWT_SECRET empty; start.sh generates a temporary session secret
-# (tokens become invalid after restart)
+# Leave JWT_SECRET empty; start.sh generates and persists it in the root .env
 ```
 
 #### Production Config (Recommended)
@@ -482,7 +487,7 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
 # 2) Persistent random JWT_SECRET (>= 32 chars, required in production)
 #    Generate: python3 -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET=<paste the 128-char random string from the command above>
+JWT_SECRET=<paste the 64-char hex string from the command above>
 
 # 3) Deployment
 SERVER_HOST=127.0.0.1      # Exposed via reverse proxy (recommended); use 0.0.0.0 for direct

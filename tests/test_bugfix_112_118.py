@@ -12,8 +12,6 @@ from httpx import ASGITransport, AsyncClient
 
 from tests.conftest import init_test_db, make_test_app
 
-pytestmark = pytest.mark.asyncio(loop_scope="session")
-
 ADMIN_CREDS = {"username": "admin", "password": "admin@2026"}
 
 
@@ -303,6 +301,9 @@ def test_bug113_extension_source_reads_whitelist_env():
     assert "real_integration_needed" not in ext
     assert "AGENT_API_BASE" in ext
     assert "rag_search" in ext
+    # OPT-001: 不写死整段 URL；有 AGENT_API_BASE 用它，否则拼 127.0.0.1:${SERVER_PORT:-17957}
+    assert '"http://127.0.0.1:17957"' not in ext
+    assert "SERVER_PORT" in ext
 
 
 def test_bug113_decide_approval_resumes_active_bridge():
@@ -347,6 +348,11 @@ async def test_bug115_embedding_worker_processes_pending():
     source.visibility = "private"
 
     mock_session = AsyncMock()
+    # BUG-148: process_pending_embeddings 先执行 stale processing reset，
+    # 需要让 mock_session.execute 返回带 rowcount 的 mock 对象
+    stale_result_mock = MagicMock()
+    stale_result_mock.rowcount = 0
+    mock_session.execute = AsyncMock(return_value=stale_result_mock)
     mock_chunk_repo = AsyncMock()
     mock_chunk_repo.list_pending_embedding.return_value = [chunk]
     mock_chunk_repo.update_embedding_status.return_value = 1

@@ -156,6 +156,10 @@ async def _ensure_review_schema(conn):
         ))
         logger.info("[MIGRATE] review_documents 新增列: parent_document_id")
 
+    # BUG-153: UniqueConstraint 只在 create_all 建新表时生效；已有库必须补唯一索引。
+    if columns:
+        await _ensure_review_document_unique_index(conn)
+
     # SystemReview columns for upgraded databases
     sr_result = await conn.execute(text("PRAGMA table_info(system_reviews)"))
     sr_columns = {row[1] for row in sr_result.fetchall()}
@@ -245,6 +249,74 @@ async def _ensure_review_schema(conn):
         await conn.execute(text(
             "ALTER TABLE knowledge_sources ADD COLUMN extracted_text TEXT"
         ))
+
+
+async def _ensure_review_document_unique_index(conn):
+    """为已有 review_documents 表去重后补建唯一索引（幂等）。
+
+    create_all 不会给既有表加上 UniqueConstraint；从 V0.3.10 升级的数据库
+    必须先删除 (project_id, document_type, filename) 重复行，再 CREATE UNIQUE INDEX。
+    """
+    from sqlalchemy import bindparam
+
+    table_rows = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ))
+    tables = {row[0] for row in table_rows.fetchall()}
+    if "review_documents" not in tables:
+        return
+
+    groups = (await conn.execute(text(
+        "SELECT project_id, document_type, filename, MIN(id) AS keep_id "
+        "FROM review_documents "
+        "GROUP BY project_id, document_type, filename "
+        "HAVING COUNT(*) > 1"
+    ))).fetchall()
+
+    dropped = 0
+    for project_id, document_type, filename, keep_id in groups:
+        extra_rows = (await conn.execute(text(
+            "SELECT id FROM review_documents "
+            "WHERE project_id = :pid AND document_type = :dtype "
+            "AND filename = :fname AND id != :keep"
+        ), {
+            "pid": project_id,
+            "dtype": document_type,
+            "fname": filename,
+            "keep": keep_id,
+        })).fetchall()
+        extra_ids = [int(row[0]) for row in extra_rows]
+        if not extra_ids:
+            continue
+        extra_param = bindparam("ids", expanding=True)
+        if "doc_analyses" in tables:
+            await conn.execute(
+                text("DELETE FROM doc_analyses WHERE document_id IN :ids").bindparams(extra_param),
+                {"ids": extra_ids},
+            )
+        await conn.execute(
+            text(
+                "UPDATE review_documents SET parent_document_id = :keep "
+                "WHERE parent_document_id IN :ids"
+            ).bindparams(extra_param),
+            {"keep": keep_id, "ids": extra_ids},
+        )
+        await conn.execute(
+            text("DELETE FROM review_documents WHERE id IN :ids").bindparams(extra_param),
+            {"ids": extra_ids},
+        )
+        dropped += len(extra_ids)
+
+    if dropped:
+        logger.info(
+            "[MIGRATE] review_documents 去重：删除 %d 条重复行，保留每组最小 id",
+            dropped,
+        )
+
+    await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_review_doc_proj_type_filename "
+        "ON review_documents(project_id, document_type, filename)"
+    ))
 
 
 async def _ensure_fts5():

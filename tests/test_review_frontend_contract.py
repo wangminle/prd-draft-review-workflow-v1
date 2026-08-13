@@ -504,6 +504,24 @@ def test_login_page_is_not_active_before_auth_bootstrap():
     assert 'active' not in login_page_line
 
 
+def test_p4_empty_request_state_does_not_fetch_comments_for_object_zero():
+    """无协作审查请求时不应向评论 API 发送 object_id=0。"""
+    assert "this._loadComments('review_request', 0)" not in REVIEW_JS
+    assert "this._currentCommentObjectType = null" in REVIEW_JS
+    assert "this._currentCommentObjectId = null" in REVIEW_JS
+
+
+def test_notification_lifecycle_follows_fresh_auth_session():
+    """从登录页建立会话时初始化通知，退出时关闭 SSE。"""
+    login_success = APP_JS.split("await Auth.login(username, password);", 1)[1].split("} catch", 1)[0]
+    register_success = APP_JS.split("await Auth.register(username, password);", 1)[1].split("} catch", 1)[0]
+    assert "Notification.init();" in login_success
+    assert "Notification.init();" in register_success
+
+    logout_handlers = APP_JS.split("// Logout", 1)[1].split("// User dropdown menu", 1)[0]
+    assert logout_handlers.count("Notification.destroy();") == 4
+
+
 def test_app_shows_loading_before_auth_resolution():
     init_block = APP_JS.split("async init()", 1)[1].split("_showLoading() {", 1)[0]
     assert "this._showLoading();" in init_block

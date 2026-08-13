@@ -12,6 +12,43 @@ LOG_FILE="$RUNTIME_DIR/logs/app.log"
 
 mkdir -p "$RUNTIME_DIR/logs"
 
+load_canonical_env() {
+  # OPT-002: 只认项目根目录 .env；src/.env 仅在根文件缺失时迁移一次
+  PYTHONPATH="$PROJECT_DIR/src" python3 - "$PROJECT_DIR" <<'PY'
+import sys
+from pathlib import Path
+from app.env_file import ensure_canonical_env
+
+_path, warnings = ensure_canonical_env(Path(sys.argv[1]))
+for w in warnings:
+    print(f"[WARN] {w}", file=sys.stderr)
+PY
+  local root_env="$PROJECT_DIR/.env"
+  if [ -f "$root_env" ]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$root_env"
+    set +a
+    echo "Loaded $root_env"
+  fi
+}
+
+ensure_persistent_jwt_secret() {
+  if [ -n "$JWT_SECRET" ]; then
+    return 0
+  fi
+  JWT_SECRET="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
+  export JWT_SECRET
+  PYTHONPATH="$PROJECT_DIR/src" python3 - "$PROJECT_DIR/.env" "$JWT_SECRET" <<'PY'
+import sys
+from pathlib import Path
+from app.env_file import persist_jwt_secret
+
+persist_jwt_secret(Path(sys.argv[1]), sys.argv[2])
+PY
+  echo "Generated JWT_SECRET and saved to $PROJECT_DIR/.env"
+}
+
 case "${1:-start}" in
   start)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
@@ -19,21 +56,12 @@ case "${1:-start}" in
       exit 0
     fi
     cd "$PROJECT_DIR"
-    # Load .env first (preserves existing env vars), then resolve PORT
-    for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/src/.env"; do
-      if [ -f "$env_file" ]; then
-        set -a; source "$env_file"; set +a
-        echo "Loaded $env_file"
-      fi
-    done
+    load_canonical_env
     PORT="${SERVER_PORT:-17957}"
     # 监听地址：默认只绑定回环（经反向代理对外暴露），直连部署设 SERVER_HOST=0.0.0.0
     HOST="${SERVER_HOST:-127.0.0.1}"
     echo "Starting server on $HOST:$PORT..."
-    if [ -z "$JWT_SECRET" ]; then
-      export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
-      echo "Generated JWT_SECRET for this session"
-    fi
+    ensure_persistent_jwt_secret
     export RUNTIME_ROOT="$RUNTIME_DIR"
     # 可选依赖检测（Pi Agent 功能需要，主应用不受影响）
     LOCAL_PI_BIN="$PROJECT_DIR/node_modules/.bin/pi"
@@ -88,11 +116,7 @@ case "${1:-start}" in
     ;;
   status)
     if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
-      for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/src/.env"; do
-        if [ -f "$env_file" ]; then
-          set -a; source "$env_file"; set +a
-        fi
-      done
+      load_canonical_env
       PORT="${SERVER_PORT:-17957}"
       echo "Server running (PID $(cat "$PID_FILE"))"
       curl -s --max-time 5 http://localhost:$PORT/api/health && echo "" || echo "Health check failed"

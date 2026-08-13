@@ -37,19 +37,25 @@ def test_dotenv_loaded_without_overriding_existing_env(monkeypatch):
     assert settings["auth"]["secret_key"] == "preexisting-test-secret"
 
 
-def test_start_script_sources_env_before_boot():
+def test_main_loads_canonical_root_env():
+    src = (ROOT / "src" / "main.py").read_text(encoding="utf-8")
+    assert "ensure_canonical_env" in src
+    assert "优先 src/.env" not in src
     script = (ROOT / "start.sh").read_text(encoding="utf-8")
 
     runtime_idx = script.index("export RUNTIME_ROOT=\"$RUNTIME_DIR\"")
     uvicorn_idx = script.index("PYTHONPATH=src nohup uvicorn src.main:app")
 
     assert runtime_idx < uvicorn_idx
-    # start.sh loads .env from both project root and src/ via a loop
-    assert "for env_file in" in script
     assert "$PROJECT_DIR/.env" in script
-    assert "$PROJECT_DIR/src/.env" in script
-    assert "if [ -z \"$JWT_SECRET\" ]; then" in script
+    assert "ensure_canonical_env" in script
+    assert "persist_jwt_secret" in script
+    assert "ensure_persistent_jwt_secret" in script
+    assert "[ -n \"$JWT_SECRET\" ]" in script
+    assert "Generated JWT_SECRET for this session" not in script
     assert "RUNTIME_DIR=\"${RUNTIME_ROOT:-$PROJECT_DIR/runtime}\"" in script
+    # 不再把 src/.env 当作可覆盖根目录的加载源
+    assert 'for env_file in "$PROJECT_DIR/.env" "$PROJECT_DIR/src/.env"' not in script
 
 
 def test_update_script_is_executable_and_syntax_valid():

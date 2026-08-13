@@ -13,14 +13,15 @@ if _src_dir not in sys.path:
 
 from dotenv import load_dotenv
 
-# 加载 .env 文件（优先 src/.env，其次项目根目录）
-env_path = Path(__file__).parent / ".env"
-if env_path.exists():
-    load_dotenv(env_path)
-else:
-    env_path = Path(__file__).parent.parent / ".env"
-    if env_path.exists():
-        load_dotenv(env_path)
+from app.env_file import ensure_canonical_env
+
+# OPT-002: 只加载项目根目录 .env；src/.env 仅在根文件缺失时迁移一次
+_project_root = Path(__file__).resolve().parent.parent
+_canonical_env, _env_warnings = ensure_canonical_env(_project_root)
+for _warning in _env_warnings:
+    print(f"[WARN] {_warning}", file=sys.stderr)
+if _canonical_env.exists():
+    load_dotenv(_canonical_env)
 
 # 初始化日志系统（在所有业务模块导入之前）
 from app.logging_config import setup_logging

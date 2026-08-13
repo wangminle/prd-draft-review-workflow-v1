@@ -326,12 +326,14 @@ async def resolve_comment(
     comment.resolved = True
     comment.resolution = resolution
     comment.resolved_by = user.id
-    await db.commit()
+
+    # BUG-146: 与 create_comment 对齐，使用 defer_push=True 避免幽灵通知（BUG-106）。
+    # 先缓冲 SSE 事件，commit 成功后再 flush_pending 推送。
+    from app.services.notification_service import NotificationService
+    notif_service = NotificationService(db, defer_push=True)
 
     # 通知评论作者
     if comment.author_id != user.id:
-        from app.services.notification_service import NotificationService
-        notif_service = NotificationService(db)
         await notif_service.notify_comment_reply(
             comment_id=comment.id,
             object_type=comment.object_type,
@@ -339,5 +341,8 @@ async def resolve_comment(
             author_id=user.id,
             parent_author_id=comment.author_id,
         )
+
+    await db.commit()
+    notif_service.flush_pending()
 
     return _serialize_comment(comment)

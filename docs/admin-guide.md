@@ -113,7 +113,7 @@ export ADMIN_INITIAL_PASSWORD='<你的强随机口令>'
 | 操作 | 方法与端点 | 说明 |
 | --- | --- | --- |
 | 列出模型 | `GET /models` | API Key **脱敏显示**(如 `sk-****...ab12`),绝不回显明文 |
-| 创建模型 | `POST /models` | provider 默认 `openai_compatible`,含 api_base、llm_model、max_tokens(最大输出)、context_window(上下文窗口,0=不压缩)、temperature、thinking 等字段 |
+| 创建模型 | `POST /models` | provider 默认 `openai_compatible`,含 api_base、llm_model、max_tokens(最大输出,1–32768)、context_window(上下文窗口,0=不压缩)、temperature、thinking 等字段 |
 | 更新配置 | `PUT /models/{model_id}` | 改名称、base、参数、enabled、thinking 系列字段 |
 | 删除模型 | `DELETE /models/{model_id}` | 内置模型走逻辑删除(tombstone),用户自建走物理删除 |
 | 调整排序 | `PUT /models/order` | 传入完整 `model_ids` 列表,影响**前端模型列表展示顺序**(把常用模型置顶) |
@@ -242,12 +242,12 @@ pytest tests/test_skill_regression.py -v
 
 **硬限执行逻辑(`budget_guard.py`):** 当 `hard_limit_action=block` 且当月用量达到上限时,`ensure_workspace_llm_allowed` 会**在 LLM/Agent 调用前拦截**,返回 `429 团队本月 token 配额已用尽`,从源头止血。
 
-**防绕过:** 聊天(`/api/chat`)在调用 LLM 前会:
+**防绕过:** 聊天(`/api/chat`)与审查启动(`POST /api/review/projects/{id}/start`)在调用 LLM 前都会:
 
 1. 校验调用者对该 `workspace_id` 的成员资格(`require_action(member, "read")`),**拒绝伪造 workspace_id 绕过配额**;
 2. 调用 `ensure_workspace_llm_allowed` 执行硬限。
 
-即使用户尝试传入他人 workspace_id,也会因成员校验失败而被拒。
+即使用户尝试传入他人 workspace_id,也会因成员校验失败而被拒。审查管线会触发数十次 LLM 调用,因此审查入口同样受硬限约束。
 
 **管理建议:** 对预算敏感的团队,默认用 `notify` 观察,稳定后对高消耗团队切到 `block`;阈值先设 80% 留缓冲。
 
@@ -516,7 +516,7 @@ Prefix `/api/admin/models`. This manages the "general chat/review models" shown 
 | Action | Method & Endpoint | Notes |
 | --- | --- | --- |
 | List models | `GET /models` | API Key shown **masked** (e.g., `sk-****...ab12`); plaintext is never returned |
-| Create model | `POST /models` | provider defaults to `openai_compatible`; includes api_base, llm_model, max_tokens (max output), context_window (context window; 0 = no compression), temperature, thinking, etc. |
+| Create model | `POST /models` | provider defaults to `openai_compatible`; includes api_base, llm_model, max_tokens (max output, 1–32768), context_window (context window; 0 = no compression), temperature, thinking, etc. |
 | Update config | `PUT /models/{model_id}` | Change name, base, params, enabled, thinking fields |
 | Delete model | `DELETE /models/{model_id}` | Built-in models are soft-deleted (tombstone); user-created ones are physically deleted |
 | Reorder | `PUT /models/order` | Send the full `model_ids` list; controls **frontend display order** (pin frequently used models on top) |
@@ -645,12 +645,12 @@ Budget fields:
 
 **Hard-limit logic (`budget_guard.py`):** when `hard_limit_action=block` and month-to-date usage reaches the limit, `ensure_workspace_llm_allowed` **intercepts before** any LLM/Agent call, returning `429 monthly token quota exhausted`, stopping the bleed at the source.
 
-**Anti-bypass:** Before calling the LLM, the chat endpoint (`/api/chat`):
+**Anti-bypass:** Before calling the LLM, chat (`/api/chat`) and review start (`POST /api/review/projects/{id}/start`) both:
 
 1. Verifies the caller's membership of the target `workspace_id` (`require_action(member, "read")`), **rejecting forged workspace_id to bypass quota**;
 2. Calls `ensure_workspace_llm_allowed` to enforce the hard limit.
 
-Even if a user tries to pass someone else's workspace_id, the membership check fails and the request is rejected.
+Even if a user tries to pass someone else's workspace_id, the membership check fails and the request is rejected. The review pipeline triggers dozens of LLM calls, so the review entry point is also under the hard limit.
 
 **Recommendation:** For budget-sensitive teams, start with `notify` to observe, then switch high-consumption teams to `block`; set the threshold at 80% to leave a buffer.
 

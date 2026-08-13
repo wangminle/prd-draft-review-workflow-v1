@@ -1,6 +1,7 @@
-server:
-  host: "0.0.0.0"
-  port: 17957
+# 监听地址不在本文件配置。实际由 start.sh 读取环境变量：
+#   SERVER_HOST（默认 127.0.0.1，仅回环；直连部署设 0.0.0.0）
+#   SERVER_PORT（默认 17957）
+# Agent 扩展回调：优先 AGENT_API_BASE，否则 http://127.0.0.1:${SERVER_PORT:-17957}
 
 database:
   path: "runtime/data/app.db"

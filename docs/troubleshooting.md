@@ -16,26 +16,27 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.10"}
+# 预期返回: {"status":"ok","version":"0.3.11"}
 ```
 
 ---
 
-### 1. 启动失败:JWT_SECRET 未配置或不安全
+### 1. 启动失败:JWT_SECRET 不安全或过短
 
-- **现象**:服务启动报 `RuntimeError`,提示 **「JWT secret 未配置」** / **「JWT secret 使用了公开示例/默认值」** / **「JWT secret 过短」**,服务拒绝启动。
+- **现象**:服务启动报 `RuntimeError`,提示 **「JWT secret 使用了公开示例/默认值」** / **「JWT secret 过短」**,服务拒绝启动。
 - **原因**:`jwt_secret.py` 的 `assert_jwt_secret_safe()` 会在以下情况阻止启动:
-  1. **空值**(`JWT_SECRET` 未设置或为空白);
-  2. **已知不安全占位值**:`change-me-in-production`、`change-this-to-a-random-secret-string`、`secret`、`jwt-secret`、`your-secret-key`;
-  3. **长度不足 32 字符**。
+  1. **已知不安全占位值**:`change-me-in-production`、`change-this-to-a-random-secret-string`、`secret`、`jwt-secret`、`your-secret-key`;
+  2. **长度不足 32 字符**。
+  空值本身不会拒绝启动：`./start.sh` 会生成随机密钥并写入项目根目录 `.env`，之后重启复用；不走 `start.sh`、直接跑 uvicorn 时，`config.py` 会生成进程内临时密钥（不落盘，重启后已签发 token 失效）。
 - **解决**:
-  1. 生成一个安全的随机密钥:
+  1. 推荐用 `./start.sh` 启动：若项目根目录 `.env` 中 `JWT_SECRET` 为空，脚本会生成并写入该文件，之后重启复用。
+  2. 或自行生成随机密钥（`token_hex(32)` 输出 64 个十六进制字符）:
      ```bash
      python3 -c "import secrets; print(secrets.token_hex(32))"
      ```
-  2. 在 `.env` 中设置:`JWT_SECRET=<生成的至少 32 字符随机串>`。
+     写入项目根目录 `.env`:`JWT_SECRET=<生成的至少 32 字符随机串>`。
   3. 重启服务。
-  > 注意:`start.sh` 在 `JWT_SECRET` 为空时会自动生成一个**临时 session 密钥**,但这仅适合本机开发试用;**生产环境必须显式配置一个固定值**,否则实例重启后已签发的 Token 全部失效。
+  > 环境文件只认项目根目录 `.env`。若仍有 `src/.env`，根目录已有 `.env` 时会被忽略并告警。
 
 ---
 
@@ -138,13 +139,13 @@ curl http://localhost:17957/api/health
 
 - **现象**:`update.sh` 更新后健康检查失败;或提示 **「代码已经是 X.X.X,无需更新」**。
 - **原因**:
-  - 版本号未变更(未同步 `src/main.py` 的 `version` 与 `update.sh` 的 `NEW_VERSION`);
+  - 版本号未变更(发布前未更新根目录 `VERSION` 文件,更新包内版本与目标机当前版本相同);
   - 更新包中混入了 runtime 业务数据。
 - **解决**:
   1. **版本号相同**时,使用 `./update.sh --force` 强制更新。
   2. 打包务必使用 `package.sh`(不含 `runtime/` 业务数据),避免覆盖目标机的真实数据。
   3. **健康检查失败会自动回滚**(除非显式加 `--no-rollback`)。
-  4. **Pi Agent 更新后需手动执行 `npm install`**:`update.sh` 不会同步 `package.json`,需在 Pi Agent 目录手动安装依赖。
+  4. **Pi Agent 更新后需手动执行 `npm install`**:`update.sh` 会同步 `package.json` 和 `package-lock.json`，但不会自动执行 `npm install`；需在目标服务器手动运行 `npm install`。
 
 ---
 
@@ -180,7 +181,7 @@ curl http://localhost:17957/api/health
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.10"}
+  # 预期返回: {"status":"ok","version":"0.3.11"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -216,26 +217,27 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.10"}
+# Expected: {"status":"ok","version":"0.3.11"}
 ```
 
 ---
 
-### 1. Startup failure: JWT_SECRET not configured or insecure
+### 1. Startup failure: JWT_SECRET insecure or too short
 
-- **Symptom**: The service raises a `RuntimeError` on startup, with **"JWT secret not configured"** / **"JWT secret uses a public example/default value"** / **"JWT secret too short"**, and refuses to start.
+- **Symptom**: The service raises a `RuntimeError` on startup, with **"JWT secret uses a public example/default value"** / **"JWT secret too short"**, and refuses to start.
 - **Cause**: `jwt_secret.py`'s `assert_jwt_secret_safe()` blocks startup when:
-  1. **Empty** (`JWT_SECRET` unset or blank);
-  2. **A known insecure placeholder**: `change-me-in-production`, `change-this-to-a-random-secret-string`, `secret`, `jwt-secret`, `your-secret-key`;
-  3. **Shorter than 32 characters**.
+  1. **A known insecure placeholder**: `change-me-in-production`, `change-this-to-a-random-secret-string`, `secret`, `jwt-secret`, `your-secret-key`;
+  2. **Shorter than 32 characters**.
+  An empty value does not refuse startup: `./start.sh` generates a random secret and writes it to the project-root `.env` for later restarts; if you run uvicorn directly, `config.py` generates an in-process ephemeral secret (not persisted; issued tokens die after restart).
 - **Fix**:
-  1. Generate a secure random secret:
+  1. Prefer `./start.sh`: if project-root `.env` has an empty `JWT_SECRET`, the script generates one and writes it there for later restarts.
+  2. Or generate a random secret yourself (`token_hex(32)` yields 64 hex characters):
      ```bash
      python3 -c "import secrets; print(secrets.token_hex(32))"
      ```
-  2. Set it in `.env`: `JWT_SECRET=<generated string of at least 32 chars>`.
+     Put it in the project-root `.env`: `JWT_SECRET=<generated string of at least 32 chars>`.
   3. Restart the service.
-  > Note: `start.sh` will auto-generate a **temporary session secret** when `JWT_SECRET` is empty — this is for local trial only; **production must set an explicit, fixed value**, otherwise all previously issued tokens become invalid after a restart.
+  > Only the project-root `.env` is used. A leftover `src/.env` is ignored (with a warning) when the root file already exists.
 
 ---
 
@@ -338,13 +340,13 @@ curl http://localhost:17957/api/health
 
 - **Symptom**: After running `update.sh`, the health check fails; or it says **"code is already X.X.X, no update needed"**.
 - **Cause**:
-  - The version number is unchanged (the `version` in `src/main.py` and `NEW_VERSION` in `update.sh` were not bumped together);
+  - The version number is unchanged (the root `VERSION` file was not bumped before release, so the version inside the update package equals the target host's current version);
   - The update package included runtime business data.
 - **Fix**:
   1. If the **version is identical**, force the update with `./update.sh --force`.
   2. Always build packages with `package.sh` (it excludes `runtime/` business data) to avoid overwriting real data on the target host.
   3. A **failed health check triggers automatic rollback** (unless `--no-rollback` is passed).
-  4. **After updating Pi Agent, run `npm install` manually**: `update.sh` does not sync `package.json`, so dependencies must be installed in the Pi Agent directory by hand.
+  4. **After updating Pi Agent, run `npm install` manually**: `update.sh` syncs `package.json` and `package-lock.json` but does not run `npm install` automatically; run `npm install` manually on the target server.
 
 ---
 
@@ -380,7 +382,7 @@ curl http://localhost:17957/api/health
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.10"}
+  # Expected: {"status":"ok","version":"0.3.11"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).

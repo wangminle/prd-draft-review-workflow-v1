@@ -7,6 +7,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
 from sqlalchemy import func, not_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -263,6 +264,20 @@ async def _find_cached_analyses(
 progress_queues: dict[int, asyncio.Queue] = {}
 _pipeline_tasks: dict[int, asyncio.Task] = {}
 
+# BUG-152: per-project asyncio.Lock 串行化 start_review 的"查询 active task + 创建新 task"
+# 临界区，消除并发请求重复创建 task、重复跑 LLM 分析的 TOCTOU 竞态。
+# 锁按需创建并永久保留（项目数有限，无内存泄漏风险）。
+_review_start_locks: dict[int, asyncio.Lock] = {}
+
+
+def _get_review_start_lock(project_id: int) -> asyncio.Lock:
+    """获取（或创建）项目级的审查启动互斥锁。"""
+    lock = _review_start_locks.get(project_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _review_start_locks[project_id] = lock
+    return lock
+
 
 def track_pipeline_task(task_id: int, coro) -> asyncio.Task:
     """注册审查后台任务，便于 lifespan shutdown 取消/等待。"""
@@ -290,6 +305,16 @@ async def stop_all_pipeline_tasks(timeout: float = 15.0) -> None:
         await asyncio.wait(tasks, timeout=timeout)
     except Exception:
         logger.exception("waiting for review pipeline tasks failed")
+    # aiosqlite 工作线程可能在任务 cancelled 之后才回写 Future；
+    # 再泵一轮事件循环，避免 loop 关闭后出现 Thread 异常。
+    await asyncio.sleep(0)
+    for t in tasks:
+        if not t.done():
+            continue
+        try:
+            t.exception()
+        except (asyncio.CancelledError, asyncio.InvalidStateError):
+            pass
     _pipeline_tasks.clear()
 
 
@@ -411,7 +436,21 @@ async def _save_project_documents(
             status="uploaded",
         )
         repo = ReviewProjectRepository(db)
-        await repo.add_document(doc)
+        # BUG-151 / BUG-154: flush 让 DB 级唯一约束尽早触发；用 savepoint
+        # 隔离冲突，避免整批事务回滚，并删除本次已写入磁盘的文件。
+        try:
+            async with db.begin_nested():
+                await repo.add_document(doc)
+                await db.flush()
+        except IntegrityError:
+            try:
+                await _review_file_storage.delete_document_files(
+                    0, file_path=stored.stored_path,
+                )
+            except Exception:
+                logger.exception("failed to delete orphaned upload %s", stored.stored_path)
+            skipped.append({"filename": f.filename, "reason": "同名文件已存在（并发冲突）"})
+            continue
         saved.append({"filename": f.filename, "size": len(content), "document_type": document_type})
 
     await db.commit()
@@ -592,17 +631,59 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
 
     # P4: 删除关联的协作审查子记录（review_requests 级联删除）
     # SQLAlchemy 不会自动执行 ON DELETE CASCADE，需手动删除子记录
-    from app.models.review import ReviewRequest, ReviewRound, ReviewParticipant
+    # BUG-145: 原代码 ReviewParticipant 删除放在 round 循环内（N 次重复 DELETE），
+    # 且 Artifact / Comment / KnowledgeSnapshot 完全未清理，
+    # 在 PRAGMA foreign_keys=ON 后会触发外键约束失败或留下孤儿数据。
+    from app.models.review import (
+        ReviewRequest, ReviewRound, ReviewParticipant,
+        KnowledgeSnapshot, Artifact,
+    )
+    from app.models.user import Comment
     req_result = await db.execute(select(ReviewRequest).where(ReviewRequest.project_id == project_id))
     for req in req_result.scalars().all():
-        # 删除轮次和参与者
+        # 收集 round IDs，用于清理关联 comments
         round_result = await db.execute(select(ReviewRound).where(ReviewRound.request_id == req.id))
-        for rnd in round_result.scalars().all():
+        round_ids = [r.id for r in round_result.scalars().all()]
+
+        # 删除 review_round 类型的 comments（object_id = round_id）
+        if round_ids:
             await db.execute(
-                ReviewParticipant.__table__.delete().where(ReviewParticipant.request_id == req.id)
+                Comment.__table__.delete().where(
+                    Comment.object_type == "review_round",
+                    Comment.object_id.in_(round_ids),
+                )
             )
-            await db.delete(rnd)
+        # 删除 review_request 类型的 comments（object_id = req.id）
+        await db.execute(
+            Comment.__table__.delete().where(
+                Comment.object_type == "review_request",
+                Comment.object_id == req.id,
+            )
+        )
+        # 删除 review_request 类型的 artifacts（object_id = req.id）
+        await db.execute(
+            Artifact.__table__.delete().where(
+                Artifact.object_type == "review_request",
+                Artifact.object_id == req.id,
+            )
+        )
+        # 删除 rounds
+        for rnd_id in round_ids:
+            rnd_obj = await db.get(ReviewRound, rnd_id)
+            if rnd_obj:
+                await db.delete(rnd_obj)
+        # ReviewParticipant 按 request_id 删除（只需一次，不在 round 循环内）
+        await db.execute(
+            ReviewParticipant.__table__.delete().where(ReviewParticipant.request_id == req.id)
+        )
         await db.delete(req)
+
+    # 清理 KnowledgeSnapshot（FK ondelete=CASCADE，但 SQLAlchemy 不自动执行）
+    snap_result = await db.execute(
+        select(KnowledgeSnapshot).where(KnowledgeSnapshot.project_id == project_id)
+    )
+    for snap in snap_result.scalars().all():
+        await db.delete(snap)
 
     await db.delete(p)
     await db.commit()
@@ -821,6 +902,15 @@ async def start_review(
 ):
     await _verify_project_owner(db, project_id, user.id)
 
+    # BUG-144: 审查管线会触发数十次 LLM 调用，必须在启动前校验 Workspace 配额，
+    # 与 chat.py / agent.py 保持一致，否则 hard_limit_action=block 的 Workspace
+    # 仍可消耗大量 token，导致多租户成本泄漏。
+    from app.services.budget_guard import ensure_workspace_llm_allowed
+    _p_row = await db.execute(select(ReviewProject).where(ReviewProject.id == project_id))
+    _p_obj = _p_row.scalar_one_or_none()
+    if _p_obj and _p_obj.workspace_id:
+        await ensure_workspace_llm_allowed(db, _p_obj.workspace_id)
+
     doc_result = await db.execute(select(ReviewDocument).where(ReviewDocument.project_id == project_id))
     all_docs = doc_result.scalars().all()
 
@@ -867,64 +957,69 @@ async def start_review(
     selected_doc_ids = [d.id for d in docs]
     est = _estimate_review_seconds(req.mode)
 
-    active_task = await _find_active_review_task(db, project_id, req.mode, selected_doc_ids, historical_doc_ids)
-    if active_task is not None:
-        return TaskInfo(
-            task_id=active_task.id,
-            status=active_task.status,
-            mode=active_task.mode,
-            current_step=active_task.current_step,
-            total_docs=active_task.total_docs,
-            completed_docs=active_task.completed_docs,
-            context_version=active_task.context_version,
-            document_ids=selected_doc_ids,
-            estimated_seconds=est,
+    # BUG-152: 用 per-project 锁串行化"查询 active task + 创建新 task"临界区，
+    # 消除并发请求同时 SELECT 得到 None、各自创建 task 并重复跑 LLM 的竞态。
+    # 锁只覆盖查询+创建+commit；_run_pipeline 通过 track_pipeline_task 异步执行，
+    # 不在锁内，不会阻塞管线实际运行。
+    async with _get_review_start_lock(project_id):
+        active_task = await _find_active_review_task(db, project_id, req.mode, selected_doc_ids, historical_doc_ids)
+        if active_task is not None:
+            return TaskInfo(
+                task_id=active_task.id,
+                status=active_task.status,
+                mode=active_task.mode,
+                current_step=active_task.current_step,
+                total_docs=active_task.total_docs,
+                completed_docs=active_task.completed_docs,
+                context_version=active_task.context_version,
+                document_ids=selected_doc_ids,
+                estimated_seconds=est,
+            )
+
+        repo = ReviewTaskRepository(db)
+        task = await repo.create_task(NewReviewTask(
+            project_id=project_id,
+            mode=req.mode,
+            context_version=ctx_ver,
+            model_id=model_cfg["model_id"],
+            created_by=user.id,
+            step_statuses=json.dumps(step_statuses),
+            step_details=json.dumps({
+                "document_ids": selected_doc_ids,
+                "historical_document_ids": historical_doc_ids,
+                "thinking_level": req.thinking_level,
+            }, ensure_ascii=False),
+            total_docs=len(docs),
+        ))
+        await db.commit()
+        _audit_log_writer.write(
+            "review.start",
+            actor=user,
+            request=request,
+            target_type="review_task",
+            target_id=task.id,
+            detail={
+                "project_id": project_id,
+                "task_id": task.id,
+                "mode": req.mode,
+                "model_id": model_cfg["model_id"],
+                "document_ids": selected_doc_ids,
+                "historical_document_ids": historical_doc_ids,
+                "context_version": ctx_ver,
+                "total_docs": len(docs),
+                "force_reanalysis": req.force_reanalysis,
+            },
         )
 
-    repo = ReviewTaskRepository(db)
-    task = await repo.create_task(NewReviewTask(
-        project_id=project_id,
-        mode=req.mode,
-        context_version=ctx_ver,
-        model_id=model_cfg["model_id"],
-        created_by=user.id,
-        step_statuses=json.dumps(step_statuses),
-        step_details=json.dumps({
-            "document_ids": selected_doc_ids,
-            "historical_document_ids": historical_doc_ids,
-            "thinking_level": req.thinking_level,
-        }, ensure_ascii=False),
-        total_docs=len(docs),
-    ))
-    await db.commit()
-    _audit_log_writer.write(
-        "review.start",
-        actor=user,
-        request=request,
-        target_type="review_task",
-        target_id=task.id,
-        detail={
-            "project_id": project_id,
-            "task_id": task.id,
-            "mode": req.mode,
-            "model_id": model_cfg["model_id"],
-            "document_ids": selected_doc_ids,
-            "historical_document_ids": historical_doc_ids,
-            "context_version": ctx_ver,
-            "total_docs": len(docs),
-            "force_reanalysis": req.force_reanalysis,
-        },
-    )
+        progress_queues[task.id] = asyncio.Queue()
 
-    progress_queues[task.id] = asyncio.Queue()
-
-    track_pipeline_task(
-        task.id,
-        _run_pipeline(
-            task.id, project_id, req.mode, selected_doc_ids, model_cfg, steps,
-            historical_doc_ids, req.force_reanalysis,
-        ),
-    )
+        track_pipeline_task(
+            task.id,
+            _run_pipeline(
+                task.id, project_id, req.mode, selected_doc_ids, model_cfg, steps,
+                historical_doc_ids, req.force_reanalysis,
+            ),
+        )
 
     return TaskInfo(
         task_id=task.id, status="pending", mode=req.mode,

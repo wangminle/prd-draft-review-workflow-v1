@@ -10,7 +10,7 @@
 
 ## 中文
 
-> 适用版本：V0.3.10（2026-08-12）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
+> 适用版本：V0.3.11（2026-08-13）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
 
 ## 1. 目标与范围
 
@@ -57,7 +57,7 @@
 ./package.sh --build-no 0598      # 指定构建号（默认时间戳 YYYYMMDDHHMM）
 ```
 
-产物命名：`prd-draft-review-workflow-v1-code-config-v{版本}-build{构建号}.{zip|tar.gz}`，版本号取自 `src/main.py` 的 `APP_VERSION`（与 `update.sh` 同源）。默认 zip；tar.gz 是 `update.sh` 自动识别的格式。
+产物命名：`prd-draft-review-workflow-v1-code-config-v{版本}-build{构建号}.{zip|tar.gz}`，版本号取自根目录 `VERSION` 文件（与 `update.sh` 同源；旧包回退 `src/app/version.py` / `src/main.py`）。默认 zip；tar.gz 是 `update.sh` 自动识别的格式。
 
 ### 3.2 包内包含
 
@@ -102,14 +102,15 @@
 # 1) 传输并解压（部署目录可自定，下例为 /opt/ai-review）
 mkdir -p /opt/ai-review
 #    默认 zip 分发包：
-unzip prd-draft-review-workflow-v1-code-config-v0.3.10-build*.zip -d /opt/ai-review
-#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.10-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.11-build*.zip -d /opt/ai-review
+#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.11-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) 配置密钥（包内只有 .env.example，不含真实密钥）
 cp .env.example .env
 #    编辑 .env：填 DEEPSEEK_API_KEY/QWEN_API_KEY/GLM_API_KEY/OPENAI_API_KEY；
-#              JWT_SECRET 必填（至少 32 字符随机串；留空或使用示例占位值会拒绝启动）：
+#              JWT_SECRET 可留空（首次启动写入项目根目录 .env 并复用）；
+#              示例占位值或过短密钥仍会拒绝启动：
 #                python3 -c "import secrets; print(secrets.token_hex(32))"
 #              可选 ADMIN_INITIAL_PASSWORD 覆盖首次 admin 密码；
 #              按需设置 SERVER_PORT（默认 17957）。
@@ -128,7 +129,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # 查看运行状态并做健康检查
 ```
 
-健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.10"}`。
+健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.11"}`。
 
 > 生产环境建议用 Nginx 反向代理 + systemd 守护，详见 [部署加固指南](deployment-hardening.md)。systemd 的 `EnvironmentFile` 应指向 `.env`，避免 `JWT_SECRET` 落在命令行参数中。应用停机时会先取消审查后台任务与 Embedding Worker，再释放数据库引擎。
 
@@ -178,7 +179,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 # 把新包放到项目根目录，直接执行（脚本会自动在当前目录查找 *code-config*.tar.gz）
 ./update.sh
 # 或显式指定包路径
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.6-build202607291830.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.11-build*.tar.gz
 ```
 
 常用选项：
@@ -195,7 +196,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 
 `update.sh` 依次执行：
 
-1. **版本比对**：从 `src/main.py` 读当前版本，与脚本内 `NEW_VERSION` 比较；相同且未 `--force` 则退出。
+1. **版本比对**：解包后优先读取更新包内根目录 `VERSION` 文件（记为 `PACKAGE_VERSION`；缺失时回退 `src/app/version.py` / `src/main.py` 的 `APP_VERSION`），与目标机当前版本比较；相同且未 `--force` 则退出。
 2. **包校验**：路径安全、无业务数据目录、含 `src/main.py`。
 3. **停止服务**：调用 `start.sh stop`。
 4. **备份**：把当前代码、`runtime/config`、`runtime/assets`、`.env` 备份到 `runtime/update_backups/backup-<版本>-<时间戳>/`。
@@ -207,7 +208,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 
 ### 5.3 版本号一致性
 
-`update.sh` 以更新包内 `src/main.py` 的 `APP_VERSION`（读出的 `PACKAGE_VERSION`）为准，与目标机当前版本比较：两者相同且未加 `--force` 时才拒绝更新。脚本顶部的 `NEW_VERSION` 仅在包内读取失败时作为回退值，不再决定是否更新。发布新版本时只需更新 `src/main.py` 的 `APP_VERSION`（打包脚本会自动取该值命名产物）；`package.json` 的 `version` 建议同步保持一致。
+`update.sh` 以更新包内根目录 `VERSION`（读出的 `PACKAGE_VERSION`）为准，与目标机当前版本比较：两者相同且未加 `--force` 时才拒绝更新。脚本顶部的 `NEW_VERSION` 仅在包内读取失败时作为回退值，不再决定是否更新。发布新版本时只需更新根目录 `VERSION`（打包脚本会自动取该值命名产物）；`package.json` 的 `version` 建议同步保持一致。
 
 ## 6. 运行时数据迁移（跨服务器搬家，可选）
 
@@ -234,9 +235,9 @@ tar -xzf runtime-backup-*.tar.gz -C /opt/ai-review/runtime
 
 | 现象 | 排查 |
 | --- | --- |
-| `update.sh` 提示「当前版本 X.X.X 与更新包版本 X.X.X 相同，无需更新」 | 目标机版本与包内 `src/main.py` 的 `APP_VERSION` 相同；用 `--force` 强制重新部署 |
+| `update.sh` 提示「当前版本 X.X.X 与更新包版本 X.X.X 相同，无需更新」 | 目标机版本与包内根目录 `VERSION` 相同；用 `--force` 强制重新部署 |
 | 更新后 Pi Agent 功能不可用 | `update.sh` 会同步 `package.json` 和 `package-lock.json`，但不会自动执行 `npm install`；需在目标服务器手动运行 `npm install` 安装/更新依赖 |
-| 启动后健康检查失败 | 看 `runtime/logs/app.log`；常见为 `.env` 缺密钥、`JWT_SECRET` 为空/过短/示例占位值被拒绝、端口被占、依赖未装全 |
+| 启动后健康检查失败 | 看 `runtime/logs/app.log`；常见为 `.env` 缺 LLM 密钥、`JWT_SECRET` 过短/示例占位值被拒绝、端口被占、依赖未装全 |
 | 前端品牌信息未更新 | `ui-branding.yaml` 的 `app_version` 由 `update.sh` 自动同步；品牌名/Logo 等需手动改或执行 `migrate_branding.py apply` |
 | `update.sh` 报「更新包包含 runtime 业务数据目录」 | 该包不是用 `package.sh` 打的，或打包时混入了运行时数据；重新用 `package.sh` 生成 |
 
@@ -245,7 +246,7 @@ tar -xzf runtime-backup-*.tar.gz -C /opt/ai-review/runtime
 首次部署完成后，逐项确认：
 
 - [ ] `./start.sh status` 显示运行中，`/api/health` 返回 `status=ok`
-- [ ] `.env` 中至少一个 LLM API Key 可用，`JWT_SECRET` 已填入至少 32 字符随机串（留空或示例占位值会被启动校验拒绝）
+- [ ] `.env` 中至少一个 LLM API Key 可用；`JWT_SECRET` 可留空（`./start.sh` 首次写入根目录 `.env`），示例占位值或过短密钥会被拒绝
 - [ ] 浏览器访问 `http://<host>:<port>` 能打开登录页
 - [ ] 首个管理员账号已初始化（生产环境建议关闭 `allow_public_registration`；可用 `ADMIN_INITIAL_PASSWORD` 覆盖初始密码）
 - [ ] `runtime/` 目录权限合理（参考 [部署加固指南](deployment-hardening.md) 的权限建议）
@@ -257,7 +258,7 @@ tar -xzf runtime-backup-*.tar.gz -C /opt/ai-review/runtime
 
 ## English
 
-> Applies to V0.3.10 (2026-08-12). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
+> Applies to V0.3.11 (2026-08-13). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
 
 ## 1. Scope
 
@@ -304,7 +305,7 @@ Dev machine                    Target server
 ./package.sh --build-no 0598      # specify build number (default: timestamp YYYYMMDDHHMM)
 ```
 
-Artifact naming: `prd-draft-review-workflow-v1-code-config-v{version}-build{build}.{zip|tar.gz}`. The version comes from `APP_VERSION` in `src/main.py` (same source as `update.sh`). Default is zip; tar.gz is the format `update.sh` auto-detects.
+Artifact naming: `prd-draft-review-workflow-v1-code-config-v{version}-build{build}.{zip|tar.gz}`. The version comes from the root `VERSION` file (same source as `update.sh`; older packages fall back to `src/app/version.py` / `src/main.py`). Default is zip; tar.gz is the format `update.sh` auto-detects.
 
 ### 3.2 Package Contents
 
@@ -349,14 +350,15 @@ The target server needs: Python 3.10+, Node.js 18+, npm (required for Pi Agent; 
 # 1) Transfer and extract (deploy dir is customizable; example uses /opt/ai-review)
 mkdir -p /opt/ai-review
 #    Default zip package:
-unzip prd-draft-review-workflow-v1-code-config-v0.3.10-build*.zip -d /opt/ai-review
-#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.10-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.11-build*.zip -d /opt/ai-review
+#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.11-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) Configure secrets (package only has .env.example, no real secrets)
 cp .env.example .env
 #    Edit .env: fill in DEEPSEEK_API_KEY/QWEN_API_KEY/GLM_API_KEY/OPENAI_API_KEY;
-#              JWT_SECRET is required (at least 32 random chars; empty or example placeholder values are rejected at startup):
+#              JWT_SECRET may be empty (first start writes it to the project-root .env);
+#              example placeholders or short secrets are still rejected:
 #                python3 -c "import secrets; print(secrets.token_hex(32))"
 #              Optional ADMIN_INITIAL_PASSWORD to override the first admin password;
 #              set SERVER_PORT as needed (default 17957).
@@ -375,7 +377,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # show status and run a health check
 ```
 
-Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.10"}`.
+Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.11"}`.
 
 > For production, prefer Nginx reverse proxy + systemd supervision — see [Deployment Hardening](deployment-hardening.md). systemd's `EnvironmentFile` should point to `.env` to keep `JWT_SECRET` out of command-line args. On shutdown the app cancels background review tasks and the Embedding Worker before disposing of the database engine.
 
@@ -425,7 +427,7 @@ By default the app assumes it owns the site root (`https://host/`). To mount it 
 # Put the new package in the project root and run (auto-discovers *code-config*.tar.gz in the current dir)
 ./update.sh
 # Or specify the package path explicitly
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.6-build202607291830.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.11-build*.tar.gz
 ```
 
 Common options:
@@ -442,7 +444,7 @@ Common options:
 
 `update.sh` runs in order:
 
-1. **Version compare**: reads the current version from `src/main.py` and compares with the script's `NEW_VERSION`; exits if equal and `--force` is not set.
+1. **Version compare**: after unpacking, reads the package's root `VERSION` file first (`PACKAGE_VERSION`; falls back to `APP_VERSION` in `src/app/version.py` / `src/main.py`) and compares it with the current version on the target host; exits if equal and `--force` is not set.
 2. **Package validation**: path safety, no business-data dirs, contains `src/main.py`.
 3. **Stop service**: calls `start.sh stop`.
 4. **Backup**: backs up current code, `runtime/config`, `runtime/assets`, and `.env` to `runtime/update_backups/backup-<version>-<timestamp>/`.
@@ -454,7 +456,7 @@ Common options:
 
 ### 5.3 Version Consistency
 
-`NEW_VERSION` at the top of `update.sh` is bound to `APP_VERSION` in `src/main.py`. When releasing a new version, **both must be updated together**, otherwise `update.sh` refuses to update with "version identical". The `version` in `package.json` should also be kept in sync.
+`update.sh` compares the target host's current version against the package's root `VERSION` file (`PACKAGE_VERSION`): it refuses to update only when they match and `--force` is not set. The `NEW_VERSION` constant at the top of the script is only a fallback when reading the package fails and no longer decides whether to update. When releasing, you only need to bump the root `VERSION` file (the packaging script names the artifact from it); keeping the `version` in `package.json` in sync is recommended.
 
 ## 6. Runtime Data Migration (moving across servers, optional)
 
@@ -481,9 +483,9 @@ Migration notes:
 
 | Symptom | Troubleshooting |
 | --- | --- |
-| `update.sh` says "code is already X.X.X, no update needed" | Versions are identical; use `--force`; or confirm `APP_VERSION` in `src/main.py` was updated |
-| Pi Agent doesn't work after update | `update.sh` doesn't sync `package.json`; run `npm install` manually |
-| Health check fails after startup | Check `runtime/logs/app.log`; common causes: missing secrets in `.env`, `JWT_SECRET` empty/too short/example placeholder rejected, port in use, dependencies not installed |
+| `update.sh` says "code is already X.X.X, no update needed" | The target host's version matches the package's root `VERSION`; use `--force`, or confirm the root `VERSION` file was updated |
+| Pi Agent doesn't work after update | `update.sh` syncs `package.json` and `package-lock.json` but does not run `npm install` automatically; run `npm install` manually on the target server |
+| Health check fails after startup | Check `runtime/logs/app.log`; common causes: missing LLM keys in `.env`, `JWT_SECRET` too short or example placeholder rejected, port in use, dependencies not installed |
 | Frontend branding not updated | `app_version` in `ui-branding.yaml` is synced by `update.sh`; brand name/logo must be edited manually or via `migrate_branding.py apply` |
 | `update.sh` reports "package contains runtime business-data dirs" | The package wasn't built by `package.sh`, or runtime data leaked in; rebuild with `package.sh` |
 
@@ -492,7 +494,7 @@ Migration notes:
 After first deployment, confirm each item:
 
 - [ ] `./start.sh status` shows running; `/api/health` returns `status=ok`
-- [ ] At least one LLM API Key in `.env` works; `JWT_SECRET` is set to a random string of at least 32 chars (empty or placeholder values are rejected at startup)
+- [ ] At least one LLM API Key in `.env` works; `JWT_SECRET` may be empty (`./start.sh` writes it to the project-root `.env` on first start); placeholders and short secrets are rejected
 - [ ] Browser opens the login page at `http://<host>:<port>`
 - [ ] The first admin account is initialized (for production, consider disabling `allow_public_registration`; use `ADMIN_INITIAL_PASSWORD` to override the initial password)
 - [ ] `runtime/` directory permissions are reasonable (see [Deployment Hardening](deployment-hardening.md))

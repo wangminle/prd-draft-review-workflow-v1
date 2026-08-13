@@ -43,22 +43,16 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-编辑 `.env`,**至少填入以下两项**:
+编辑 `.env`,**至少填入一个 LLM API Key**:
 
 - **至少一个 LLM API Key**(四选一或多选):`DEEPSEEK_API_KEY`、`QWEN_API_KEY`、`GLM_API_KEY`、`OPENAI_API_KEY`。
-- **`JWT_SECRET`(必填)**:至少 32 字符的随机串。生成方式:
-
-  ```bash
-  python3 -c "import secrets; print(secrets.token_hex(32))"
-  ```
-
-  说明:`start.sh` 在 `JWT_SECRET` 为空时会自动生成一个**临时 session 密钥**(仅适合本机开发试用);但**生产环境必须显式配置**一个固定值。服务层 `jwt_secret.py` 会拒绝以下情况并阻止启动:空值、已知不安全占位值(如 `change-me-in-production`、`secret` 等)、长度不足 32 字符。
+- **`JWT_SECRET`**:可留空。`./start.sh` 首次启动会生成至少 32 字符随机串并**写入项目根目录 `.env`**，之后重启复用。也可自行填入。服务层会拒绝已知不安全占位值（如 `change-me-in-production`）和不足 32 字符的密钥。环境文件只认项目根目录 `.env`（遗留 `src/.env` 会被忽略或一次性迁移）。
 
 **最小可运行 `.env` 示例:**
 
 ```dotenv
 DEEPSEEK_API_KEY=sk-your-key-here
-JWT_SECRET=<至少32字符随机串>
+# JWT_SECRET 可留空，首次 ./start.sh 会写入项目根目录 .env
 ```
 
 可选:`ADMIN_INITIAL_PASSWORD` 覆盖首个 admin 账号的初始密码;不设则使用代码内置默认口令 `admin@2026`(启动日志会打印 `[SECURITY]` 警告,要求尽快修改)。
@@ -90,7 +84,7 @@ JWT_SECRET=<至少32字符随机串>
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.10"}
+# 预期返回: {"status":"ok","version":"0.3.11"}
 ```
 
 ### 常用启停命令
@@ -104,7 +98,7 @@ curl http://localhost:17957/api/health
 
 ### 排错小提示
 
-- **启动即退出**:大概率是 `JWT_SECRET` 未配置或过短。按上面方法生成并填入 `.env` 后重启。
+- **启动即退出**:大概率是 `JWT_SECRET` 使用了示例占位值或过短。留空时 `./start.sh` 会写入根目录 `.env`；请勿填 `change-me-in-production` 等占位值。
 - **健康检查失败**:确认 17957 端口未被占用,查看 `runtime/logs/app.log`。
 - **Agent 功能不可用**:日志出现 `pi CLI not found` 时,运行 `npm install` 安装 Pi Agent,并确保 Node.js 18+ 已安装。
 
@@ -155,22 +149,16 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Edit `.env` and **fill in at least the following two items**:
+Edit `.env` and **fill in at least one LLM API key**:
 
 - **At least one LLM API key** (pick one or more): `DEEPSEEK_API_KEY`, `QWEN_API_KEY`, `GLM_API_KEY`, `OPENAI_API_KEY`.
-- **`JWT_SECRET` (required)**: a random string of at least 32 characters. Generate one with:
-
-  ```bash
-  python3 -c "import secrets; print(secrets.token_hex(32))"
-  ```
-
-  Note: `start.sh` will auto-generate a **temporary session secret** when `JWT_SECRET` is empty (fine for local trial only); **production must set an explicit, fixed value**. The service layer `jwt_secret.py` refuses to start in these cases: empty value, known insecure placeholders (e.g. `change-me-in-production`, `secret`), or length below 32 characters.
+- **`JWT_SECRET`**: may be left empty. `./start.sh` generates a random secret of at least 32 characters on first start and **writes it to the project-root `.env`** for later restarts. You may also set it yourself. The service layer still rejects known insecure placeholders (e.g. `change-me-in-production`) and secrets shorter than 32 characters. Only the project-root `.env` is used (a leftover `src/.env` is ignored or migrated once).
 
 **Minimal runnable `.env` example:**
 
 ```dotenv
 DEEPSEEK_API_KEY=sk-your-key-here
-JWT_SECRET=<at-least-32-char-random-string>
+# JWT_SECRET may be empty; first ./start.sh writes it to the project-root .env
 ```
 
 Optional: `ADMIN_INITIAL_PASSWORD` overrides the initial password of the first admin account; if unset, the built-in default `admin@2026` is used (startup logs print a `[SECURITY]` warning urging an immediate change).
@@ -202,7 +190,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.10"}
+# Expected: {"status":"ok","version":"0.3.11"}
 ```
 
 ### Common start / stop commands
@@ -216,7 +204,7 @@ curl http://localhost:17957/api/health
 
 ### Troubleshooting tips
 
-- **Service exits immediately**: most likely `JWT_SECRET` is unset or too short. Generate one as shown above, put it in `.env`, and restart.
+- **Service exits immediately**: most likely `JWT_SECRET` is an example placeholder or too short. Leaving it empty is fine with `./start.sh` (it writes the project-root `.env`); do not use values like `change-me-in-production`.
 - **Health check failed**: make sure port 17957 is free, and inspect `runtime/logs/app.log`.
 - **Agent features unavailable**: if logs show `pi CLI not found`, run `npm install` to install Pi Agent and ensure Node.js 18+ is installed.
 
