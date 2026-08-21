@@ -103,6 +103,30 @@ def _estimate_review_seconds(mode: str) -> int:
     return {"quick": 120, "review": 300, "pm": 240, "insight": 480, "full": 600, "draft": 300}.get(mode, 180)
 
 
+# BUG-156: 步骤名 → Skill ID 完整映射（覆盖全部 Skill 驱动的步骤，
+# 含 step 1 分类与 step 2 逐篇分析），供启动前门控与执行期逐步门控共用。
+_STEP_TO_SKILL_ID = {
+    "分类": "prd-overview-classify",
+    "逐篇分析": "prd-per-analysis",
+    "体系Review": "system-review",
+    "需求洞察": "requirement-insights",
+    "报告生成": "report-generator",
+    "PRD草稿生成": "report-generator",
+}
+
+# 可选步骤：对应 Skill 被禁用时允许降级跳过（需求洞察）。
+# 其余映射步骤均为必需（对应 skill_runner._REQUIRED_STEPS），禁用即拒绝。
+_OPTIONAL_STEP_NAMES = {"需求洞察"}
+
+
+async def _load_inactive_skill_ids(db: AsyncSession) -> set[str]:
+    """加载当前处于 inactive 状态的 Skill ID 集合（BUG-156 门控数据源）。"""
+    from app.repositories.skill_config_repository import SkillConfigRepository
+    skill_repo = SkillConfigRepository(db)
+    all_skills = await skill_repo.list_all(include_inactive=True)
+    return {s.skill_id for s in all_skills if s.status == "inactive"}
+
+
 def _build_review_retry_config() -> RetryConfig:
     retry_cfg = _settings.get("review", {}).get("retry", {})
     return RetryConfig(
@@ -957,6 +981,43 @@ async def start_review(
     selected_doc_ids = [d.id for d in docs]
     est = _estimate_review_seconds(req.mode)
 
+    # BUG-156: 创建任务前的 Skill 状态门控（生产路径前置拦截）。
+    # 必需 Skill（分类/逐篇分析/体系Review/报告生成，对应
+    # skill_runner._REQUIRED_STEPS）被禁用时直接拒绝启动（4xx）；
+    # 可选 Skill（需求洞察）被禁用时正常创建，并把降级计划写入 step_details。
+    inactive_skill_ids = await _load_inactive_skill_ids(db)
+    planned_degraded_steps: list[dict] = []
+    if inactive_skill_ids:
+        blocked_skills: list[str] = []
+        for _step_name in steps:
+            _skill_id = _STEP_TO_SKILL_ID.get(_step_name)
+            if not _skill_id or _skill_id not in inactive_skill_ids:
+                continue
+            if _step_name in _OPTIONAL_STEP_NAMES:
+                planned_degraded_steps.append({
+                    "skill_id": _skill_id,
+                    "step_name": _step_name,
+                    "reason": f"Skill {_skill_id} 处于 inactive 状态，该步骤将被跳过（降级运行）",
+                })
+            else:
+                blocked_skills.append(_skill_id)
+        if blocked_skills:
+            blocked_csv = ", ".join(sorted(set(blocked_skills)))
+            _audit_log_writer.write(
+                "review.start",
+                actor=user,
+                request=request,
+                target_type="project",
+                target_id=project_id,
+                result="failed",
+                detail={"project_id": project_id, "mode": req.mode, "reason": "required_skill_inactive", "blocked_skills": sorted(set(blocked_skills))},
+                level="warning",
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"必需 Skill 已被禁用，无法发起审查：{blocked_csv}。请在管理后台重新启用后再试。",
+            )
+
     # BUG-152: 用 per-project 锁串行化"查询 active task + 创建新 task"临界区，
     # 消除并发请求同时 SELECT 得到 None、各自创建 task 并重复跑 LLM 的竞态。
     # 锁只覆盖查询+创建+commit；_run_pipeline 通过 track_pipeline_task 异步执行，
@@ -988,6 +1049,8 @@ async def start_review(
                 "document_ids": selected_doc_ids,
                 "historical_document_ids": historical_doc_ids,
                 "thinking_level": req.thinking_level,
+                # BUG-156: 可选 Skill 被禁用时的降级计划，供前端/审计可见
+                **({"planned_degraded_steps": planned_degraded_steps} if planned_degraded_steps else {}),
             }, ensure_ascii=False),
             total_docs=len(docs),
         ))
@@ -1464,38 +1527,22 @@ async def _run_pipeline(
             user_id=task.created_by,
         )
 
-        # P1-4.3: Preflight Skill status gate. Load inactive skill_ids from
-        # SkillConfigRepository and pass to the runner so a required Skill
-        # marked inactive refuses to start (rather than silently executing).
-        from app.repositories.skill_config_repository import SkillConfigRepository
-        skill_repo = SkillConfigRepository(db)
-        all_skills = await skill_repo.list_all(include_inactive=True)
-        inactive_skills = {
-            s.skill_id for s in all_skills if s.status == "inactive"
-        }
+        # P1-4.3 / BUG-156: Preflight Skill status gate. Load inactive skill_ids
+        # and pass to the runner so a required Skill marked inactive refuses to
+        # start (rather than silently executing). 作为 start_review 4xx 拦截的
+        # 执行期兜底（例如任务创建后 Skill 才被禁用、或存量 pending 任务）。
+        inactive_skills = await _load_inactive_skill_ids(db)
         if inactive_skills:
             context_data["inactive_skills"] = list(inactive_skills)
             runner.context = context_data
 
-        # P1-4.3 fix: Preflight gate on production path. Check ALL required
-        # skills (classify, per_analysis, system_review, report) before
-        # setting task.status=running. The per-step gate at lines 1598+
-        # only covers steps 3+; steps 1 (分类) and 2 (逐篇分析) were
-        # previously unguarded, making the inactive switch dead code for them.
-        _FULL_STEP_TO_SKILL_ID = {
-            "分类": "prd-overview-classify",
-            "逐篇分析": "prd-per-analysis",
-            "体系Review": "system-review",
-            "需求洞察": "requirement-insights",
-            "报告生成": "report-generator",
-            "PRD草稿生成": "report-generator",
-        }
-        _OPTIONAL_STEP_NAMES = {"需求洞察"}
+        # 预检覆盖全部 Skill 驱动步骤（含 step 1 分类与 step 2 逐篇分析，
+        # 它们不走下方 steps 3+ 的逐步门控循环）。
         blocked_required = [
-            _FULL_STEP_TO_SKILL_ID[s]
+            _STEP_TO_SKILL_ID[s]
             for s in steps
-            if s in _FULL_STEP_TO_SKILL_ID
-            and _FULL_STEP_TO_SKILL_ID[s] in inactive_skills
+            if s in _STEP_TO_SKILL_ID
+            and _STEP_TO_SKILL_ID[s] in inactive_skills
             and s not in _OPTIONAL_STEP_NAMES
         ]
         if blocked_required:
@@ -1506,7 +1553,8 @@ async def _run_pipeline(
             )
             logger.error(err_msg)
             task.status = "failed"
-            task.error_message = err_msg
+            # ReviewTask 无 error_message 列 — 拒绝原因持久化到 step_details
+            _merge_task_step_details(task, error=err_msg)
             task.completed_at = now_cn()
             _early_step_statuses = {str(i): "skipped" for i in range(len(steps))}
             task.step_statuses = json.dumps(_early_step_statuses, ensure_ascii=False)
@@ -1717,26 +1765,61 @@ async def _run_pipeline(
                 [doc.id for doc in converted_docs],
             )
 
-            # P1-4.4: Enforce category whitelist on LLM-returned classifications.
-            # The standalone classify.py script already does this, but the route
-            # path was missing this guard. Categories not in the configured
-            # whitelist are marked as "待确认" for human review.
+            # P1-4.4 / BUG-158: Enforce category whitelist on LLM-returned
+            # classifications（与 skills/prd-overview-classify/scripts/classify.py
+            # 的白名单语义对齐：配置类别 + 未分类 + 待确认，非白名单 → 待确认）。
+            # 白名单来源：default-categories.json + ReviewContext.category_overrides。
+            # 配置缺失时降级为放行并记 warning，不硬失败、不误判为待确认。
             _cat_whitelist = {"未分类", "待确认"}
+            _cat_cfg_loaded = False
             _cat_cfg_path = Path(SKILLS_DIR) / "prd-overview-classify" / "templates" / "default-categories.json"
             try:
                 if _cat_cfg_path.exists():
                     _cat_cfg = json.loads(_cat_cfg_path.read_text(encoding="utf-8"))
-                    _cat_whitelist |= {c["name"] for c in _cat_cfg.get("categories", []) if isinstance(c, dict) and "name" in c}
+                    _cfg_names = {c["name"] for c in _cat_cfg.get("categories", []) if isinstance(c, dict) and "name" in c}
+                    # 文件存在但 categories 为空（模板默认态）等同配置缺失：
+                    # 白名单只剩兜底值时校验会把所有真实类别误判为待确认，
+                    # 因此仅在实际加载到配置类别时才视为已配置。
+                    if _cfg_names:
+                        _cat_whitelist |= _cfg_names
+                        _cat_cfg_loaded = True
             except Exception as e:
                 logger.warning("Failed to load category whitelist: %s", e)
-            for _c in classifications:
-                _cat_val = _c.get("category", "未分类")
-                if _cat_val not in _cat_whitelist:
-                    logger.warning(
-                        "分类白名单：文档 %s 类别 %r 不在白名单，标记为待确认",
-                        _c.get("doc_id"), _cat_val,
-                    )
-                    _c["category"] = "待确认"
+            # ReviewContext.category_overrides 也是合法类别来源（dict: 类别名 → 关键词/规则）
+            _cat_overrides = context_data.get("category_overrides")
+            if isinstance(_cat_overrides, dict) and _cat_overrides:
+                _cat_whitelist |= {str(name) for name in _cat_overrides.keys()}
+                _cat_cfg_loaded = True
+            elif isinstance(_cat_overrides, list) and _cat_overrides:
+                _cat_whitelist |= {c["name"] for c in _cat_overrides if isinstance(c, dict) and "name" in c}
+                _cat_cfg_loaded = True
+            if _cat_cfg_loaded:
+                _cat_corrections = []
+                for _c in classifications:
+                    _cat_val = _c.get("category", "未分类")
+                    if _cat_val not in _cat_whitelist:
+                        logger.warning(
+                            "分类白名单：文档 %s 类别 %r 不在白名单，标记为待确认",
+                            _c.get("doc_id"), _cat_val,
+                        )
+                        # BUG-158: 记录原始返回值，回填前写入 step_details
+                        _cat_corrections.append({
+                            "doc_id": _c.get("doc_id"),
+                            "original_category": _cat_val,
+                            "corrected_category": "待确认",
+                        })
+                        _c["category"] = "待确认"
+                if _cat_corrections:
+                    _merge_task_step_details(task, category_whitelist_corrections=_cat_corrections)
+            else:
+                logger.warning(
+                    "分类白名单配置缺失（default-categories.json 无有效类别且 category_overrides 不可用），"
+                    "跳过类别白名单校验，放行模型返回值"
+                )
+                _merge_task_step_details(
+                    task,
+                    category_whitelist_warning="分类白名单配置缺失，类别未做白名单校验",
+                )
             categories = list({c.get("category", "未分类") for c in classifications})
             doc_list_str = json.dumps(runner.state["docs"], ensure_ascii=False)
             categories_str = json.dumps(categories, ensure_ascii=False)
@@ -1931,25 +2014,30 @@ async def _run_pipeline(
                 step_name = steps[si]
                 step_result = None
 
-                # P1-4.3: Per-step Skill status gate. If the underlying Skill is
-                # inactive, required steps must fail; optional steps degrade.
-                # Steps 1 (分类) and 2 (逐篇分析) are covered by the preflight
-                # gate above; this per-step gate covers steps 3+.
-                _STEP_TO_SKILL_ID = {
-                    "体系Review": "system-review",
-                    "需求洞察": "requirement-insights",
-                    "报告生成": "report-generator",
-                    "PRD草稿生成": "report-generator",
-                }
+                # P1-4.3 / BUG-156: Per-step Skill status gate. If the underlying
+                # Skill is inactive, required steps must fail; optional steps degrade.
+                # 映射见模块级 _STEP_TO_SKILL_ID（含分类/逐篇分析）；step 1/2
+                # 由上方预检门控覆盖，本逐步门控覆盖 steps 3+。
                 _skill_id_for_step = _STEP_TO_SKILL_ID.get(step_name)
                 if _skill_id_for_step and _skill_id_for_step in inactive_skills:
-                    if step_name in ("需求洞察",):
-                        # Optional — degraded mode, skip with warning
-                        logger.warning("Skill %s inactive — 需求洞察 step degraded (skipped)",
-                                       _skill_id_for_step)
-                        runner.state.setdefault("degraded_steps", []).append(step_name)
+                    if step_name in _OPTIONAL_STEP_NAMES:
+                        # Optional — degraded mode, skip with warning.
+                        # BUG-156: 记录结构化降级信息（哪个 Skill / 哪个步骤 / 原因）
+                        # 并即时持久化到任务 step_details，而非只留在 runner 内存态。
+                        _degraded_reason = f"Skill {_skill_id_for_step} 处于 inactive 状态"
+                        logger.warning("Skill %s inactive — %s step degraded (skipped)",
+                                       _skill_id_for_step, step_name)
+                        _degraded_entry = {
+                            "skill_id": _skill_id_for_step,
+                            "step_name": step_name,
+                            "step_index": step_idx,
+                            "reason": _degraded_reason,
+                        }
+                        _degraded_list = runner.state.setdefault("degraded_steps", [])
+                        _degraded_list.append(_degraded_entry)
                         step_statuses[str(step_idx)] = "skipped"
                         task.step_statuses = json.dumps(step_statuses)
+                        _merge_task_step_details(task, degraded_steps=list(_degraded_list))
                         await db.commit()
                         if queue:
                             await queue.put({"task_status": "running", "current_step": step_idx + 1, "step_statuses": step_statuses})
@@ -1961,7 +2049,8 @@ async def _run_pipeline(
                         step_statuses[str(step_idx)] = "failed"
                         task.step_statuses = json.dumps(step_statuses)
                         task.status = "failed"
-                        task.error_message = err_msg
+                        # ReviewTask 无 error_message 列 — 失败原因持久化到 step_details
+                        _merge_task_step_details(task, error=err_msg)
                         task.completed_at = now_cn()
                         await db.commit()
                         if queue:

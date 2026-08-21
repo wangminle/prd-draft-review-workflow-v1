@@ -1,6 +1,5 @@
 """OPT-002: 根目录 .env 为唯一环境文件；空 JWT_SECRET 首次生成后写入该文件。"""
 
-from pathlib import Path
 
 from app.env_file import ensure_canonical_env, persist_jwt_secret
 

@@ -5,6 +5,7 @@
 """
 
 import hashlib
+import json
 import logging
 import math
 import os
@@ -27,7 +28,11 @@ logger = logging.getLogger(__name__)
 # 防御异常或恶意 DOCX 文件造成的内存/磁盘资源耗尽。
 MAX_TOTAL_UNCOMPRESSED = 500 * 1024 * 1024   # 500 MB 总解压上限
 MAX_SINGLE_ENTRY_UNCOMPRESSED = 100 * 1024 * 1024  # 100 MB 单个 entry
-MAX_COMPRESSION_RATIO = 100  # 压缩比上限（解压后/压缩前）
+MAX_COMPRESSION_RATIO = 100  # 单个 entry 压缩比上限（解压后/压缩前）
+# 总压缩比检查：单 entry 可能各自低于阈值，但整体仍是 zip bomb。
+# 仅当总压缩体积超过 1MB 时才判定，避免小文件因舍入误差被误伤。
+MAX_TOTAL_COMPRESSION_RATIO = 100
+MIN_COMPRESSED_FOR_TOTAL_RATIO_CHECK = 1 * 1024 * 1024
 MAX_IMAGE_COUNT = 500  # 单文档最大图片数
 MAX_XLSX_SIZE = 50 * 1024 * 1024  # 50 MB 单个嵌入 Excel
 MAX_IMAGE_PIXELS = 50_000_000  # 单张图片最大像素数（约 7000x7000）
@@ -68,6 +73,15 @@ def validate_zip_safety(docx_path: str) -> None:
     if total_uncompressed > MAX_TOTAL_UNCOMPRESSED:
         raise DocxSecurityError(
             f"ZIP 总解压大小超限（{total_uncompressed} > {MAX_TOTAL_UNCOMPRESSED} 字节）"
+        )
+
+    if (
+        total_compressed > MIN_COMPRESSED_FOR_TOTAL_RATIO_CHECK
+        and total_uncompressed / total_compressed > MAX_TOTAL_COMPRESSION_RATIO
+    ):
+        raise DocxSecurityError(
+            f"ZIP 总压缩比过高（{total_uncompressed / total_compressed:.1f}x "
+            f"> {MAX_TOTAL_COMPRESSION_RATIO}x）"
         )
 
 
@@ -482,6 +496,62 @@ def sanitize_stem(stem: str) -> str:
     # 截断时附加原始全名的短 hash，避免不同长文件名映射到同一输出目录
     suffix = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:8]
     return f"{stem[:111]}_{suffix}"
+
+
+SENTINEL_FILENAME = ".converted"
+
+
+def compute_file_sha256(path: str) -> str:
+    """流式计算文件 SHA-256（分块读取，避免一次性载入大文件）。"""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def write_converted_sentinel(output_dir: str, folder_name: str, docx_path: str) -> None:
+    """原子写入完成标记（JSON），绑定源文件哈希。
+
+    sentinel 内容：{"folder_name": ..., "source_sha256": ...}。
+    批处理据此判断"已完整转换"是否对应当前源文件内容；
+    源文件变更后哈希不匹配，会被重新转换而非误跳过。
+    """
+    payload = json.dumps(
+        {"folder_name": folder_name, "source_sha256": compute_file_sha256(docx_path)},
+        ensure_ascii=False,
+    )
+    sentinel_path = os.path.join(output_dir, SENTINEL_FILENAME)
+    sentinel_tmp = sentinel_path + ".tmp"
+    try:
+        with open(sentinel_tmp, "w", encoding="utf-8") as f:
+            f.write(payload)
+        if os.path.exists(sentinel_path):
+            os.remove(sentinel_path)
+        os.rename(sentinel_tmp, sentinel_path)
+    except Exception:
+        if os.path.exists(sentinel_tmp):
+            try:
+                os.remove(sentinel_tmp)
+            except OSError:
+                pass
+
+
+def read_sentinel_source_sha256(sentinel_path: str) -> Optional[str]:
+    """读取 sentinel 中记录的源文件 SHA-256。
+
+    旧格式 sentinel（纯文本 folder_name）、损坏 JSON 或缺少哈希字段
+    一律返回 None，调用方应视为无效 sentinel 并按半成品处理。
+    """
+    try:
+        with open(sentinel_path, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    digest = payload.get("source_sha256")
+    return digest if isinstance(digest, str) and digest else None
 
 
 def extract_heading_level_map(docx_path: str) -> Dict[str, int]:
@@ -1168,22 +1238,9 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
             except OSError:
                 pass
 
-    # 写入完成标记，使批处理可以区分"完整转换"和"中途失败的半成品目录"。
-    # 同样使用原子 rename，保证 .converted 要么完整存在、要么不存在。
-    sentinel_path = os.path.join(final_output_dir, ".converted")
-    sentinel_tmp = sentinel_path + ".tmp"
-    try:
-        with open(sentinel_tmp, "w", encoding="utf-8") as f:
-            f.write(folder_name)
-        if os.path.exists(sentinel_path):
-            os.remove(sentinel_path)
-        os.rename(sentinel_tmp, sentinel_path)
-    except Exception:
-        if os.path.exists(sentinel_tmp):
-            try:
-                os.remove(sentinel_tmp)
-            except OSError:
-                pass
+    # 写入完成标记（JSON，含源文件 SHA-256），使批处理可以区分
+    # "完整转换且源未变更"和"中途失败的半成品目录 / 源已变更的过期输出"。
+    write_converted_sentinel(final_output_dir, folder_name, docx_path)
 
     logger.info("转换完成: %s", md_path)
     return md_path

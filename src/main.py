@@ -1,6 +1,5 @@
 """FastAPI 应用入口"""
 
-import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -40,7 +39,6 @@ from app.models.user import User
 from app.routers import admin, agent, auth, chat, history, review, upload, workspace, pi_agent, review_request, notification, artifact, governance
 from app.services.branding_config import (
     get_branding_config,
-    resolve_branding_asset,
     ensure_branding_dirs,
     DEFAULT_BRANDING,
 )

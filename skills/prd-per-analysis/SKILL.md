@@ -36,7 +36,9 @@ Vision is **opt-in** because images consume significantly more tokens. When enab
 | Decorative / Emoji / Icon | Skip | Decorative dividers, emoji, brand logos |
 | Photo / Illustration | Context-dependent | User research photos may be relevant |
 
-## Six-Dimension Analysis Framework
+## 6+1 Dimension Analysis Framework
+
+Six content dimensions plus an expert-opinion review dimension (`expert_review`), which checks the document against 6 predefined expert rules.
 
 | Dim | Name | What It Captures | Output Field |
 |-----|------|-----------------|--------------|
@@ -46,6 +48,7 @@ Vision is **opt-in** because images consume significantly more tokens. When enab
 | 4 | Boundary-External Issues | Related problems NOT covered by this requirement | `boundary_issues[]` |
 | 5 | Resolution Tracking | Whether boundary issues are resolved in later versions | `boundary_issues[].resolution` |
 | 6 | Key Points Extraction | Type-specific highlights (technical/survey/competitive) | `key_points` |
+| +1 | Expert Review | Expert-opinion review against 6 predefined rules | `expert_review` |
 
 **Dimension 6 type-specific rules:**
 
@@ -171,6 +174,12 @@ The `batch_analyze.py` script takes the **output JSON from `prd-overview-classif
       {"name": "A/B测试周期", "value": "2周"}
     ]
   },
+  "expert_review": {
+    "summary": "专家意见维度整体结论（1-2句话）",
+    "checks": [
+      {"rule_key": "scope_realism", "rule_name": "需求范围要写实", "status": "pass", "evidence": "原文依据或文档未体现", "suggestion": "需要补充或修改的建议"}
+    ]
+  },
   "image_insights": [
     {
       "image_path": "assets/image3.png",
@@ -183,6 +192,8 @@ The `batch_analyze.py` script takes the **output JSON from `prd-overview-classif
   "confidence": 0.92
 }
 ```
+
+`expert_review.checks` must cover exactly the 6 predefined expert rules (see `prompts/per-doc-analysis.md`) — no duplicate and no missing `rule_key`. `status` enum: `pass` / `risk` / `missing`.
 
 ## Key Features
 
@@ -212,7 +223,7 @@ pip3 install -r requirements.txt
 
 | Prompt | Purpose |
 |--------|---------|
-| `per-doc-analysis.md` | 6-dimension analysis (text + vision) |
+| `per-doc-analysis.md` | 6+1-dimension analysis (text + vision) |
 | `resolution-tracking.md` | Boundary issue resolution tracking |
 
 For detailed API and customization, see [references/usage-guide.md](references/usage-guide.md).

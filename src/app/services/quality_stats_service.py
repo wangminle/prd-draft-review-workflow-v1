@@ -6,14 +6,13 @@
 """
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.review import QualityWeeklySummary, ReviewTask, ReviewProject
+from app.models.review import QualityWeeklySummary
 from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,6 @@ class QualityStatsService:
         # 计算本周结束日期
         start = datetime.strptime(week_start, "%Y-%m-%d")
         end = start + timedelta(days=6)
-        end_str = end.strftime("%Y-%m-%d")
 
         # 查询本周审查任务统计
         from app.models.review import DocAnalysis

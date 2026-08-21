@@ -12,7 +12,6 @@
   - execute_via_pi_sync: 收集全部事件后返回
 """
 
-import json
 import logging
 from typing import AsyncGenerator
 

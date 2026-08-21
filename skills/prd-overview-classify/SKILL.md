@@ -124,13 +124,17 @@ input_dir/
 ### Two-phase approach
 
 1. **Keyword matching** (fast, deterministic): Match document titles against configurable keyword lists
-2. **LLM semantic classification** (accurate, costs API calls): For documents not matched by keywords, use LLM to classify based on title + excerpt
+2. **LLM semantic classification** (accurate, costs API calls): With `--use-llm`, documents left `"未分类"` by keywords are classified by the LLM based on title + excerpt
 
-When `--keyword-only` is used, unmatched documents get category `"未分类"`.
+Without any classification mode flag, the script defaults to **pure keyword classification** (the LLM is not called). `--use-llm` explicitly enables LLM classification; `--keyword-only` forces pure keyword mode (mutually exclusive with `--use-llm`). Documents not matched by keywords get category `"未分类"`.
+
+### Category whitelist
+
+Both the script and the production pipeline validate LLM-returned categories against a whitelist. The whitelist = the categories from `default-categories.json` + category overrides (`--categories` or `ReviewContext.category_overrides`) + the fallback values `"未分类"` and `"待确认"`. Categories not in the whitelist are rewritten to `"待确认"` (the production pipeline also records the original value in the task's `step_details.category_whitelist_corrections`). As a result, `documents[].category` can only be one of: a normal category name / `"未分类"` / `"待确认"`.
 
 ### Default category keywords
 
-See `templates/default-categories.json`. For domain-specific examples (smart home, SaaS, etc.), see `references/category-examples.md`.
+`templates/default-categories.json` ships with `categories: []` (empty — no preset keywords). Configure your own categories before using keyword or LLM classification; for domain-specific examples (smart home, SaaS, etc.), see `references/category-examples.md`. With an empty config, any LLM-returned category fails the whitelist check and is rewritten to `"待确认"`.
 
 ### Custom categories
 

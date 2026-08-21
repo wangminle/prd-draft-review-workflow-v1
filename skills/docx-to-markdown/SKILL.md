@@ -58,7 +58,7 @@ python3 scripts/batch_convert.py <source_dir> <output_dir>
 python3 scripts/batch_convert.py <source_dir> <output_dir> --force
 ```
 
-Each DOCX creates a separate folder with its MD file and assets.
+Each DOCX creates a separate folder with its MD file and assets. Batch mode supports `--timeout` (per-document timeout in seconds, default 300, POSIX only). The `.converted` completion marker is bound to the source file's SHA-256, so a changed source DOCX is automatically re-converted (no `--force` needed).
 
 ### Markdown to PDF (Optional)
 

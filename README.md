@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.11。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.12。
 
 ### 架构设计
 
@@ -115,7 +115,7 @@ cp .env.example .env
 
 ```text
 src/main.py                 FastAPI 入口与静态站点挂载
-src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance）
+src/app/routers/            API 路由层（auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance/pi_agent，pi_agent 对应 /api/pi-agent 的 Pi Agent 配置管理）
 src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配置、PiAgentBridge、MCP 适配器、NotificationService、CostStatsService、QualityStatsService、BudgetGuard、EmbeddingWorker、对象级权限（object_access）、JWT 密钥校验
 src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact）
 src/app/storage/            文档与运行时文件存储归口（ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage）
@@ -166,7 +166,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.11.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.12.
 
 ### Architecture
 
@@ -271,7 +271,7 @@ The default server port is 17957. An empty JWT_SECRET is generated and saved to 
 
 ```text
 src/main.py                 FastAPI entry point and static site mount
-src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance)
+src/app/routers/            API routes (auth/chat/upload/history/admin/review/workspace/agent/review_request/notification/artifact/governance/pi_agent; pi_agent serves /api/pi-agent for Pi Agent config management)
 src/app/services/           Application services, SkillRunner, LLM integration, branding config, PiAgentBridge, MCP adapter, NotificationService, CostStatsService, QualityStatsService, BudgetGuard, EmbeddingWorker, object_access, JWT secret checks
 src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact)
 src/app/storage/            Runtime file storage consolidation (ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage)

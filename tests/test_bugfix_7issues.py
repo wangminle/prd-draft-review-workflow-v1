@@ -209,7 +209,7 @@ async def test_bug3_presentation_context_rejects_non_owner(client):
     # 通过 API 验证：非 owner 的 project_id 通过 chat 端点传入 presentation 模式
     # 验证 chat router 确实传递了 user_id
     from app.routers.chat import chat as chat_endpoint
-    chat_sig = inspect.signature(chat_endpoint)
+    inspect.signature(chat_endpoint)
     # chat endpoint 使用 get_current_user 依赖，user_id 会传给 service
 
     # 验证 prepare_chat_session 传递 user_id
@@ -286,7 +286,6 @@ async def test_bug5_notification_stream_requires_ticket(client):
     admin_h = await _auth_header(client)
     ticket_resp = await client.post("/api/auth/sse-ticket", headers=admin_h)
     assert ticket_resp.status_code == 200
-    ticket = ticket_resp.json()["ticket"]
 
     # 注意：httpx 不支持流式 SSE 读取，但可以验证端点返回 200
     # 这里我们验证 ticket 被正确消费（第二次使用同一个 ticket 会失败）
@@ -409,7 +408,6 @@ async def test_bug7_presentation_mode_rejects_non_owner_project(client):
     """
     # 验证 chat.js 发送 chatStream 时会传 mode 和 project_id
     # 通过读取前端 JS 代码验证
-    import os
     from pathlib import Path
 
     chat_js_path = Path(__file__).parent.parent / "src" / "static" / "js" / "chat.js"

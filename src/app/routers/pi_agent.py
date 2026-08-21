@@ -198,7 +198,7 @@ async def update_llm_api_key(
     secret = _get_jwt_secret()
     repo = PiAgentConfigRepository(db)
     encrypted = encrypt_key(req.api_key, secret)
-    config = await repo.update_llm_api_key(encrypted)
+    await repo.update_llm_api_key(encrypted)
     await db.commit()
     return {"status": "ok", "api_key_masked": mask_key(req.api_key)}
 
@@ -217,7 +217,7 @@ async def update_search_api_key(
         encrypted = encrypt_key(req.api_key, secret)
     else:
         encrypted = None
-    config = await repo.update_search_api_key(encrypted)
+    await repo.update_search_api_key(encrypted)
     await db.commit()
     return {"status": "ok", "api_key_masked": mask_key(req.api_key) if req.api_key else ""}
 
@@ -236,7 +236,7 @@ async def update_vision_api_key(
         encrypted = encrypt_key(req.api_key, secret)
     else:
         encrypted = None
-    config = await repo.update_vision_api_key(encrypted)
+    await repo.update_vision_api_key(encrypted)
     await db.commit()
     return {"status": "ok", "api_key_masked": mask_key(req.api_key) if req.api_key else ""}
 

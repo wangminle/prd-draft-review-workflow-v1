@@ -12,12 +12,11 @@
 from __future__ import annotations
 
 import logging
-import os
 from pathlib import Path
 
 import yaml
 
-from app.runtime_paths import get_runtime_root, runtime_path
+from app.runtime_paths import runtime_path
 from app.version import APP_VERSION
 
 logger = logging.getLogger(__name__)

@@ -7,7 +7,6 @@
 - 验证 SkillConfig 中的注册信息与文件系统一致
 - 输出对比结果（结构化 JSON）
 """
-import os
 import pytest
 from pathlib import Path
 
@@ -50,7 +49,6 @@ class TestSkillRegression:
     def test_prompts_directory_exists(self, skill_name):
         """验证 prompts/ 目录存在。"""
         skill_dir = SKILLS_DIR / skill_name
-        prompts_dir = skill_dir / "prompts"
         # 某些 Skill 可能没有独立 prompts 目录
         # 但目录结构应该存在（可以为空）
         assert skill_dir.exists(), f"Skill '{skill_name}' 目录不存在"

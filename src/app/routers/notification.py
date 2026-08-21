@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -96,7 +95,7 @@ async def notification_stream(
                     event_data = channel.pop(0)
                     yield f"data: {event_data}\n\n"
                 # 发送心跳
-                yield f": heartbeat\n\n"
+                yield ": heartbeat\n\n"
                 await _asyncio.sleep(5)
         except asyncio.CancelledError:
             pass

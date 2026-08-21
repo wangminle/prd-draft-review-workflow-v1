@@ -130,7 +130,6 @@ class KnowledgeVectorService:
         import numpy as np
 
         # 构造 Arrow 表数据（LanceDB 需要 list of dict 而非 dict of lists）
-        import pyarrow as pa
 
         data = [
             {

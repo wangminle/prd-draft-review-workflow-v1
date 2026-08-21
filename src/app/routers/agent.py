@@ -629,7 +629,7 @@ async def list_mcp_servers(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    from sqlalchemy import select, or_
+    from sqlalchemy import select
     from app.models.user import MCPServerConfig
     from app.repositories.workspace_repository import WorkspaceRepository
 

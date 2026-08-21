@@ -244,6 +244,9 @@ _EXPERT_REVIEW_RULE_KEYS = [
 
 _EMPTY_EXPERT_SUMMARY_VALUES = {"", "-", "无", "暂无", "无意见", "暂无意见", "无额外意见", "暂无额外意见"}
 
+# 与 skills/prd-per-analysis/templates/output-schema.json 中 status 枚举保持一致。
+_EXPERT_REVIEW_VALID_STATUSES = {"pass", "risk", "missing"}
+
 
 def _validate_expert_review_block(data: dict) -> list[str]:
     errors: list[str] = []
@@ -257,12 +260,25 @@ def _validate_expert_review_block(data: dict) -> list[str]:
         return errors
 
     seen_rule_keys = set()
+    duplicate_rule_keys: list[str] = []
+    invalid_statuses: list[str] = []
     for check in checks:
         if not isinstance(check, dict):
             continue
         rule_key = check.get("rule_key")
         if isinstance(rule_key, str):
+            if rule_key in seen_rule_keys and rule_key not in duplicate_rule_keys:
+                duplicate_rule_keys.append(rule_key)
             seen_rule_keys.add(rule_key)
+        status = str(check.get("status") or "").strip().lower()
+        if status not in _EXPERT_REVIEW_VALID_STATUSES:
+            label = rule_key if isinstance(rule_key, str) else "unknown"
+            invalid_statuses.append(f"{label}={check.get('status')!r}")
+
+    if duplicate_rule_keys:
+        errors.append(f"expert_review.checks duplicate rules: {', '.join(duplicate_rule_keys)}")
+    if invalid_statuses:
+        errors.append(f"expert_review.checks invalid status: {', '.join(invalid_statuses)}")
 
     missing_rule_keys = [key for key in _EXPERT_REVIEW_RULE_KEYS if key not in seen_rule_keys]
     if missing_rule_keys:

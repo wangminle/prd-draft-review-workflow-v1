@@ -14,7 +14,7 @@ import json
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -28,7 +28,6 @@ from app.models.review import (
     ReviewParticipant,
     ReviewProject,
     ReviewRequest,
-    WorkspaceBudget,
 )
 from app.models.user import Base, User
 from app.models.workspace import Workspace, WorkspaceMember

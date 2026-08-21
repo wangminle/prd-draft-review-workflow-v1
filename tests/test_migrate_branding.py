@@ -385,7 +385,7 @@ class TestMigrateFlow:
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "ui-branding.yaml").write_text("app_title: ExistingConfig\n", encoding="utf-8")
 
-        result = migrate(
+        migrate(
             legacy_code_dir=legacy_project["static_dir"],
             legacy_runtime_dir=legacy_project["runtime_dir"],
             target_runtime_dir=target,
@@ -401,7 +401,7 @@ class TestMigrateFlow:
         config_dir.mkdir(parents=True, exist_ok=True)
         (config_dir / "ui-branding.yaml").write_text("app_title: Old\n", encoding="utf-8")
 
-        result = migrate(
+        migrate(
             legacy_code_dir=legacy_project["static_dir"],
             legacy_runtime_dir=legacy_project["runtime_dir"],
             target_runtime_dir=target,
@@ -412,7 +412,7 @@ class TestMigrateFlow:
 
     def test_migrate_copies_favicon(self, legacy_project):
         target = legacy_project["tmp_path"] / "target_runtime"
-        result = migrate(
+        migrate(
             legacy_code_dir=legacy_project["static_dir"],
             legacy_runtime_dir=legacy_project["runtime_dir"],
             target_runtime_dir=target,
@@ -424,7 +424,7 @@ class TestMigrateFlow:
 
     def test_migrate_copies_logo(self, legacy_project):
         target = legacy_project["tmp_path"] / "target_runtime"
-        result = migrate(
+        migrate(
             legacy_code_dir=legacy_project["static_dir"],
             legacy_runtime_dir=legacy_project["runtime_dir"],
             target_runtime_dir=target,
@@ -759,7 +759,7 @@ class TestScanMode:
 class TestPlanMode:
     def test_plan_writes_report_but_not_yaml(self, legacy_project):
         target_dir = legacy_project["tmp_path"] / "target"
-        result = plan(
+        plan(
             legacy_project["project_dir"],
             legacy_project["runtime_dir"],
             target_dir,
@@ -786,7 +786,7 @@ class TestPlanMode:
 class TestApplyMode:
     def test_apply_writes_yaml_and_assets(self, legacy_project):
         target_dir = legacy_project["tmp_path"] / "target"
-        result = apply(
+        apply(
             legacy_project["project_dir"],
             legacy_project["runtime_dir"],
             target_dir,
@@ -804,7 +804,7 @@ class TestApplyMode:
         yaml_file = config_dir / "ui-branding.yaml"
         yaml_file.write_text("app_title: existing\n", encoding="utf-8")
 
-        result = apply(
+        apply(
             legacy_project["project_dir"],
             legacy_project["runtime_dir"],
             target_dir,
@@ -820,7 +820,7 @@ class TestApplyMode:
         yaml_file = config_dir / "ui-branding.yaml"
         yaml_file.write_text("app_title: old\n", encoding="utf-8")
 
-        result = apply(
+        apply(
             legacy_project["project_dir"],
             legacy_project["runtime_dir"],
             target_dir,

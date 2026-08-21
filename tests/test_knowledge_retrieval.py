@@ -14,32 +14,24 @@
 - P2.E.3 拒答策略（dist[0] + gap）
 """
 
-import hashlib
-import json
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from sqlalchemy import select, text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.user import Base, User
 from app.models.knowledge import (
-    KnowledgeDocument,
-    KnowledgeChunk,
     RetrievalLog,
     AnswerFeedback,
-    VALID_EMBEDDING_STATUSES,
 )
 from app.models.workspace import KnowledgeSource, Workspace, WorkspaceMember
 from app.repositories.knowledge_repository import (
     KnowledgeDocumentRepository,
     KnowledgeChunkRepository,
 )
-from app.repositories.workspace_repository import WorkspaceRepository
 from app.repositories.knowledge_source_repository import KnowledgeSourceRepository
 from app.services.auth import hash_password
 
@@ -480,7 +472,6 @@ class TestEmbeddingService:
         svc = EmbeddingService(api_key="test", max_batch_size=3)
 
         # _call_api 对每批返回对应数量的 vectors
-        call_count = 0
 
         async def mock_call_api(texts):
             return [[0.1] * 1536 for _ in texts]
@@ -650,7 +641,7 @@ class TestKnowledgeVectorService:
 
         # 备份
         backup_path = tmp_path / "backup"
-        result = await svc.backup(backup_path)
+        await svc.backup(backup_path)
         assert backup_path.exists()
         assert any(backup_path.iterdir())
 
@@ -677,7 +668,7 @@ class TestKnowledgeVectorService:
             [[0.1] * 1536],
         )
 
-        result = await svc.delete_by_source(100)
+        await svc.delete_by_source(100)
         # LanceDB delete 不返回 count，但不应报错
 
         # 搜索应返回空

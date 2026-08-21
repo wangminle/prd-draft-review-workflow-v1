@@ -86,6 +86,9 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --output-type 
 # With custom feature dimensions
 python3 scripts/insights.py classify.json ./analysis/ result.json --feature-dims dims.json
 
+# With target capability baseline (enables absolute gap identification)
+python3 scripts/insights.py classify.json ./analysis/ result.json --target-baseline baseline.json
+
 # Include Mermaid diagram in output
 python3 scripts/insights.py classify.json ./analysis/ result.json --include-mermaid
 ```
@@ -100,6 +103,7 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --include-merm
 ### Optional
 
 - **Feature dimensions** — via `--feature-dims` for user-defined feature list (skips LLM extraction)
+- **Target capability baseline** — via `--target-baseline` (JSON array of target capabilities); when provided, the result carries `baseline_source: "user_provided"` and no "no-baseline" warning, and baseline capabilities with no document coverage surface as `gap` in the coverage matrix
 - **Mermaid output** — via `--include-mermaid` flag
 
 ## Output Format
@@ -129,26 +133,33 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --include-merm
       "total_issues": 19,
       "resolved": 10,
       "partial": 5,
-      "unresolved": 4
+      "unresolved": 4,
+      "conservation_valid": true
     },
+    "matches": [{"chain_name": "响应时延", "version": "V1.8.0", "doc_id": "uuid1", "issue_id": "i1", "issue": "网络延时导致判定不准确", "status": "unresolved", "evidence": null, "confidence": "low"}],
     "mermaid_graph": "flowchart TD\n  ..."
   },
   "gap_analysis": {
     "feature_dimensions": ["数据采集方案定义", "数据查询页面"],
     "coverage_matrix": [
       {
+        "feature_id": "feat_001",
         "feature": "数据采集方案定义",
         "covered_by": ["V2.0.4"],
+        "source_doc_ids": ["uuid1"],
         "status": "covered"
       },
       {
+        "feature_id": "feat_002",
         "feature": "数据校验",
         "covered_by": [],
+        "source_doc_ids": [],
         "status": "gap"
       }
     ],
     "gaps": [
       {
+        "feature_id": "feat_002",
         "feature": "数据校验",
         "description": "无任何文档覆盖数据校验机制",
         "severity": "high",
@@ -157,6 +168,7 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --include-merm
     ],
     "overlaps": [
       {
+        "feature_id": "feat_003",
         "feature": "响应时延判定",
         "covered_by": ["V1.8.0", "V2.1.0", "V2.2.3"],
         "note": "3篇文档覆盖同一功能，属正常演进"
@@ -167,7 +179,10 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --include-merm
       "covered": 3,
       "gaps": 1,
       "overlap_count": 1
-    }
+    },
+    "baseline_warning": "",
+    "baseline_source": "user_provided",
+    "assessment_alignment": {"method": "feature_id", "warnings": []}
   },
   "metadata": {
     "total_docs": 29,
@@ -176,6 +191,8 @@ python3 scripts/insights.py classify.json ./analysis/ result.json --include-merm
   }
 }
 ```
+
+`evolution.matches` is the complete match record (including unresolved items backfilled by code) — one entry per raised issue, with `chain_name`, `version`, `doc_id`, `issue_id`, `issue`, `status: resolved|partial|unresolved`, `evidence`, `confidence: high|medium|low`.
 
 ## Key Features
 

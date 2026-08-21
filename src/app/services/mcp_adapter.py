@@ -4,12 +4,10 @@
 工具调用前检查 MCPToolPolicy。
 """
 
-import asyncio
 import json
 import logging
-import os
 import subprocess
-from typing import Any, Optional
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -80,7 +78,7 @@ class MCPClient:
                         return True
             logger.warning("[MCP] stdio 连接超时或无响应")
             return False
-        except Exception as e:
+        except Exception:
             logger.exception("[MCP] stdio 连接失败")
             return False
 

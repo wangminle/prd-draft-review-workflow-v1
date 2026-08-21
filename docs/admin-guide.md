@@ -183,6 +183,11 @@ export ADMIN_INITIAL_PASSWORD='<你的强随机口令>'
 | 启停(admin) | `PUT /skills/{skill_id}/toggle` | `status` ∈ {`active`,`inactive`} |
 | 状态流转(governance) | `PUT /governance/skills/{skill_db_id}/status` | `status` ∈ {`active`,`inactive`,`published`,`draft`,`deprecated`} |
 
+**禁用后果(评审启动前置门控):**
+
+- 禁用必需 Skill(`prd-overview-classify`/`prd-per-analysis`/`system-review`/`report-generator`)任一后,用户发起评审会被 **409 拒绝**(「必需 Skill 已被禁用,无法发起审查…」),需重新启用后才能发起。
+- 禁用 `requirement-insights` 后,`insight`/`full`/`draft` 模式的评审会**跳过需求洞察步骤降级运行**,任务终态为 `completed_with_warnings`;降级记录见任务 `step_details` 的 `planned_degraded_steps`(创建时)与 `degraded_steps`(执行时)。
+
 **回归测试框架(保障技能迭代质量):**
 
 技能迭代有回归风险。项目内置 `tests/test_skill_regression.py` **参数化回归测试框架**:每个 Skill 绑定样例文档与期望输出结构,升级前自动验证,避免改动一个 Skill 导致整条评审流水线退化。
@@ -242,7 +247,7 @@ pytest tests/test_skill_regression.py -v
 
 **硬限执行逻辑(`budget_guard.py`):** 当 `hard_limit_action=block` 且当月用量达到上限时,`ensure_workspace_llm_allowed` 会**在 LLM/Agent 调用前拦截**,返回 `429 团队本月 token 配额已用尽`,从源头止血。
 
-**防绕过:** 聊天(`/api/chat`)与审查启动(`POST /api/review/projects/{id}/start`)在调用 LLM 前都会:
+**防绕过:** 聊天(`/api/chat`)与审查启动(`POST /api/review/projects/{project_id}/reviews`)在调用 LLM 前都会:
 
 1. 校验调用者对该 `workspace_id` 的成员资格(`require_action(member, "read")`),**拒绝伪造 workspace_id 绕过配额**;
 2. 调用 `ensure_workspace_llm_allowed` 执行硬限。
@@ -586,6 +591,11 @@ Management actions:
 | Toggle (admin) | `PUT /skills/{skill_id}/toggle` | `status` ∈ {`active`,`inactive`} |
 | State transition (governance) | `PUT /governance/skills/{skill_db_id}/status` | `status` ∈ {`active`,`inactive`,`published`,`draft`,`deprecated`} |
 
+**Consequences of disabling (review-start gate):**
+
+- Disabling any required skill (`prd-overview-classify`/`prd-per-analysis`/`system-review`/`report-generator`) makes review starts fail with **409** ("required skill(s) disabled ..."); it must be re-enabled before reviews can start.
+- Disabling `requirement-insights` makes `insight`/`full`/`draft` reviews **skip the requirement-insights step and run degraded**, with a final status of `completed_with_warnings`; the degradation record is in the task's `step_details` — `planned_degraded_steps` (at creation) and `degraded_steps` (at execution).
+
 **Regression test framework (safeguarding skill iteration quality):**
 
 Skill iteration carries regression risk. The project ships `tests/test_skill_regression.py`, a **parameterized regression framework**: each Skill is bound to sample docs and expected output structures, auto-verified before any upgrade to prevent a single Skill change from degrading the whole review pipeline.
@@ -645,7 +655,7 @@ Budget fields:
 
 **Hard-limit logic (`budget_guard.py`):** when `hard_limit_action=block` and month-to-date usage reaches the limit, `ensure_workspace_llm_allowed` **intercepts before** any LLM/Agent call, returning `429 monthly token quota exhausted`, stopping the bleed at the source.
 
-**Anti-bypass:** Before calling the LLM, chat (`/api/chat`) and review start (`POST /api/review/projects/{id}/start`) both:
+**Anti-bypass:** Before calling the LLM, chat (`/api/chat`) and review start (`POST /api/review/projects/{project_id}/reviews`) both:
 
 1. Verifies the caller's membership of the target `workspace_id` (`require_action(member, "read")`), **rejecting forged workspace_id to bypass quota**;
 2. Calls `ensure_workspace_llm_allowed` to enforce the hard limit.

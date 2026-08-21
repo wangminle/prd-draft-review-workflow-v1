@@ -414,7 +414,7 @@ class TestModelConfigAPI:
         )
         assert create_resp.status_code == 200
 
-        resp = await app_client.delete(f"/api/admin/models/test-delete-model", headers=headers)
+        resp = await app_client.delete("/api/admin/models/test-delete-model", headers=headers)
         assert resp.status_code == 200
         assert resp.json()["status"] == "ok"
 

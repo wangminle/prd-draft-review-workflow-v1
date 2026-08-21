@@ -9,7 +9,6 @@
 - P0.A.6: 数据迁移脚本（旧项目自动归入默认 workspace）
 """
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -108,7 +107,7 @@ class TestWorkspaceModel:
 
     async def test_list_all_excludes_archived(self, db_session, admin_user):
         repo = WorkspaceRepository(db_session)
-        ws1 = await repo.create("活跃空间", created_by=admin_user.id)
+        await repo.create("活跃空间", created_by=admin_user.id)
         ws2 = await repo.create("待归档空间", created_by=admin_user.id)
         await repo.archive(ws2.id)
         all_ws = await repo.list_all()

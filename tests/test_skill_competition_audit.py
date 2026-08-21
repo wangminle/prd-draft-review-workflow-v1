@@ -3,10 +3,17 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 
 SCHEMA_PATH = Path(__file__).resolve().parent.parent / "skills" / "system-review" / "templates" / "output-schema.json"
+
+REVIEW_SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "skills" / "system-review" / "scripts"
+if str(REVIEW_SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(REVIEW_SCRIPTS_DIR))
+
+import review  # noqa: E402
 
 
 def _load_schema():
@@ -75,3 +82,86 @@ class TestCompetitionPrompt:
     def test_prompt_has_open_questions_field(self):
         content = self.PROMPT_PATH.read_text(encoding="utf-8")
         assert "open_questions" in content
+
+
+class TestCompetitionModelCompat:
+    """BUG-162：pydantic 模型兼容字符串与 dict 两种形态。"""
+
+    def test_market_landscape_accepts_string_players(self):
+        ml = review.MarketLandscape(key_players=["竞品X", "竞品Y"])
+        assert ml.key_players == ["竞品X", "竞品Y"]
+
+    def test_market_landscape_accepts_dict_players(self):
+        ml = review.MarketLandscape(key_players=[
+            {"name": "竞品A", "source": "industry_template", "confidence": "medium"},
+        ])
+        assert ml.key_players[0]["name"] == "竞品A"
+
+    def test_differentiation_accepts_dict_items(self):
+        diff = review.Differentiation(unique_strengths=[
+            {"item": "全流程闭环", "source": "input_evidence", "confidence": "high"},
+        ])
+        assert diff.unique_strengths[0]["item"] == "全流程闭环"
+
+    def test_competition_result_has_open_questions(self):
+        result = review.CompetitionResult(open_questions=["头部竞品有哪些？"])
+        assert result.open_questions == ["头部竞品有哪些？"]
+
+
+class TestCompetitionRendering:
+    """BUG-162：generate_full_report_md 渲染新结构（dict + source/confidence）。"""
+
+    def _render(self, competition: dict) -> str:
+        return review.generate_full_report_md({"competition": competition}, "测试项目")
+
+    def test_dict_key_players_render_source_and_confidence(self):
+        md = self._render({
+            "market_landscape": {
+                "position": "following",
+                "has_competition_data": True,
+                "key_players": [
+                    {"name": "竞品A", "source": "industry_template", "confidence": "medium"},
+                ],
+            },
+        })
+        assert "竞品A（来源：行业模板 · 置信度：中）" in md
+        # 不得把 dict repr 渲染进 Markdown
+        assert "'name'" not in md
+
+    def test_string_key_players_backward_compatible(self):
+        md = self._render({
+            "market_landscape": {
+                "position": "exploring",
+                "key_players": ["竞品X", "竞品Y"],
+            },
+        })
+        # 纯字符串列表渲染不变
+        assert "主要玩家：竞品X, 竞品Y" in md
+        assert "待调研问题" not in md
+
+    def test_dict_differentiation_rendered_with_labels(self):
+        md = self._render({
+            "differentiation": {
+                "unique_strengths": [
+                    {"item": "全流程闭环", "source": "input_evidence", "confidence": "high"},
+                ],
+                "weaknesses": ["品牌知名度低"],
+            },
+        })
+        assert "- 💪 优势：全流程闭环（来源：输入证据 · 置信度：高）" in md
+        assert "- ⚠️ 短板：品牌知名度低" in md
+        assert "'item'" not in md
+
+    def test_open_questions_rendered_when_present(self):
+        md = self._render({
+            "market_landscape": {"position": "exploring", "has_competition_data": False},
+            "open_questions": ["目标行业的头部竞品有哪些？"],
+        })
+        assert "### 待调研问题" in md
+        assert "- 目标行业的头部竞品有哪些？" in md
+
+    def test_open_questions_absent_when_empty(self):
+        md = self._render({
+            "market_landscape": {"position": "exploring", "key_players": ["竞品X"]},
+        })
+        assert "待调研问题" not in md

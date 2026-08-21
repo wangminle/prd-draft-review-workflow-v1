@@ -20,6 +20,7 @@ python3 scripts/insights.py <classify_json> <analysis_dir> <output_json> [option
 |--------|---------|-------------|
 | `--output-type` | `all` | Output type: evolution, gap, all |
 | `--feature-dims` | none | Path to custom feature dimensions JSON (skips LLM extraction) |
+| `--target-baseline` | none | Path to target capability baseline JSON (array of capability names, or dict with `target_baselines`/`capabilities`). When provided: no "no-baseline" warning, result carries `baseline_source: "user_provided"`, and baseline capabilities without document coverage are marked `gap` |
 | `--include-mermaid` | off | Include Mermaid flowchart in evolution output |
 
 ### Environment Variables
@@ -83,6 +84,12 @@ Each feature is marked as:
 - `covered` — covered by exactly one document
 - `overlap` — covered by multiple documents
 - `gap` — not covered by any document
+
+Each coverage entry carries a stable `feature_id` (`feat_001`, ...) and
+`source_doc_ids`. LLM gap/overlap assessments are aligned back to entries by
+`feature_id`; when the model omits or mismatches `feature_id`, alignment falls
+back to positional matching and the result's `assessment_alignment` field
+records the method (`feature_id` / `positional_fallback`) and warnings.
 
 ## Output Structure
 

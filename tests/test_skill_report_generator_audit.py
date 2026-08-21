@@ -113,3 +113,56 @@ class TestMermaidBuilderUsage:
         assert "build_evolution_flowchart" in src
         assert "build_dependency_graph" in src
         assert "build_version_chain_timeline" in src
+
+
+class TestMermaidEmbedding:
+    """BUG-162：依赖图与版本链时间线应嵌入报告正文，而非只进 _generate_result.json。"""
+
+    DEPS = [{"from_doc_id": "doc-1", "to_doc_id": "doc-2", "relation": "依赖"}]
+    DOCS = [{"doc_id": "doc-1"}, {"doc_id": "doc-2"}]
+    CHAINS = [{
+        "chain_name": "支付链路",
+        "versions": [{"version": "v1.0", "title": "首版"}, {"version": "v2.0", "title": "改版"}],
+    }]
+
+    def _render(self, classify_data: dict, insights_data: dict | None = None) -> str:
+        return generate.generate_per_analysis_md(
+            "测试项目", [], classify_data, insights_data or {})
+
+    def test_dependency_graph_embedded_when_present(self):
+        md = self._render({"dependencies": self.DEPS, "documents": self.DOCS})
+        assert "```mermaid" in md
+        assert "graph LR" in md
+        assert "-->" in md
+        assert "依赖" in md
+
+    def test_dependency_graph_absent_when_empty(self):
+        md = self._render({"documents": self.DOCS})
+        assert "graph LR" not in md
+        assert "文档依赖关系" not in md
+
+    def test_dependency_graph_absent_when_no_valid_edges(self):
+        # 依赖条目缺少 from/to 时只剩 "graph LR" 头，视为空图不嵌入
+        md = self._render({"dependencies": [{"relation": "依赖"}], "documents": self.DOCS})
+        assert "graph LR" not in md
+
+    def test_version_timeline_embedded_when_present(self):
+        md = self._render({"version_chains": self.CHAINS})
+        assert "gantt" in md
+        assert "section 支付链路" in md
+
+    def test_version_timeline_absent_when_empty(self):
+        md = self._render({})
+        assert "gantt" not in md
+        assert "版本链时间线" not in md
+
+    def test_version_timeline_absent_when_chains_have_no_versions(self):
+        # 链无版本时时间线只有标题行，视为空图不嵌入
+        md = self._render({"version_chains": [{"chain_name": "空链", "versions": []}]})
+        assert "gantt" not in md
+
+    def test_evolution_mermaid_still_embedded(self):
+        # 原有 build_evolution_flowchart 嵌入路径（insights.mermaid_graph）保持不变
+        md = self._render({}, {"evolution": {"mermaid_graph": "flowchart TD\n    a --> b"}})
+        assert "flowchart TD" in md
+        assert "## 四、需求演进脉络" in md

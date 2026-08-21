@@ -26,7 +26,11 @@ python3 scripts/classify.py <input_dir> <output_json> [options]
 
 ### Mutual Exclusivity
 
-`--keyword-only` and `--use-llm` cannot be used together. If neither is specified, keyword matching runs first, then LLM is used as fallback for unmatched documents (when ANTHROPIC_API_KEY is available).
+`--keyword-only` and `--use-llm` cannot be used together. If neither is specified, the script defaults to **pure keyword classification** (the LLM is not called); `--use-llm` explicitly enables LLM classification, and `--keyword-only` forces pure keyword mode.
+
+## Category Whitelist
+
+Both the script and the production pipeline validate LLM-returned categories against a whitelist. The whitelist = the categories from `default-categories.json` + category overrides (`--categories` or `ReviewContext.category_overrides`) + the fallback values `"未分类"` and `"待确认"`. Categories not in the whitelist are rewritten to `"待确认"` (the production pipeline also records the original value in the task's `step_details.category_whitelist_corrections`). As a result, `documents[].category` can only be one of: a normal category name / `"未分类"` / `"待确认"`.
 
 ## Category Configuration
 

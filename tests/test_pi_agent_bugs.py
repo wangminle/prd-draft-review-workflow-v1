@@ -338,7 +338,7 @@ async def test_bug056_get_or_create_returns_single_row():
                 await session.commit()
                 return config.id
 
-        results = await asyncio.gather(*[_create_config() for _ in range(10)])
+        await asyncio.gather(*[_create_config() for _ in range(10)])
 
         # Verify only one row exists
         async with session_maker() as session:

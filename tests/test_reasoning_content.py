@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CHAT_JS = (ROOT / "src/static/js/chat.js").read_text(encoding="utf-8")
 CSS = (ROOT / "src/static/css/main.css").read_text(encoding="utf-8")
 
-from app.services.llm import StreamChunk, stream_chat, non_stream_chat, LLMModel
+from app.services.llm import StreamChunk
 from app.logging_config import log_llm_session
 
 
@@ -38,10 +38,6 @@ class TestStreamChatReasoningNull:
     @pytest.mark.asyncio
     async def test_reasoning_content_null_yields_empty_string(self):
         """API returns reasoning_content: null → StreamChunk.reasoning_content should be ''"""
-        model = LLMModel(
-            model_id="test", name="test", provider="openai",
-            api_base="http://localhost", api_key="key", llm_model="gpt-test"
-        )
         sse_data = (
             'data: {"choices":[{"delta":{"content":"hi","reasoning_content":null},"finish_reason":null}]}\n\n'
             'data: [DONE]\n\n'
@@ -59,9 +55,7 @@ class TestStreamChatReasoningNull:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            chunks = []
             # We can't easily mock the full streaming, so test the delta parsing directly
-            import json as _json
             delta_obj = {"content": "hi", "reasoning_content": None}
             reasoning_text = delta_obj.get("reasoning_content") or ""
             assert reasoning_text == ""

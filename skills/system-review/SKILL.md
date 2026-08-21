@@ -27,6 +27,8 @@ The dimensions execute in order because later dimensions depend on earlier ones:
 
 **Dependency chain**: 1→2→3→4→5→6→7. Each dimension receives the output of all prior dimensions as context.
 
+**Competition data formats**: Competition conclusion entries (`market_landscape.key_players`, `differentiation.unique_strengths/weaknesses/opportunities`) support two shapes — a plain string (legacy format) or an object `{name|item, source: input_evidence|industry_template|model_inference, confidence: high|medium|low}`. Object entries are rendered in reports as `名称（来源：X · 置信度：Y）`. `open_questions` (questions to research when competition data is missing) renders as a `### 待调研问题` section, and `market_landscape.has_competition_data` marks whether competition input was provided.
+
 ## Output Modes
 
 ```
@@ -48,7 +50,7 @@ The dimensions execute in order because later dimensions depend on earlier ones:
 | `quality_assessment` | 服务预约 PRD quality evaluation | PM writing and thinking assessment with scoring |
 | `prd_draft` | 声纹管理 V3 PRD (621 lines) | New PRD draft generated from historical analysis |
 
-**`--target-doc`**: When specified, generates an additional context report for a specific target document (historical evolution, related boundary issues, existing solutions). Useful when preparing to review a new PRD.
+**`--target-doc`**: Only used with `--output-type prd_draft` (or `all`) — generates a context report for the specified target document (historical evolution, related boundary issues, existing solutions), useful when preparing to review a new PRD. Under other output types, the value is only recorded in `metadata.target_doc` and no additional report is generated.
 
 ## Engine Architecture
 
@@ -116,7 +118,7 @@ python3 scripts/pm_assess.py classify.json ./analysis/ result.json --rubric temp
 - **Industry template** — via `--industry` flag (e.g., `smart_home`) for competition dimension context
 - **Competition references** — via `--competition-refs` for user-provided competitor information
 - **Scoring rubric** — via `--rubric` for PM assessment dimension override
-- **Review context** — via `--review-context` for project-level specifications (scoring rubrics, domain rules, writing standards)
+- **Review context** — via `--review-context` for project-level specifications (writing standards, scoring rubrics)
 
 ### Review Context Injection
 
@@ -127,7 +129,6 @@ The `--review-context` parameter accepts a JSON file with project-level specific
   "context_version": 3,
   "specifications": [
     {"type": "scoring_rubric", "content": "..."},
-    {"type": "domain_rules", "content": "..."},
     {"type": "writing_standard", "content": "..."}
   ],
   "scoring_overrides": {
@@ -142,6 +143,8 @@ The `--review-context` parameter accepts a JSON file with project-level specific
   }
 }
 ```
+
+Only two specification types are supported and extracted in the current version: `writing_standard` and `scoring_rubric`. The `domain_rules` type is not yet implemented for extraction — configured entries are not injected into the review context (planned feature).
 
 ## Output Format
 
@@ -200,7 +203,7 @@ The PM assessment dimension is the most unique and valuable sub-module.
 
 - All writing scores ≥ 4 AND business ≤ 2 → **Technical PM**
 - Business thinking ≥ 4 AND tech depth ≤ 2 → **Business PM**
-| Relatively balanced → **Balanced PM**
+- Relatively balanced → **Balanced PM**
 
 ### Growth Path Generation
 

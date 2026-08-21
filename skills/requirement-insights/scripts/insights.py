@@ -198,6 +198,7 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
         return {"evolution_chains": [], "summary": {}}
 
     evolution_chains = []
+    all_matches = []
     total_issues = 0
     resolved = 0
     partial = 0
@@ -307,6 +308,21 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
                     remaining_issues.append(m.get("issue", ""))
                     unresolved += 1
                 total_issues += 1
+                # 保留完整匹配记录（含 issue_id/evidence/confidence），
+                # 供最终输出与审计追溯使用。
+                all_matches.append({
+                    "chain_name": chain_name,
+                    "version": cv["version"],
+                    "doc_id": cv["doc_id"],
+                    "issue_id": m.get("issue_id"),
+                    "issue": m.get("issue", ""),
+                    "status": status,
+                    "resolved_in": m.get("resolved_in"),
+                    "resolved_version": m.get("resolved_version"),
+                    "evidence": m.get("evidence"),
+                    "confidence": m.get("confidence", "low"),
+                    "note": m.get("note", ""),
+                })
 
             cv["boundary_issues_resolved"] = resolved_issues
             cv["boundary_issues_remaining"] = remaining_issues
@@ -336,7 +352,8 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
         "conservation_valid": total_issues == resolved + partial + unresolved,
     }
 
-    return {"evolution_chains": evolution_chains, "summary": summary}
+    return {"evolution_chains": evolution_chains, "matches": all_matches,
+            "summary": summary}
 
 
 def generate_mermaid(evolution_chains: list[dict]) -> str:
@@ -374,6 +391,69 @@ def generate_mermaid(evolution_chains: list[dict]) -> str:
     return "\n".join(lines)
 
 
+NO_BASELINE_WARNING = (
+    "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
+)
+
+
+def _normalize_feature_dims(raw_dims: list) -> list[dict]:
+    """把功能维度归一化为 dict 列表，保留模型给出的 feature_id/
+    source_doc_ids/status，供覆盖矩阵与缺口评估的 feature_id 对齐使用。"""
+    dims = []
+    for d in raw_dims:
+        if isinstance(d, str):
+            name = d.strip()
+            if name:
+                dims.append({"name": name})
+        elif isinstance(d, dict):
+            name = str(d.get("name", "")).strip()
+            if name:
+                dims.append({
+                    "name": name,
+                    "feature_id": d.get("feature_id", ""),
+                    "source_doc_ids": list(d.get("source_doc_ids", []) or []),
+                    "status": d.get("status", ""),
+                })
+    return dims
+
+
+def _align_assessments(entries: list[dict], assessments: list,
+                       kind: str, alignment: dict) -> None:
+    """按 feature_id 把模型评估结果回填到 entries（gap-assessment 规则6）。
+
+    模型输出缺 feature_id 或无法匹配时降级为同位置匹配，并在 alignment
+    中标注对齐方式（feature_id / positional_fallback）与警告。
+    """
+    by_fid = {}
+    for a in assessments:
+        if isinstance(a, dict) and a.get("feature_id"):
+            by_fid[a["feature_id"]] = a
+
+    for i, entry in enumerate(entries):
+        fid = entry.get("feature_id", "")
+        a = by_fid.get(fid)
+        if a is None:
+            if i < len(assessments) and isinstance(assessments[i], dict):
+                a = assessments[i]
+                alignment["method"] = "positional_fallback"
+                alignment["warnings"].append(
+                    f"{kind}评估缺少 feature_id={fid} 的对应项，已按位置降级匹配")
+            else:
+                alignment["warnings"].append(
+                    f"{kind}评估未返回 feature_id={fid}"
+                    f"（{entry.get('feature', '')}），保留默认评估")
+                continue
+        if kind == "gap":
+            entry["description"] = a.get("impact", "")
+            entry["severity"] = a.get("severity", "medium")
+            entry["suggestion"] = a.get("suggestion", "")
+        else:
+            entry["note"] = a.get("note", entry.get("note", ""))
+
+    if entries and alignment["method"] is None:
+        alignment["method"] = "feature_id"
+
+
 def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
                      categories: list[dict], text_model: str,
                      feature_dims: list[str] = None,
@@ -390,30 +470,33 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
 
     # Baseline warning: without an independent target capability baseline,
     # only "coverage analysis" is meaningful, not "absolute gap identification".
+    baseline_provided = bool(target_baseline)
+    baseline_source = "user_provided" if baseline_provided else None
     baseline_warning = ""
+
     if feature_dims:
-        feature_dimensions = feature_dims
+        feature_dimensions = _normalize_feature_dims(feature_dims)
     else:
         extraction_prompt = load_prompt("feature-extraction.md")
         if not extraction_prompt:
             print("  警告：未找到功能提取Prompt文件，使用boundary_in作为维度", file=sys.stderr)
-            feature_dimensions = list(set(
+            feature_dimensions = _normalize_feature_dims(sorted(set(
                 bi for bd in boundary_data for bi in bd.get("boundary_in", [])
-            ))
-            baseline_warning = (
-                "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
-                "下列'缺口'实为'现有文档未覆盖的能力'，可能源于文档缺失或未提及，"
-                "需结合产品能力地图或行业模板人工确认。"
-            )
+            )))
+            if not baseline_provided:
+                baseline_warning = (
+                    NO_BASELINE_WARNING +
+                    "下列'缺口'实为'现有文档未覆盖的能力'，可能源于文档缺失或未提及，"
+                    "需结合产品能力地图或行业模板人工确认。"
+                )
         else:
             # P1-4.4: If target_baseline is provided, inject it into the
             # feature-extraction prompt so the LLM has an independent
             # reference for gap identification. Without it, only coverage
             # analysis is meaningful, not absolute gap identification.
-            if target_baseline:
+            if baseline_provided:
                 baseline_json = json.dumps(target_baseline, ensure_ascii=False, indent=2)
                 baseline_section = f"{baseline_json}\n（用户提供的目标能力基线）"
-                baseline_warning = ""
             else:
                 baseline_section = "[]\n（空--未提供独立基线，请在 baseline_warning 中说明限制）"
 
@@ -426,56 +509,79 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
 
             result = call_llm(client, extraction_prompt, user_msg, text_model)
             raw_dims = result.get("feature_dimensions", [])
-            if not target_baseline:
+            if not baseline_provided:
                 baseline_warning = result.get("baseline_warning", "")
-            if isinstance(raw_dims, list):
-                feature_dimensions = []
-                for d in raw_dims:
-                    if isinstance(d, str):
-                        feature_dimensions.append(d)
-                    elif isinstance(d, dict):
-                        feature_dimensions.append(d.get("name", ""))
+            if isinstance(raw_dims, list) and raw_dims:
+                feature_dimensions = _normalize_feature_dims(raw_dims)
             else:
-                feature_dimensions = list(set(
+                feature_dimensions = _normalize_feature_dims(sorted(set(
                     bi for bd in boundary_data for bi in bd.get("boundary_in", [])
-                ))
-                baseline_warning = baseline_warning or (
-                    "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
-                )
+                )))
 
-    if not baseline_warning:
-        baseline_warning = (
-            "未提供独立目标能力基线，仅完成现有需求覆盖分析，无法判断绝对产品缺口。"
-        )
+    if not baseline_provided and not baseline_warning:
+        baseline_warning = NO_BASELINE_WARNING
 
+    # 基线合并：基线中存在但提取结果未覆盖的能力，补为显式 gap 维度，
+    # 确保"基线中无文档覆盖的能力 → gap"在覆盖矩阵中可见。
+    if baseline_provided:
+        existing_names = {d["name"].strip().lower() for d in feature_dimensions}
+        for cap in target_baseline:
+            cap_name = cap.get("name", "") if isinstance(cap, dict) else str(cap)
+            cap_name = cap_name.strip()
+            if cap_name and cap_name.lower() not in existing_names:
+                feature_dimensions.append({
+                    "name": cap_name,
+                    "source_doc_ids": [],
+                    "status": "gap",
+                })
+                existing_names.add(cap_name.lower())
+
+    # 确定性构建覆盖矩阵（与 SkillRunner._build_coverage_matrix 规则一致）：
+    # 优先使用模型给出的 source_doc_ids；缺失时按 boundary_in/core_problem
+    # 子串匹配兜底；无覆盖 → gap，多文档 → overlap。
     coverage_matrix = []
-    for dim in feature_dimensions:
-        covered_by = []
-        for a in analyses:
-            boundary_in = a.get("boundary_in", [])
-            core_problem = a.get("core_problem", "")
-            doc_id = a.get("doc_id", "")
-            doc_version = a.get("version", "")
-            check_text = " ".join(boundary_in) + " " + core_problem
-            if dim.lower() in check_text.lower() or any(
-                    dim.lower() in bi.lower() for bi in boundary_in):
-                covered_by.append(doc_version or doc_id)
+    for idx, dim in enumerate(feature_dimensions):
+        name = dim.get("name", "")
+        feature_id = dim.get("feature_id") or f"feat_{idx + 1:03d}"
+        source_doc_ids = [d for d in (dim.get("source_doc_ids") or []) if d]
 
-        if covered_by:
-            status = "overlap" if len(covered_by) > 1 else "covered"
-        else:
+        if not source_doc_ids and name:
+            name_lower = name.lower()
+            for a in analyses:
+                boundary_in = a.get("boundary_in", []) or []
+                core_problem = a.get("core_problem", "") or ""
+                check_text = " ".join(str(bi) for bi in boundary_in) + " " + str(core_problem)
+                if name_lower in check_text.lower() or any(
+                        name_lower in str(bi).lower() for bi in boundary_in):
+                    doc_id = a.get("doc_id", "")
+                    if doc_id:
+                        source_doc_ids.append(doc_id)
+
+        covered_by = []
+        for doc_id in source_doc_ids:
+            doc_data = doc_index.get(doc_id, {})
+            covered_by.append(doc_data.get("version") or doc_id)
+
+        if not source_doc_ids:
             status = "gap"
+        elif len(source_doc_ids) > 1:
+            status = "overlap"
+        else:
+            status = "covered"
         coverage_matrix.append({
-            "feature": dim,
+            "feature_id": feature_id,
+            "feature": name,
             "covered_by": covered_by,
+            "source_doc_ids": source_doc_ids,
             "status": status,
         })
 
-    gaps = [cm for cm in coverage_matrix if cm["status"] == "gap"]
-    overlaps = [cm for cm in coverage_matrix if cm["status"] == "overlap"]
+    gaps = [dict(cm) for cm in coverage_matrix if cm["status"] == "gap"]
+    overlaps = [dict(cm) for cm in coverage_matrix if cm["status"] == "overlap"]
 
-    gap_assessments = []
-    if gaps:
+    # gaps 为空但存在 overlap 时仍需调用评估，否则 overlap 评估被丢弃。
+    assessment_alignment = {"method": None, "warnings": []}
+    if gaps or overlaps:
         assessment_prompt = load_prompt("gap-assessment.md")
         if assessment_prompt:
             user_msg = (f"## 功能覆盖矩阵\n"
@@ -490,39 +596,34 @@ def run_gap_analysis(client, doc_index: dict, analyses: list[dict],
                         f"{baseline_warning}")
 
             result = call_llm(client, assessment_prompt, user_msg, text_model)
-            gap_assessments = result.get("gap_assessments", [])
-            overlap_assessments = result.get("overlap_assessments", [])
+            gap_assessments = result.get("gap_assessments", []) or []
+            overlap_assessments = result.get("overlap_assessments", []) or []
 
-            for i, g in enumerate(gaps):
-                if i < len(gap_assessments):
-                    g["description"] = gap_assessments[i].get("impact", "")
-                    g["severity"] = gap_assessments[i].get("severity", "medium")
-                    g["suggestion"] = gap_assessments[i].get("suggestion", "")
+            _align_assessments(gaps, gap_assessments, "gap", assessment_alignment)
+            _align_assessments(overlaps, overlap_assessments, "overlap",
+                               assessment_alignment)
 
-            for i, o in enumerate(overlaps):
-                if i < len(overlap_assessments):
-                    oa = overlap_assessments[i]
-                    o["note"] = oa.get("note", o.get("note", ""))
-    else:
-        overlap_assessments = []
-
-    gaps_final = [{"feature": g["feature"],
+    gaps_final = [{"feature_id": g["feature_id"],
+                    "feature": g["feature"],
                     "description": g.get("description", ""),
                     "severity": g.get("severity", "medium"),
                     "suggestion": g.get("suggestion", "")} for g in gaps]
 
-    overlaps_final = [{"feature": o["feature"],
+    overlaps_final = [{"feature_id": o["feature_id"],
+                        "feature": o["feature"],
                         "covered_by": o["covered_by"],
                         "note": o.get("note", "")} for o in overlaps]
 
     covered_count = len([cm for cm in coverage_matrix if cm["status"] in ("covered", "overlap")])
 
     return {
-        "feature_dimensions": feature_dimensions,
+        "feature_dimensions": [d["name"] for d in feature_dimensions],
         "coverage_matrix": coverage_matrix,
         "gaps": gaps_final,
         "overlaps": overlaps_final,
         "baseline_warning": baseline_warning,
+        "baseline_source": baseline_source,
+        "assessment_alignment": assessment_alignment,
         "summary": {
             "total_features": len(feature_dimensions),
             "covered": covered_count,

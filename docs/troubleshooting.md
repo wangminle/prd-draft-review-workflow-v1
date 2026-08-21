@@ -16,7 +16,7 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.11"}
+# 预期返回: {"status":"ok","version":"0.3.12"}
 ```
 
 ---
@@ -84,11 +84,13 @@ curl http://localhost:17957/api/health
 
 - **现象**:平台挂在子路径(如 `/prd-review/`)下时,**页面白屏或 API 404**。
 - **原因**:
-  - `ROOT_PATH` 未设置,或反向代理 strip 掉了路径前缀。
+  - `ROOT_PATH` 未设置;
+  - 反向代理未剥离前缀,后端收到带双前缀的路径,无法匹配路由;
+  - 缺少尾斜杠跳转。
 - **解决**:
   1. 在 `.env` 中设置 `ROOT_PATH=/prd-review`(**无尾斜杠**)。
-  2. 反向代理**不要 strip 前缀**:`proxy_pass` 后不要带路径(直接转发完整 URI)。
-  3. 配置 `/prd-review` → `/prd-review/` 的**尾斜杠跳转**(前端使用 `./` 相对路径加载静态资源,缺尾斜杠会导致相对路径错位)。
+  2. 反向代理须**剥离前缀**后转发(Caddy 用 `handle_path`,Nginx 的 `proxy_pass` 带尾部 `/`),配置示例详见[打包部署指南 §4.3](packaging-and-deployment.md)。
+  3. 配置 `/prd-review` → `/prd-review/` 的**尾斜杠跳转**(308;前端使用 `./` 相对路径加载静态资源,缺尾斜杠会导致相对路径错位)。
   4. 完成后清浏览器缓存验证。
 
 ---
@@ -176,12 +178,21 @@ curl http://localhost:17957/api/health
 
 ---
 
-### 12. 健康检查与日志(排障入口)
+### 12. 发起评审返回 409「必需 Skill 已被禁用」
+
+- **现象**:点击开始评审时返回 **409**,提示「必需 Skill 已被禁用,无法发起审查:{skill_id 列表}。请在管理后台重新启用后再试。」。
+- **原因**:管理员在 **Skill 管理**中禁用了必需 Skill(`prd-overview-classify`/`prd-per-analysis`/`system-review`/`report-generator` 任一),评审启动前置门控会拒绝创建任务。
+- **解决**:由管理员在管理后台(Skill 管理)重新启用对应 Skill 后再发起评审。
+> 可选 Skill(`requirement-insights`)被禁用**不会**触发 409:`insight`/`full`/`draft` 模式会自动跳过「需求洞察」步骤**降级运行**,任务终态为 `completed_with_warnings`,降级明细记录在任务 `step_details` 中。
+
+---
+
+### 13. 健康检查与日志(排障入口)
 
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.11"}
+  # 预期返回: {"status":"ok","version":"0.3.12"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -217,7 +228,7 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.11"}
+# Expected: {"status":"ok","version":"0.3.12"}
 ```
 
 ---
@@ -285,11 +296,13 @@ curl http://localhost:17957/api/health
 
 - **Symptom**: When the platform is mounted under a sub-path (e.g. `/prd-review/`), the **page is blank or APIs return 404**.
 - **Cause**:
-  - `ROOT_PATH` is unset, or the reverse proxy strips the path prefix.
+  - `ROOT_PATH` is unset;
+  - the reverse proxy does not strip the prefix, so the backend receives a double-prefixed path that matches no route;
+  - the trailing-slash redirect is missing.
 - **Fix**:
   1. Set `ROOT_PATH=/prd-review` in `.env` (**no trailing slash**).
-  2. The reverse proxy must **not strip the prefix**: do not append a path to `proxy_pass` (forward the full URI as-is).
-  3. Configure the `/prd-review` → `/prd-review/` **trailing-slash redirect** (the frontend loads static assets via `./` relative paths; a missing trailing slash breaks them).
+  2. The reverse proxy must **strip the prefix** before forwarding (Caddy `handle_path`, or Nginx `proxy_pass` with a trailing `/`); see [packaging-and-deployment.md §4.3](packaging-and-deployment.md) for sample configs.
+  3. Configure the `/prd-review` → `/prd-review/` **trailing-slash redirect** (308; the frontend loads static assets via `./` relative paths, so a missing trailing slash breaks them).
   4. Clear the browser cache and verify.
 
 ---
@@ -377,12 +390,21 @@ curl http://localhost:17957/api/health
 
 ---
 
-### 12. Health check and logs (troubleshooting entry points)
+### 12. Starting a review returns 409 "required Skill disabled"
+
+- **Symptom**: Clicking Start Review returns **409** with the message "必需 Skill 已被禁用，无法发起审查：{skill_id list}。请在管理后台重新启用后再试。" (required Skill(s) disabled; re-enable them in the admin console).
+- **Cause**: An admin disabled one of the required skills (`prd-overview-classify`/`prd-per-analysis`/`system-review`/`report-generator`) in **Skill Management**, so the review-start gate refuses to create the task.
+- **Fix**: Have an admin re-enable the corresponding skill in the admin console (Skill Management), then start the review again.
+> Disabling the optional skill (`requirement-insights`) does **not** trigger 409: `insight`/`full`/`draft` modes automatically skip the "requirement insights" step and run **degraded**; the task ends as `completed_with_warnings`, with the degradation details recorded in the task's `step_details`.
+
+---
+
+### 13. Health check and logs (troubleshooting entry points)
 
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.11"}
+  # Expected: {"status":"ok","version":"0.3.12"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).

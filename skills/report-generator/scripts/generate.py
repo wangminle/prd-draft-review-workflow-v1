@@ -209,6 +209,16 @@ def generate_per_analysis_md(project_name: str, analyses: list[dict],
             lines.append(f"| {_escape_md_cell(c.get('name', ''))} | {c.get('doc_count', 0)} |")
         lines.append("")
 
+    # 文档依赖图：仅当存在有效依赖关系时嵌入（空图只剩 "graph LR" 头，不输出占位）。
+    dependencies = classify_data.get("dependencies", [])
+    if dependencies and build_dependency_graph:
+        dep_mermaid = build_dependency_graph(dependencies, docs)
+        if dep_mermaid.strip() != "graph LR":
+            lines.append("### 文档依赖关系\n")
+            lines.append("```mermaid")
+            lines.append(dep_mermaid)
+            lines.append("```\n")
+
     lines.append("## 二、逐篇分析\n")
     for a in analyses:
         doc_id = a.get("doc_id", "")
@@ -286,14 +296,32 @@ def generate_per_analysis_md(project_name: str, analyses: list[dict],
             )
         lines.append("")
 
+    evo_mermaid = ""
     if insights_data:
-        evolution = insights_data.get("evolution", {})
-        mermaid = evolution.get("mermaid_graph", "")
-        if mermaid:
-            lines.append("## 四、需求演进脉络\n")
+        evo_mermaid = insights_data.get("evolution", {}).get("mermaid_graph", "") or ""
+
+    # 版本链时间线：仅当至少有一条含版本的链时嵌入（无 section 视为空图）。
+    timeline = ""
+    if version_chains and build_version_chain_timeline:
+        candidate = build_version_chain_timeline(version_chains)
+        if "section" in candidate:
+            timeline = candidate
+
+    if evo_mermaid or timeline:
+        lines.append("## 四、需求演进脉络\n")
+        if evo_mermaid:
             lines.append("```mermaid")
-            lines.append(mermaid)
+            lines.append(evo_mermaid)
             lines.append("```\n")
+        if timeline:
+            lines.append("### 版本链时间线\n")
+            lines.append("```mermaid")
+            lines.append(timeline)
+            lines.append("```\n")
+    elif not insights_data:
+        # 缺少可选输入（--insights-json）时明确标注，避免读者误以为演进脉络为空结论。
+        lines.append("## 四、需求演进脉络\n")
+        lines.append("（未提供需求洞察数据，且无版本链信息，本节无演进脉络内容）\n")
 
     avg_score = sum(a.get("quality_score", 0) for a in analyses) / max(len(analyses), 1)
     lines.append("## 五、文档质量评价\n")
@@ -387,6 +415,14 @@ def generate_next_directions_md(project_name: str, review_data: dict,
                 for item in items:
                     lines.append(f"- **{item.get('action', '')}**（优先级：{item.get('priority', '')}）")
                 lines.append("")
+
+    # 缺少可选输入（--insights-json）时明确标注，避免静默跳过造成误导。
+    if not insights_data:
+        lines.append("> 注：未提供需求洞察数据（--insights-json），本报告不含演进链与功能缺口层面的建议。\n")
+
+    # 所有数据来源均缺失时明确标注，而不是输出只有标题的空报告。
+    if len(lines) == 1 or (len(lines) == 2 and not insights_data):
+        lines.append("（缺少可用的评审与洞察数据，暂无法生成下一步方向建议）\n")
 
     return "\n".join(lines)
 

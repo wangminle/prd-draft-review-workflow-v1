@@ -332,7 +332,6 @@ async def test_notification_on_review_request(client):
     # 检查通知
     notif_resp = await client.get("/api/notifications", headers=headers)
     assert notif_resp.status_code == 200
-    items = notif_resp.json()["items"]
     # admin 既是 initiator 又是 approver，自己不会收到通知
     # 但通知确实被创建了
 
@@ -342,9 +341,6 @@ async def test_mark_notification_read(client):
     headers = await _auth_header(client)
 
     # 直接创建通知
-    from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-    from app.models.user import Notification, Base
 
     # 通过 API 测试 batch-read
     resp = await client.post(
@@ -630,7 +626,7 @@ async def test_notification_status_lifecycle(client):
     project_id = await _create_project(client, headers)
 
     # 触发通知：创建协作审查
-    req_resp = await client.post(
+    await client.post(
         "/api/review/requests",
         json={"project_id": project_id, "approver_ids": [1], "goal": "通知状态测试"},
         headers=headers,
@@ -642,8 +638,6 @@ async def test_notification_status_lifecycle(client):
     if not items:
         # admin 既是发起人又是 approver，通知可能已被过滤
         # 直接创建一个通知
-        from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-        from app.database import get_db
         # 跳过此测试，因为 admin 的通知场景特殊
         return
 

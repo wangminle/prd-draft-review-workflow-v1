@@ -24,7 +24,7 @@ python3 scripts/review.py <classify_json> <analysis_dir> <output_json> [options]
 | `--industry` | none | Industry context (e.g., `smart_home`) for competition dimension |
 | `--competition-refs` | none | Path to competitor reference file |
 | `--rubric` | none | Path to PM scoring rubric JSON (overrides default) |
-| `--review-context` | none | Path to Review Context JSON (scoring rubrics, domain rules, writing standards) |
+| `--review-context` | none | Path to Review Context JSON (writing standards, scoring rubrics) |
 
 ### Environment Variables
 
@@ -72,7 +72,6 @@ The `--review-context` parameter accepts a JSON file:
   "context_version": 3,
   "specifications": [
     {"type": "scoring_rubric", "content": "..."},
-    {"type": "domain_rules", "content": "..."},
     {"type": "writing_standard", "content": "..."}
   ],
   "scoring_overrides": {
@@ -90,6 +89,8 @@ The `--review-context` parameter accepts a JSON file:
 
 When `scoring_overrides` is present, PM assessment uses the team-defined dimensions and weights instead of defaults.
 
+Only two specification types are supported and extracted in the current version: `writing_standard` and `scoring_rubric`. The `domain_rules` type is not yet implemented for extraction — configured entries are not injected into the review context (planned feature).
+
 ## Industry Templates
 
 Available industry templates in `templates/`:
@@ -99,6 +100,15 @@ Available industry templates in `templates/`:
 | `industry-smart-home.json` | Smart Home | Key players, comparison dimensions, market characteristics |
 
 Use via `--industry smart_home`.
+
+## Competition Data Formats
+
+Competition conclusion entries (`market_landscape.key_players`, `differentiation.unique_strengths/weaknesses/opportunities`) support two shapes:
+
+- Plain string (legacy format)
+- Object: `{name|item, source: input_evidence|industry_template|model_inference, confidence: high|medium|low}`
+
+Object entries are rendered in reports as `名称（来源：X · 置信度：Y）`. Additionally, `open_questions` (questions to research when competition data is missing) renders as a `### 待调研问题` section, and `market_landscape.has_competition_data` marks whether competition input was provided.
 
 ## PM Assessment Details
 

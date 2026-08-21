@@ -80,7 +80,7 @@ class NotificationService:
     ) -> list[int]:
         """P4.A.4: 协作审查请求创建 → 通知 Approver。"""
         notification_ids = []
-        title = f"新的协作审查请求"
+        title = "新的协作审查请求"
         body = goal or "请审查此协作审查请求"
 
         for approver_id in approver_ids:

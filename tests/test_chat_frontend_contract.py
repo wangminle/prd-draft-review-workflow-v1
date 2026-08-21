@@ -35,7 +35,6 @@ def test_chat_markdown_renders_mermaid_fences_as_chart_containers():
 
 def test_chat_message_rendering_defers_mermaid_until_stream_end():
     send_message_block = CHAT_JS.split("async sendMessage()", 1)[1].split("_normalizeHistoryMessages(messages)", 1)[0]
-    append_block = CHAT_JS.split("_appendMessage(role, content)", 1)[1].split("_renderMarkdown(text)", 1)[0]
     assert "this._schedulePostStreamMermaid(contentEl);" in send_message_block
     assert "_renderMermaidOnStreamEnd" in CHAT_JS
     assert "async _renderMermaidCharts(scope = document)" in CHAT_JS

@@ -50,6 +50,8 @@ python3 scripts/batch_analyze.py <classify_result_json> <output_dir> [options]
 |--------|---------|-------------|
 | `--enable-vision` | off | Enable vision engine |
 | `--max-concurrent` | 3 | Maximum concurrent analyses |
+| `--force` | off | Force re-analysis of all documents (ignore incremental cache) |
+| `--review-context-version` | empty | ReviewContext version; cache is invalidated when it changes |
 | `--skill-root` | auto-detected | Skill root directory |
 
 ## Context JSON Format
@@ -108,6 +110,7 @@ Key fields:
 - `boundary_in/out`: What the requirement covers/excludes
 - `boundary_issues`: Related uncovered problems with severity and resolution status
 - `key_points`: Type-specific extraction (technical/survey/competitive)
+- `expert_review`: Expert-opinion review against 6 predefined rules — `summary` plus `checks[]` entries (`rule_key`, `rule_name`, `status: pass|risk|missing`, `evidence`, `suggestion`); `checks` must cover exactly the 6 rules with no duplicate or missing `rule_key`
 - `image_insights`: Vision analysis results (when enabled)
 - `quality_score`: 1-5 overall score
 - `confidence`: 0-1 analysis confidence

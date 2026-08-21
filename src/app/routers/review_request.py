@@ -186,7 +186,6 @@ async def list_review_requests(
         all_requests = await request_repo.list_by_project(project_id)
         # 非项目创建者仅能看到自己参与的请求
         if project.created_by != user.id:
-            participant_repo = ReviewParticipantRepository(db)
             accessible = []
             for req_item in all_requests:
                 if await _can_access_request(db, req_item, user.id):

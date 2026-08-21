@@ -16,13 +16,12 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 from app.services.knowledge_vector_service import (
     KnowledgeVectorService,
     SearchResult,
-    VectorChunk,
     get_knowledge_vector_service,
 )
 from app.services.embedding_service import EmbeddingService, get_embedding_service

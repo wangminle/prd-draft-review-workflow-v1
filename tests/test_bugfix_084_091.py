@@ -184,7 +184,7 @@ async def test_agent_decide_approval_requires_assigned_approver(client):
     from app.models.user import AgentApprovalRequest, AgentProfile, AgentRun
 
     c, sm = client
-    admin_h = await _auth(c)
+    await _auth(c)
     other_h = await _register(c, "bug087_other")
 
     approval_id = None

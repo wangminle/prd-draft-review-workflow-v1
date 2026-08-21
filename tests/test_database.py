@@ -98,7 +98,6 @@ async def test_message_model_columns():
 @pytest.mark.asyncio
 async def test_database_init_creates_tables():
     """数据库初始化应创建所有表"""
-    import tempfile
     from pathlib import Path
 
     from app.models.user import Base

@@ -6,7 +6,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -95,14 +95,12 @@ async def test_context_items_persisted_per_conversation(auth_client):
         json={"context_type": "historical_doc", "title": "历史文档A", "enabled": True},
     )
     assert resp.status_code == 200
-    ctx1_item_id = resp.json()["id"]
 
     resp = await auth_client.post(
         f"/api/chat/conversations/{conv1_id}/context",
         json={"context_type": "manual_rule", "title": "规则1", "manual_text": "请检查验收口径", "enabled": True},
     )
     assert resp.status_code == 200
-    ctx1_rule_id = resp.json()["id"]
 
     # 创建第二个对话
     conv2_id = None

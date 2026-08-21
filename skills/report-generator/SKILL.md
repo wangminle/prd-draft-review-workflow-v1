@@ -137,27 +137,31 @@ python3 scripts/generate.py classify.json ./analysis/ review.json ./reports/ --s
 
 ## 一、文档概览
 （文档数量、分类分布、版本链概要）
+### 文档依赖关系
+（Mermaid 依赖图——仅当 classify 的 dependencies 非空且能构建出有效图时输出）
 
 ## 二、逐篇分析
-### 2.1 {{doc_title}}
+### {{doc_id}}
 - 核心问题：...
-- 边界外问题：⚠️ 未解决 / ✅ 已解决
+- 边界外问题：✅ 已解决 / ⚠️ 部分解决 / 🔴 未解决
 - 质量评分：★★★★☆ 4/5
 
 ## 三、边界外问题追踪汇总
 | 问题 | 来源版本 | 解决状态 | 解决版本 |
 
 ## 四、需求演进脉络
-（Mermaid 演进图）
+（Mermaid 演进图；「### 版本链时间线」Mermaid——仅当 version_chains 至少有一条含版本的链；未提供 --insights-json 时输出「（未提供需求洞察数据…）」的明确标注）
 
 ## 五、文档质量评价
-
-## 六、产品经理特征总结
 ```
 
 ### Full Review Report
 
 Same structure as Skill 4's `generate_full_report_md()` output — 7 sections matching the 7 dimensions.
+
+### Next Directions Report
+
+Rendered from review dimensions plus optional insights data. When `--insights-json` is missing or all data sources are absent, the report outputs an explicit annotation (e.g., 未提供需求洞察数据 / 缺少可用的评审与洞察数据) instead of a silently empty report.
 
 ### Insights Report
 

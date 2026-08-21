@@ -291,7 +291,7 @@ def test_repair_notes_for_enum_fallback(tmp_path):
     assert any("enum fallback" in n for n in notes), f"Expected enum fallback note, got: {notes}"
     assert result["priority"] == "low"  # defaulted to first enum value
     assert result["_schema_valid"] is False
-    assert result["_schema_critical"] is False  # "priority" is not in _CRITICAL_FIELD_HINTS
+    assert result["_schema_critical"] is True  # BUG-159：enum 无法纠正的回退属语义改写，无条件 critical
 
 
 def test_repair_notes_for_enum_correction(tmp_path):

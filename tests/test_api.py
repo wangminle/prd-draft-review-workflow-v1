@@ -4,13 +4,11 @@ import json
 import os
 import sys
 import tempfile
-from datetime import timedelta
 from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import select
 
 ROOT = Path(__file__).parent.parent
 SRC = ROOT / "src"
@@ -208,8 +206,6 @@ async def test_register_never_promotes_first_user_to_admin(client):
 
 @pytest.mark.asyncio
 async def test_admin_users_list_includes_last_active_time(client):
-    from app.models.user import User
-    from app.utils import now_cn
 
     register_resp = await client.post(
         "/api/auth/register",

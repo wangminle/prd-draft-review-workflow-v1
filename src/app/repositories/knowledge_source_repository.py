@@ -1,6 +1,6 @@
 """KnowledgeSource 数据查询与写入层。"""
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 

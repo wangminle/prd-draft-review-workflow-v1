@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.user import Base
 from app.utils import now_cn
@@ -55,7 +55,9 @@ class ReviewTask(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     project_id: Mapped[int] = mapped_column(ForeignKey("review_projects.id"), nullable=False)
     mode: Mapped[str] = mapped_column(String(10), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="pending")
+    # completed_with_warnings 为 22 字符；SQLite 不强制 VARCHAR 长度，
+    # 放宽到 32 以兼容长度强制的数据库（PG/MySQL）。
+    status: Mapped[str] = mapped_column(String(32), default="pending")
     current_step: Mapped[int] = mapped_column(Integer, default=0)
     total_docs: Mapped[int] = mapped_column(Integer, default=0)
     completed_docs: Mapped[int] = mapped_column(Integer, default=0)

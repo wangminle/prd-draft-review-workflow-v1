@@ -6,7 +6,6 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import Notification, Comment
-from app.logging_config import now_cn
 
 
 class NotificationRepository:

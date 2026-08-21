@@ -265,7 +265,7 @@ class TestApproval:
 
     async def test_approval_requires_approver_id(self, client):
         """P4.Pre.4: AgentApprovalRepository.create 必须传 approver_id"""
-        from app.models.user import AgentApprovalRequest, AgentRun, AgentProfile
+        from app.models.user import AgentRun
         from app.repositories.agent_repository import AgentApprovalRepository
 
         # 通过 API 获取 profile（自动创建）

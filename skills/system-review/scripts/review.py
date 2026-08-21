@@ -14,7 +14,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 try:
     from pydantic import BaseModel, Field
@@ -52,6 +52,44 @@ def _escape_md_cell(text) -> str:
     if text is None:
         return ""
     return str(text).replace("|", "\\|").replace("\n", " ").replace("\r", " ").strip()
+
+
+# competition.md 信息来源分级 → 中文标签（用于报告渲染）。
+_COMPETITION_SOURCE_LABELS = {
+    "input_evidence": "输入证据",
+    "industry_template": "行业模板",
+    "model_inference": "模型推断",
+}
+_COMPETITION_CONFIDENCE_LABELS = {
+    "high": "高",
+    "medium": "中",
+    "low": "低",
+}
+
+
+def _format_competition_item(item) -> str:
+    """把竞品结论条目渲染为 Markdown 文本。
+
+    兼容两种形态（见 competition.md 输出 schema）：
+    - 纯字符串（旧格式）：原样返回，保持向后兼容；
+    - 带 ``name``/``item`` + ``source``/``confidence`` 的对象（新格式）：
+      渲染为 ``名称（来源：行业模板 · 置信度：中）``。
+    """
+    if isinstance(item, str):
+        return item
+    if not isinstance(item, dict):
+        return str(item)
+    name = item.get("name") or item.get("item", "")
+    source = _COMPETITION_SOURCE_LABELS.get(item.get("source", ""), item.get("source", ""))
+    confidence = _COMPETITION_CONFIDENCE_LABELS.get(item.get("confidence", ""), item.get("confidence", ""))
+    annotations = []
+    if source:
+        annotations.append(f"来源：{source}")
+    if confidence:
+        annotations.append(f"置信度：{confidence}")
+    if annotations:
+        return f"{name}（{' · '.join(annotations)}）"
+    return str(name)
 
 OUTPUT_TYPE_FULL_REPORT = "full_report"
 OUTPUT_TYPE_NEXT_DIRECTIONS = "next_directions"
@@ -138,8 +176,10 @@ class ArchitectureResult(BaseModel):
 
 class MarketLandscape(BaseModel):
     position: str = "exploring"
-    key_players: list[str] = Field(default_factory=list)
+    # 兼容两种形态：纯字符串（旧格式）或带 source/confidence 标签的对象（新格式）。
+    key_players: list[Union[str, dict]] = Field(default_factory=list)
     tech_route_difference: str = ""
+    has_competition_data: bool = False
 
 
 class CompetitorDimension(BaseModel):
@@ -149,15 +189,18 @@ class CompetitorDimension(BaseModel):
 
 
 class Differentiation(BaseModel):
-    unique_strengths: list[str] = Field(default_factory=list)
-    weaknesses: list[str] = Field(default_factory=list)
-    opportunities: list[str] = Field(default_factory=list)
+    # 与 key_players 一致，兼容纯字符串或带 source/confidence 的对象。
+    unique_strengths: list[Union[str, dict]] = Field(default_factory=list)
+    weaknesses: list[Union[str, dict]] = Field(default_factory=list)
+    opportunities: list[Union[str, dict]] = Field(default_factory=list)
 
 
 class CompetitionResult(BaseModel):
     market_landscape: MarketLandscape = Field(default_factory=MarketLandscape)
     competitor_comparison: list[CompetitorDimension] = Field(default_factory=list)
     differentiation: Differentiation = Field(default_factory=Differentiation)
+    # 缺少竞品资料时必填的待调研问题（见 output-schema.json / competition.md）。
+    open_questions: list[str] = Field(default_factory=list)
 
 
 class StrategyAssessment(BaseModel):
@@ -573,16 +616,23 @@ def generate_full_report_md(dimensions: dict, project_name: str) -> str:
         lines.append("## 三、品牌与竞争定位\n")
         ml = comp.get("market_landscape", {})
         if ml:
-            lines.append(f"市场位置：{ml.get('position', '')} | 主要玩家：{', '.join(ml.get('key_players', []))}\n")
+            players = [_format_competition_item(p) for p in ml.get("key_players", [])]
+            lines.append(f"市场位置：{ml.get('position', '')} | 主要玩家：{', '.join(players)}\n")
         diff = comp.get("differentiation", {})
         if diff:
             lines.append("### 差异化\n")
             for s in diff.get("unique_strengths", []):
-                lines.append(f"- 💪 优势：{s}")
+                lines.append(f"- 💪 优势：{_format_competition_item(s)}")
             for w in diff.get("weaknesses", []):
-                lines.append(f"- ⚠️ 短板：{w}")
+                lines.append(f"- ⚠️ 短板：{_format_competition_item(w)}")
             for o in diff.get("opportunities", []):
-                lines.append(f"- 🔮 机会：{o}")
+                lines.append(f"- 🔮 机会：{_format_competition_item(o)}")
+            lines.append("")
+        open_questions = comp.get("open_questions", [])
+        if open_questions:
+            lines.append("### 待调研问题\n")
+            for q in open_questions:
+                lines.append(f"- {q}")
             lines.append("")
 
     ps = dimensions.get("product_strategy", {})
@@ -653,7 +703,7 @@ def generate_full_report_md(dimensions: dict, project_name: str) -> str:
             lines.append("### 成长路径\n")
             lines.append(f"- 短期：{', '.join(gp.get('short_term', []))}")
             lines.append(f"- 中期：{', '.join(gp.get('mid_term', []))}")
-            lines.append(f"- 镋期：{', '.join(gp.get('long_term', []))}")
+            lines.append(f"- 长期：{', '.join(gp.get('long_term', []))}")
             lines.append("")
 
     ap = dimensions.get("action_plan", {})
@@ -712,7 +762,7 @@ def generate_next_directions_md(dimensions: dict, project_name: str) -> str:
         if opps:
             lines.append("## 竞争驱动的需求方向\n")
             for o in opps:
-                lines.append(f"- 🔮 差异化机会：{o}")
+                lines.append(f"- 🔮 差异化机会：{_format_competition_item(o)}")
             lines.append("")
 
     ps = dimensions.get("product_strategy", {})

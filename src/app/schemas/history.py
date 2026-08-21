@@ -1,6 +1,6 @@
 """Pydantic 历史记录相关请求/响应模型"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class MessageInfo(BaseModel):

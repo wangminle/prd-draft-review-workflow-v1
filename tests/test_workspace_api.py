@@ -52,9 +52,6 @@ async def _get_token(client, username="testuser", password="test123456"):
 async def test_upload_source_success():
     """P0.B.1: 上传文件创建 KnowledgeSource"""
     import tempfile
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from app.models.user import User
-    from app.models.workspace import WorkspaceMember
 
     tmp_db = tempfile.mktemp(suffix=".db")
     app_inst, engine, sm = make_test_app(tmp_db)
@@ -147,7 +144,6 @@ async def test_upload_source_non_member_blocked():
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         # Member registers and gets workspace
         resp = await c.post("/api/auth/register", json={"username": "wsowner", "password": "test123456"})
-        member_token = resp.json()["access_token"]
 
         # Intruder registers
         resp = await c.post("/api/auth/register", json={"username": "wsintruder_upload", "password": "test123456"})
@@ -243,7 +239,7 @@ async def test_delete_source_success():
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
 
     from app.models.user import Base, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -328,9 +324,6 @@ async def test_delete_source_success():
 async def test_delete_source_not_found():
     """P0.B.3: 删除不存在的资料返回 404"""
     import tempfile
-    from sqlalchemy.ext.asyncio import async_sessionmaker
-    from app.models.user import User
-    from app.models.workspace import WorkspaceMember
 
     tmp_db = tempfile.mktemp(suffix=".db")
     app_inst, engine, sm = make_test_app(tmp_db)
@@ -361,7 +354,7 @@ async def test_delete_source_wrong_workspace():
     tmp_db = tempfile.mktemp(suffix=".db")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UserBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -429,7 +422,7 @@ async def test_update_source_tags():
     tmp_db = tempfile.mktemp(suffix=".db")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -510,7 +503,7 @@ async def test_update_source_tags_invalid_type():
     tmp_db = tempfile.mktemp(suffix=".db")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
@@ -659,7 +652,7 @@ async def test_add_project_source_ref_not_owner():
     tmp_db = tempfile.mktemp(suffix=".db")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource
     from app.models.review import ReviewProject
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
@@ -675,7 +668,6 @@ async def test_add_project_source_ref_not_owner():
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         # Owner creates project
         resp = await c.post("/api/auth/register", json={"username": "owner", "password": "test123456"})
-        owner_token = resp.json()["access_token"]
 
         # Another user
         resp = await c.post("/api/auth/register", json={"username": "intruder", "password": "test123456"})
@@ -725,7 +717,7 @@ async def test_add_project_source_ref_invalid_type():
     tmp_db = tempfile.mktemp(suffix=".db")
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource
     from app.models.review import ReviewProject
 
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
@@ -786,7 +778,7 @@ async def test_delete_source_member_role_blocked():
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
     from app.models.workspace import WorkspaceMember
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource
 
     tmp_db = tempfile.mktemp(suffix=".db")
     engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_db}", echo=False)
@@ -861,7 +853,6 @@ async def test_delete_source_member_role_blocked():
 async def test_register_auto_join_default_workspace():
     """P0.A.7: 注册后自动加入默认 workspace，角色 member"""
     import tempfile
-    from sqlalchemy.ext.asyncio import async_sessionmaker
     from app.models.user import User
     from app.models.workspace import WorkspaceMember
 
@@ -1049,7 +1040,6 @@ async def test_viewer_cannot_upload():
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
-        admin_token = resp.json()["access_token"]
 
         resp = await c.post("/api/auth/register", json={"username": "viewer_user", "password": "test123456"})
         viewer_token = resp.json()["access_token"]
@@ -1102,7 +1092,7 @@ async def test_freeze_snapshot_on_pipeline_start():
     import tempfile
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.models.user import Base as UBase, User
-    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember, WorkspaceMember
+    from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
     from app.models.review import ReviewProject
     from app.repositories.knowledge_source_repository import ProjectSourceRefRepository
 
@@ -1118,8 +1108,7 @@ async def test_freeze_snapshot_on_pipeline_start():
 
     transport = ASGITransport(app=app_inst)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
-        resp = await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
-        admin_token = resp.json()["access_token"]
+        await c.post("/api/auth/login", json={"username": "admin", "password": "admin@2026"})
 
         async with session_maker() as session:
             admin = await session.execute(select(User).where(User.username == "admin"))
@@ -1147,7 +1136,6 @@ async def test_freeze_snapshot_on_pipeline_start():
 
             await session.commit()
 
-            source_id = source.id
             project_id = project.id
 
         # Call freeze_snapshot directly via repo
@@ -1227,7 +1215,7 @@ async def test_add_source_ref_cross_workspace_blocked():
             source_id2 = src2.id
 
             # Get default workspace
-            ws1 = (await session.execute(select(Workspace).where(Workspace.name == "默认空间"))).scalar_one()
+            (await session.execute(select(Workspace).where(Workspace.name == "默认空间"))).scalar_one()
 
         # Create project in default workspace (ws1)
         proj_resp = await ac.post("/api/review/projects", json={"name": "proj-default"}, headers=headers)
@@ -1262,12 +1250,10 @@ async def test_add_source_ref_archived_blocked():
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource
-        from app.models.user import User
+        from app.models.workspace import Workspace, KnowledgeSource
 
         async with session_maker() as session:
             ws = (await session.execute(select(Workspace).where(Workspace.name == "默认空间"))).scalar_one()
-            admin_user = (await session.execute(select(User).where(User.role == "admin"))).scalar_one()
             src = KnowledgeSource(workspace_id=ws.id, source_type="upload", title="archived-src", status="archived", version=1)
             session.add(src)
             await session.flush()
@@ -1305,7 +1291,7 @@ async def test_list_sources_tag_and_status_filter():
         token = login_resp.json()["access_token"]
         headers = {"Authorization": f"Bearer {token}"}
 
-        from app.models.workspace import Workspace, KnowledgeSource, WorkspaceMember
+        from app.models.workspace import Workspace, KnowledgeSource
 
         async with session_maker() as session:
             ws = (await session.execute(select(Workspace).where(Workspace.name == "默认空间"))).scalar_one()
@@ -1513,7 +1499,6 @@ class TestDefaultWorkspaceEndpoints:
 
     async def test_is_default_migration_from_legacy(self):
         """旧数据库（name='默认空间' 但无 is_default 列）升级后 is_default 自动标记为 True"""
-        from sqlalchemy import text
         tmp_db = tempfile.mktemp(suffix=".db")
         app, engine, session_maker = make_test_app(tmp_db)
 

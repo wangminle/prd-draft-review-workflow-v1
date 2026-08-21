@@ -10,7 +10,7 @@
 
 本文件为「AI 需求评审工作流平台」的 API 参考，面向集成方与二次开发者。所有业务接口均以 `/api` 为前缀,后端基于 FastAPI。
 
-> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.11`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
+> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.12`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
 
 ---
 
@@ -70,7 +70,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 
 | 方法 | 路径 | 用途 | 鉴权 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.11"}` | 公开 |
+| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.12"}` | 公开 |
 | GET | `/api/app/branding` | 品牌配置(登录页 logo、顶栏 logo、favicon 等) | 公开 |
 | GET | `/assets/branding/{path}` | 静态品牌资产文件(防目录穿越) | 公开 |
 | POST | `/api/log` | 前端日志上报(写入 `runtime/logs/frontend.jsonl` 并记审计) | 用户(可选) |
@@ -144,6 +144,8 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 | GET | `/projects/{project_id}/reviews/{review_id}/analyses` | 逐篇文档分析结果 | 用户 |
 | GET | `/projects/{project_id}/reviews/{review_id}/system-review` | 体系评审结果 | 用户 |
 | GET | `/projects/{project_id}/reviews/{review_id}/report` | 评审报告(支持 `format=json\|markdown`) | 用户 |
+
+> 注:发起评审(`POST /projects/{project_id}/reviews`)时,若管理员禁用了必需 Skill,端点返回 **409**(「必需 Skill 已被禁用,无法发起审查:…」);可选 Skill(`requirement-insights`,需求洞察)被禁用时任务正常创建,但会跳过需求洞察步骤**降级运行**,终态为 `completed_with_warnings`。
 
 ### 需求评审 `/api/review` — Prompt 模板
 
@@ -406,7 +408,7 @@ The "Auth" column in the tables below uses these markers:
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.11"}` | Public |
+| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.12"}` | Public |
 | GET | `/api/app/branding` | Branding config (login logo, topbar logo, favicon, etc.) | Public |
 | GET | `/assets/branding/{path}` | Static branding assets (path-traversal protected) | Public |
 | POST | `/api/log` | Frontend log ingestion (writes `runtime/logs/frontend.jsonl` + audit) | User (optional) |
@@ -480,6 +482,8 @@ Chat attachment upload and URL content fetching.
 | GET | `/projects/{project_id}/reviews/{review_id}/analyses` | Per-document analysis results | User |
 | GET | `/projects/{project_id}/reviews/{review_id}/system-review` | System-level review results | User |
 | GET | `/projects/{project_id}/reviews/{review_id}/report` | Review report (supports `format=json\|markdown`) | User |
+
+> Note: When starting a review (`POST /projects/{project_id}/reviews`), if an admin has disabled a required skill, the endpoint returns **409** ("required skill(s) disabled ..."); if the optional skill (`requirement-insights`) is disabled, the task is still created but skips the requirement-insights step and runs **degraded**, ending as `completed_with_warnings`.
 
 ### Requirements Review `/api/review` — Prompt Templates
 

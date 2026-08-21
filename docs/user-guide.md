@@ -136,6 +136,8 @@
 
 > 提示:部分模式耗时较长(批量整体评估约 10 分钟),建议利用缓存复用:先用快速审查跑一遍单篇,再升级到更深模式。
 
+> 注:若管理员禁用了必需 Skill,点击"开始评审"会提示 409 错误(「必需 Skill 已被禁用」),需联系管理员在 Skill 管理中重新启用;若需求洞察 Skill 被禁用,深度分析类模式(`insight`/`full`/`draft`)会自动跳过洞察步骤降级运行,并在任务结果中标注警告(`completed_with_warnings`)。
+
 ---
 
 ### 3. 消费评审结果
@@ -363,6 +365,8 @@ The platform has a time-saving design: **the 6 modes are progressive**, and **re
 4. When done, it auto-navigates to the results page.
 
 > Tip: Some modes take a while (Batch Overall Assessment is about 10 minutes). Take advantage of cache reuse: run Quick Review on a single document first, then upgrade to a deeper mode.
+
+> Note: If an admin has disabled a required skill, clicking "Start Review" fails with a 409 error ("required skill disabled") — contact your admin to re-enable it in Skill Management. If the requirement-insights skill is disabled, deep-analysis modes (`insight`/`full`/`draft`) automatically skip the insights step and run degraded, with a warning flagged in the task results (`completed_with_warnings`).
 
 ---
 

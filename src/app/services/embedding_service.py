@@ -77,7 +77,7 @@ class EmbeddingService:
         try:
             start = time.monotonic()
             # 发一个最小请求来建立 HTTPS 连接
-            result = await self._call_api(["warmup"])
+            await self._call_api(["warmup"])
             elapsed = time.monotonic() - start
             self._warmed_up = True
             logger.info(f"[EMBED] 预热完成，耗时 {elapsed:.0f}ms")

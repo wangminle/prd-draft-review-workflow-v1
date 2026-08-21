@@ -119,8 +119,11 @@ class SkillSchemaLoader:
         4. Clamp numeric values to [minimum, maximum] when feasible
         5. Drop properties when additionalProperties: false
         6. Mark _schema_valid=False if any repair was needed
-        7. Mark _schema_critical=True if any critical business field was
-           missing/invalid (callers MUST NOT treat critical repairs as success)
+        7. Mark _schema_critical=True when a repair substantively rewrote a
+           value (uncorrectable enum fallback, unconvertible type, numeric
+           clamping, minItems shortfall) or when a critical business field
+           was missing/invalid (callers MUST NOT treat critical repairs as
+           success)
         8. Collect _schema_repair_notes listing every repair action so
            callers can surface non-critical repairs in diagnostics (4.2 fix)
         """
@@ -295,7 +298,9 @@ def _repair_node(value, schema: dict, path: str, resolver: _RefResolver, notes: 
             repaired = True
             _note(f"type converted at {path or 'root'} -> {expected_type}")
         else:
-            critical = _path_touches_critical(path)
+            # Cannot convert: the value is replaced by a fabricated type
+            # default, which is a substantive rewrite - always critical.
+            critical = True
             _note(f"type mismatch at {path or 'root'}: cannot convert to {expected_type}")
             return _field_default(schema), True, critical
 
@@ -308,11 +313,13 @@ def _repair_node(value, schema: dict, path: str, resolver: _RefResolver, notes: 
             _note(f"enum corrected at {path or 'root'} -> {value}")
             logger.info("Repaired enum at %s -> %s", path or "root", value)
         else:
-            # No correction possible - pick first enum value as fallback
-            # but mark as critical if the field path is business-critical.
+            # No deterministic correction possible - falling back to enum[0]
+            # rewrites the LLM's semantics, so this is ALWAYS critical
+            # (BUG-159), regardless of whether the path is in
+            # _CRITICAL_FIELD_HINTS.
             value = schema["enum"][0]
             repaired = True
-            critical = critical or _path_touches_critical(path)
+            critical = True
             _note(f"enum fallback at {path or 'root'}: defaulted to {value}")
             logger.warning("Could not correct enum at %s; defaulting to %s", path or "root", value)
 
@@ -335,7 +342,9 @@ def _repair_node(value, schema: dict, path: str, resolver: _RefResolver, notes: 
             if child_repaired:
                 result[field] = repaired_value
                 repaired = True
-                critical = critical or child_critical
+            # Critical flags (e.g. minItems shortfall) must propagate even
+            # when the child value itself was not rewritten.
+            critical = critical or child_critical
 
         # Drop unknown properties when additionalProperties: false
         if schema.get("additionalProperties") is False:
@@ -364,17 +373,18 @@ def _repair_node(value, schema: dict, path: str, resolver: _RefResolver, notes: 
             _note(f"array below minItems at {path or 'root'}: {len(items)} < {schema['minItems']}")
         return items, repaired, critical
 
-    # Numeric range clamping
+    # Numeric range clamping: the value is substantively rewritten (not a
+    # format conversion), so clamping is always critical.
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         if "minimum" in schema and value < schema["minimum"]:
             value = schema["minimum"]
             repaired = True
-            critical = critical or _path_touches_critical(path)
+            critical = True
             _note(f"numeric clamped to minimum at {path or 'root'} -> {value}")
         if "maximum" in schema and value > schema["maximum"]:
             value = schema["maximum"]
             repaired = True
-            critical = critical or _path_touches_critical(path)
+            critical = True
             _note(f"numeric clamped to maximum at {path or 'root'} -> {value}")
 
     # String length truncation (only when maxLength violated)
@@ -399,15 +409,6 @@ def _try_enum_correction(value, allowed: list):
 
 def _field_is_critical(field_name: str) -> bool:
     return field_name in _CRITICAL_FIELD_HINTS
-
-
-def _path_touches_critical(path: str) -> bool:
-    if not path:
-        return False
-    for hint in _CRITICAL_FIELD_HINTS:
-        if hint in path:
-            return True
-    return False
 
 
 def _check_type(value, expected_type) -> bool:

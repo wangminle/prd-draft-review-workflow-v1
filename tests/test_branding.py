@@ -17,8 +17,6 @@ from app.services.branding_config import (
     _validate_asset_path,
     _load_runtime_branding,
     _discover_branding_assets,
-    resolve_branding_asset,
-    ensure_branding_dirs,
 )
 
 
@@ -157,7 +155,7 @@ class TestRuntimeBrandingLoad:
         with patch("app.services.branding_config.runtime_path",
                    side_effect=lambda *p: tmp_path.joinpath(*p)):
             # yaml.safe_load returns a dict for this, it won't be None
-            result = _load_runtime_branding()
+            _load_runtime_branding()
             # just verify it doesn't crash
 
 

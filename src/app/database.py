@@ -538,7 +538,6 @@ async def _ensure_skill_configs():
 
 async def _migrate_pi_agent_singleton():
     """迁移旧 pi_agent_config 表：添加 singleton_key 列并去重。"""
-    from app.models.user import PiAgentConfig
 
     async with engine.begin() as conn:
         result = await conn.execute(text("PRAGMA table_info(pi_agent_config)"))
@@ -565,7 +564,6 @@ async def _migrate_pi_agent_singleton():
 
 async def _ensure_pi_agent_config():
     """确保 Pi Agent 配置行存在（单行记录，防并发重复）。"""
-    from app.models.user import PiAgentConfig
     from sqlalchemy.exc import IntegrityError
 
     async with async_session() as session:
@@ -583,7 +581,7 @@ async def _ensure_pi_agent_config():
 
 async def _ensure_agent_profiles():
     """为所有现有用户创建默认 AgentProfile（幂等）。"""
-    from app.models.user import AgentProfile, User
+    from app.models.user import User
 
     async with async_session() as session:
         # 获取所有用户 ID
@@ -607,7 +605,6 @@ async def _ensure_agent_profiles():
 
 async def _cleanup_zombie_tasks():
     """Mark running/pending tasks as failed — they can't resume after a server restart."""
-    from app.models.review import ReviewTask
 
     async with async_session() as session:
         result = await session.execute(
@@ -641,7 +638,6 @@ def _mark_zombie_task_failed(task) -> dict:
 async def _ensure_default_workspace():
     """确保默认 workspace 存在，并将 admin 加入为 owner；将旧项目归入默认空间。"""
     from app.models.user import User
-    from app.models.workspace import Workspace, WorkspaceMember
 
     async with async_session() as session:
         result = await session.execute(
@@ -688,7 +684,6 @@ async def _ensure_default_workspace():
 
 async def _migrate_projects_to_default_workspace(default_workspace_id: int):
     """为所有现有 ReviewProject 自动归入默认 workspace。"""
-    from app.models.review import ReviewProject
 
     async with async_session() as session:
         result = await session.execute(

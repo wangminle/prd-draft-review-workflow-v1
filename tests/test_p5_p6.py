@@ -2,17 +2,15 @@
 @提及通知、评论 resolve、成本统计、质量统计、Skill 回归、配额拦截、Agent 退役。"""
 import pytest
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
 
 from app.models.user import Base, User
-from app.models.workspace import Workspace, WorkspaceMember, KnowledgeSource, VALID_OWNER_TYPES, VALID_VISIBILITIES
+from app.models.workspace import Workspace, WorkspaceMember
 from app.models.user import (
-    AgentProfile, AgentAuthorization, AgentApprovalRequest,
-    Notification, Comment,
+    AgentProfile, Comment,
 )
 from app.models.review import CostDailySummary, QualityWeeklySummary, WorkspaceBudget
 from app.repositories.knowledge_source_repository import KnowledgeSourceRepository
-from app.repositories.notification_repository import NotificationRepository, CommentRepository
 
 
 # ── Fixtures ──

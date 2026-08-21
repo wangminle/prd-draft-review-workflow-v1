@@ -17,11 +17,10 @@ import tempfile
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.user import Base, User, Conversation, Message, ContextItem, ModelConfig, PromptTemplate, SkillConfig
+from app.models.user import Base, User, Conversation, Message, ContextItem
 from app.models.review import (
     ReviewProject, ReviewDocument, ReviewTask,
     DocAnalysis, SystemReview, ReviewContext, ReviewPrompt,

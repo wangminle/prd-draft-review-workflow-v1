@@ -1,6 +1,5 @@
 """P1.6 — Thinking adapter 单元测试 & API 集成测试"""
 
-import pytest
 import pytest_asyncio
 import os
 import tempfile

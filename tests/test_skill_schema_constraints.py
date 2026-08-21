@@ -212,3 +212,107 @@ def test_pattern_enforced(tmp_path):
     errors = loader.validate({"doc_id": "weird"}, schema)
     assert any("does not match pattern" in e for e in errors)
     assert loader.validate({"doc_id": "doc_123"}, schema) == []
+
+
+# ── BUG-159: substantive rewrites must be critical even off the hints list ──
+
+_KEY_POINTS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "key_points": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "type": {"type": "string", "enum": ["technical", "business", "ux"]},
+                    "text": {"type": "string"},
+                },
+            },
+        },
+    },
+}
+
+
+def test_uncorrectable_enum_fallback_marks_critical_for_non_critical_field(tmp_path):
+    """BUG-159: key_points.type="nonsense" cannot be corrected; falling back to
+    enum[0] rewrites the LLM's semantics, so it must be critical even though
+    the field is not in _CRITICAL_FIELD_HINTS."""
+    loader = SkillSchemaLoader(tmp_path)
+    repaired = loader.repair({"key_points": [{"type": "nonsense", "text": "x"}]}, _KEY_POINTS_SCHEMA)
+    assert repaired["key_points"][0]["type"] == "technical"  # fell back to enum[0]
+    assert repaired["_schema_valid"] is False
+    assert repaired["_schema_critical"] is True
+    assert any("enum fallback" in n for n in repaired["_schema_repair_notes"])
+
+
+def test_enum_case_correction_not_critical_for_non_critical_field(tmp_path):
+    """Deterministic case/whitespace correction ("Technical" -> "technical")
+    is a format fix, not a semantic rewrite — must stay non-critical."""
+    loader = SkillSchemaLoader(tmp_path)
+    repaired = loader.repair({"key_points": [{"type": " Technical ", "text": "x"}]}, _KEY_POINTS_SCHEMA)
+    assert repaired["key_points"][0]["type"] == "technical"
+    assert repaired["_schema_valid"] is False
+    assert repaired["_schema_critical"] is False
+    assert any("enum corrected" in n for n in repaired["_schema_repair_notes"])
+
+
+def test_numeric_clamp_non_critical_field_marks_critical(tmp_path):
+    """Clamping substantively rewrites the value — critical even for a field
+    that is not in _CRITICAL_FIELD_HINTS."""
+    loader = SkillSchemaLoader(tmp_path)
+    schema = {
+        "type": "object",
+        "properties": {
+            "progress": {"type": "integer", "minimum": 0, "maximum": 100},
+        },
+    }
+    repaired = loader.repair({"progress": 250}, schema)
+    assert repaired["progress"] == 100
+    assert repaired["_schema_valid"] is False
+    assert repaired["_schema_critical"] is True
+
+
+def test_unconvertible_type_fallback_marks_critical_for_non_critical_field(tmp_path):
+    """A present field whose type cannot be converted is replaced by a
+    fabricated default — substantive rewrite, always critical."""
+    loader = SkillSchemaLoader(tmp_path)
+    schema = {
+        "type": "object",
+        "properties": {
+            "page_count": {"type": "integer"},
+        },
+    }
+    repaired = loader.repair({"page_count": {"pages": 3}}, schema)
+    assert repaired["page_count"] == 0  # type default
+    assert repaired["_schema_valid"] is False
+    assert repaired["_schema_critical"] is True
+
+
+def test_min_items_shortfall_marks_critical_for_non_critical_field(tmp_path):
+    """Arrays below minItems cannot be synthesized — already unconditional."""
+    loader = SkillSchemaLoader(tmp_path)
+    schema = {
+        "type": "object",
+        "properties": {
+            "tags": {"type": "array", "minItems": 2, "items": {"type": "string"}},
+        },
+    }
+    repaired = loader.repair({"tags": ["only-one"]}, schema)
+    # No value was rewritten, so _schema_valid stays True, but the shortfall
+    # is unconditionally critical (existing behavior, kept).
+    assert repaired["_schema_critical"] is True
+
+
+def test_maxlength_truncation_stays_non_critical(tmp_path):
+    """Conservative maxLength truncation is kept as a non-critical repair."""
+    loader = SkillSchemaLoader(tmp_path)
+    schema = {
+        "type": "object",
+        "properties": {
+            "code": {"type": "string", "maxLength": 4},
+        },
+    }
+    repaired = loader.repair({"code": "abcdef"}, schema)
+    assert repaired["code"] == "abcd"
+    assert repaired["_schema_valid"] is False
+    assert repaired["_schema_critical"] is False

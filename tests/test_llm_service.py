@@ -1,6 +1,5 @@
 """测试 LLM service 模块 — build_messages, StreamChunk, test_connection, speed_test"""
 
-import json
 import os
 import sys
 from pathlib import Path

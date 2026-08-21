@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.user import Conversation, ContextItem, Message, ModelConfig, PromptTemplate, User
+from app.models.user import Conversation, Message, ModelConfig, PromptTemplate
 from app.repositories.conversation_repository import ConversationRepository
 from app.repositories.context_item_repository import ContextItemRepository
-from app.services.crypto import decrypt_key, mask_key
+from app.services.crypto import decrypt_key
 from app.services.llm import ChatMessage, PromptTemplate as LLMPromptTemplate, build_messages
 from app.storage.chat_file_storage import ChatFileStorage
 

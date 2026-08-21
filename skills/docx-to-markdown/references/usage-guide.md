@@ -162,12 +162,13 @@ mammoth 通常忽略文本框/形状中的内容，此函数作为补充提取�
 ### 命令行用法
 
 ```bash
-python3 scripts/batch_convert.py [源目录] [输出目录] [--force]
+python3 scripts/batch_convert.py [源目录] [输出目录] [--force] [--timeout 秒]
 ```
 
 **默认值：**
 - 源目录: `1-Reference`
 - 输出目录: `2-Temp`
+- `--timeout`: 单文档处理超时秒数（默认 300，<=0 不限制；依赖 SIGALRM，Windows 平台自动跳过）
 
 **示例：**
 ```bash
@@ -179,21 +180,23 @@ python3 scripts/batch_convert.py ./documents ./markdown_output --force
 
 ### 核心函数
 
-#### `batch_convert(source_dir, output_dir, force=False)`
+#### `batch_convert(source_dir, output_dir, force=False, timeout=300)`
 
 **参数：**
 - `source_dir`: 源文件目录
 - `output_dir`: 输出目录
 - `force`: 为 `True` 时强制重新转换已存在的输出目录（删除旧目录后重新生成）
+- `timeout`: 单文档转换超时秒数（默认 300，<=0 表示不限制；POSIX only）
 
 ### 特性
 
-1. **自动跳过** - 已存在的输出目录会被跳过（使用 `--force` 可强制重新转换）
-2. **`--force` 模式** - 删除已有输出目录后重新转换，适合文档更新后需要重新生成的场景
+1. **自动跳过** - 仅当输出目录、Markdown 文件与 `.converted` 完成标记三者齐备、且标记中记录的源文件 SHA-256 与当前源文件一致时才跳过；源文件变更后会自动重新转换（无需 `--force`）
+2. **`--force` 模式** - 删除已有输出目录后重新转换，适合需要强制全量重建的场景
 3. **进度显示** - 显示 `[当前/总数]` 进度
-4. **统计汇总** - 结束时显示成功/失败数量
-5. **文件名清理与防冲突** - 自动清理非法字符；超长文件名会附加短 hash
+4. **统计汇总** - 结束时显示成功/跳过/失败三项数量
+5. **文件名清理与防冲突** - 自动清理非法字符；发生字符替换或超长截断时附加源文件名短 hash
 6. **大小写去重** - macOS 等大小写不敏感文件系统上自动去重 `.docx`/`.DOCX`
+7. **安全防线** - 拒绝超限 ZIP（总解压 500MB/单 entry 100MB/单 entry 与总压缩比 >100x；总压缩比仅当压缩后总大小 >1MB 时判定，避免小文件误伤）、超限嵌入 Excel、超量或超像素图片；转换采用临时文件原子写入，中途失败自动清理半成品目录
 
 ### 输出结构
 
@@ -266,10 +269,10 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 
 | 元素 | 字体大小 | 颜色 |
 |-----|---------|-----|
-| 标题 (H1) | 18pt | #1a5490 |
-| 标题 (H2) | 14pt | #1a5490 |
-| 标题 (H3) | 12pt | #2c3e50 |
-| 正文 | 10pt | 黑色 |
+| 标题 (H1) | 14pt | #1a5490 |
+| 标题 (H2) | 12pt | #2c3e50 |
+| 标题 (H3/H4) | 11pt / 10pt | #34495e |
+| 正文 | 10pt | 黑色（ReportLab 默认） |
 | 列表 | 10pt | 黑色，缩进 20pt |
 
 ### 页面设置

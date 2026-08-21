@@ -68,7 +68,7 @@
 - `summary` 用 1-2 句话概括该文档在专家意见维度上的整体成熟度，不能为空，也不能只写“无”“暂无”“-”。
 - 如果 6 条规则全部满足，`summary` 也必须给出明确结论，例如“专家六项评审均通过，暂无额外修改意见。”
 - 如果任一规则为 `risk` 或 `missing`，`summary` 必须点名主要问题，例如“专家评审发现能力边界和多入口文案仍需补齐。”
-- `checks` 必须覆盖以上 6 条规则，每条都输出 `rule_key`、`rule_name`、`status`、`evidence`、`suggestion`。
+- `checks` 必须覆盖以上 6 条规则，每条都输出 `rule_key`、`rule_name`、`status`、`evidence`、`suggestion`；每条规则的 `rule_key` 只能出现一次（不可重复、不可缺失）。
 - `status` 只能是 `pass` / `risk` / `missing`。
 - `evidence` 要尽量引用文档中的原文依据；如果文档未体现，可明确写“文档未体现”。
 - `suggestion` 要给出具体改写或补充建议，避免空泛表述。
