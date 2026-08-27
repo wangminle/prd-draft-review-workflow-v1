@@ -41,7 +41,13 @@ const Notification = {
                 this._sse = new EventSource(url);
                 this._sse.onmessage = (event) => {
                     try {
-                        const notif = JSON.parse(event.data);
+                        const msg = JSON.parse(event.data);
+                        // LLM 重试瞬时提示：仅弹 toast，不计未读数、不入通知列表
+                        if (msg && msg.type === 'llm_retry') {
+                            App._showToast(msg.title || '模型调用失败，正在自动重试', 5000);
+                            return;
+                        }
+                        const notif = msg;
                         this._unreadCount += 1;
                         this._updateBadge();
                         // 如果当前有打开的 dropdown，追加到列表

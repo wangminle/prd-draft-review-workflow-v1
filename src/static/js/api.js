@@ -170,8 +170,8 @@ const API = {
     updatePiAgentLlmApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/llm-api-key', { api_key: apiKey }); },
     updatePiAgentSearchApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/search-api-key', { api_key: apiKey }); },
     updatePiAgentVisionApiKey(apiKey) { return this.request('PUT', '/api/pi-agent/config/vision-api-key', { api_key: apiKey }); },
-    testPiAgentConnection() { return this.request('POST', '/api/pi-agent/config/test-connection'); },
-    speedTestPiAgent() { return this.request('POST', '/api/pi-agent/config/speed-test'); },
+    testPiAgentConnection(tempConfig) { return this.request('POST', '/api/pi-agent/config/test-connection', tempConfig); },
+    speedTestPiAgent(tempConfig) { return this.request('POST', '/api/pi-agent/config/speed-test', tempConfig); },
 
     /* 管理 — 统计 */
     getStats() { return this.request('GET', '/api/admin/stats'); },

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 # 如果管理员误将模型上下文窗口大小（如 200000）填入 max_tokens，
 # 会导致 prompt 无空间而触发 400 错误。
 # 此处在运行时对 max_tokens 做硬上限，防止 DB 中的不合理值传到 API。
-_MAX_OUTPUT_TOKENS_HARD_LIMIT = 32768
+_MAX_OUTPUT_TOKENS_HARD_LIMIT = 100000
 
 
 def _cap_max_tokens(max_tokens: int) -> int:
@@ -223,13 +223,25 @@ def _model_test_retry_delay(headers, attempt: int, config: RetryConfig) -> float
     )
 
 
+# 管理后台「测试模型」为交互式请求：保持轻量重试（5 次 / 单次等待上限 30s），
+# 不随审查管线的 7 次长退避（2/4/8/16/32/64s）放大前端等待时间。
+_MODEL_TEST_RETRY_CONFIG = RetryConfig(
+    max_attempts=5,
+    initial_delay_ms=2000,
+    backoff_factor=2.0,
+    max_delay_ms=30000,
+    timeout_seconds=15.0,
+    connect_timeout_seconds=5.0,
+)
+
+
 async def _post_model_test_with_retry(
     url: str,
     *,
     payload: dict,
     headers: dict,
     timeout: httpx.Timeout,
-    config: RetryConfig = RetryConfig(),
+    config: RetryConfig = _MODEL_TEST_RETRY_CONFIG,
 ) -> tuple[httpx.Response | None, Exception | None]:
     last_resp: httpx.Response | None = None
     last_error: Exception | None = None

@@ -49,7 +49,12 @@ def normalize_dimension_result(dim_name: str, result: dict) -> dict:
     for key in _DIMENSION_PAYLOAD_KEYS.get(dim_name, ()):
         nested = result.get(key)
         if isinstance(nested, dict):
-            return nested
+            # Only unwrap tight wrappers where the payload key is the sole
+            # meaningful top-level key. tech-evolution 的合法扁平输出本身就带
+            # 顶层 tech_evolution 子对象（与兄弟字段并存），不能被剥掉（Issue #3）。
+            meaningful = [k for k in result if not k.startswith("_")]
+            if len(meaningful) == 1 and meaningful[0] == key:
+                return nested
 
     return result
 

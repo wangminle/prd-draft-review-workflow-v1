@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Action Plan Dimension Output",
+  "description": "维度7（action-plan prompt）的扁平输出结构。Issue #3：不得用完整报告 schema 校验维度结果。条数上限来自 prompt 规则2（短期≤5、中期≤5、长期≤3），里程碑≥3、风险≥2 来自规则3/4。",
+  "type": "object",
+  "required": ["short_term", "mid_term", "long_term", "milestones", "risks"],
+  "properties": {
+    "short_term": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {"$ref": "#/$defs/action_item"}
+    },
+    "mid_term": {
+      "type": "array",
+      "maxItems": 5,
+      "items": {"$ref": "#/$defs/action_item"}
+    },
+    "long_term": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {"$ref": "#/$defs/action_item"}
+    },
+    "milestones": {
+      "type": "array",
+      "minItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["time", "goal"],
+        "properties": {
+          "time": {"type": "string"},
+          "goal": {"type": "string"},
+          "depends_on": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["risk", "impact", "likelihood", "mitigation"],
+        "properties": {
+          "risk": {"type": "string"},
+          "impact": {"type": "string", "enum": ["high", "medium", "low"]},
+          "likelihood": {"type": "string", "enum": ["high", "medium", "low"]},
+          "mitigation": {"type": "string"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "action_item": {
+      "type": "object",
+      "required": ["action", "source_dimension", "success_criteria", "priority"],
+      "properties": {
+        "action": {"type": "string"},
+        "source_dimension": {
+          "type": "string",
+          "enum": ["business_value", "architecture", "competition", "product_strategy", "tech_evolution", "pm_assessment"]
+        },
+        "urgency_reason": {"type": "string"},
+        "reason": {"type": "string"},
+        "success_criteria": {"type": "string"},
+        "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+      }
+    }
+  }
+}

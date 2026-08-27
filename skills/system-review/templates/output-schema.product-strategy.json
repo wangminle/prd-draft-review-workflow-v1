@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Product Strategy Dimension Output",
+  "description": "维度4（product-strategy prompt）的扁平输出结构。Issue #3：不得用完整报告 schema 校验维度结果。",
+  "type": "object",
+  "required": ["current_strategy_assessment", "recommendations", "roadmap"],
+  "properties": {
+    "current_strategy_assessment": {
+      "type": "object",
+      "required": ["prioritization", "focus", "consistency", "evidence"],
+      "properties": {
+        "prioritization": {"type": "string", "enum": ["合理", "基本合理", "不合理"]},
+        "focus": {"type": "string", "enum": ["聚焦", "分散"]},
+        "consistency": {"type": "string", "enum": ["一致", "偶有摇摆", "方向混乱"]},
+        "evidence": {"type": "string"}
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["recommendation", "targets", "reasoning", "expected_impact", "priority"],
+        "properties": {
+          "recommendation": {"type": "string"},
+          "targets": {"type": "string"},
+          "reasoning": {"type": "string"},
+          "expected_impact": {"type": "string"},
+          "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    },
+    "roadmap": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["period", "items"],
+        "properties": {
+          "period": {"type": "string", "enum": ["Q1", "Q2", "Q3-Q4"]},
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["action", "category"],
+              "properties": {
+                "action": {"type": "string"},
+                "category": {"type": "string", "enum": ["功能", "技术", "体验", "数据"]},
+                "depends_on": {"type": "array", "items": {"type": "string"}}
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -5,8 +5,8 @@
 导致 prompt 无空间而触发 400 错误。
 
 修复：
-1. llm.py / retry.py 在发送 API 前对 max_tokens 做硬上限 32768
-2. admin.py ModelConfigCreate/Update 加 field_validator 校验 1-32768
+1. llm.py / retry.py 在发送 API 前对 max_tokens 做硬上限 100000
+2. admin.py ModelConfigCreate/Update 加 field_validator 校验 1-100000
 """
 
 import pathlib
@@ -39,9 +39,12 @@ class TestCapMaxTokensFunction:
         assert _cap_max_tokens(4096) == 4096
         assert _cap_max_tokens(8192) == 8192
         assert _cap_max_tokens(32768) == 32768
+        # 新上限边界：100000 恰好可达
+        assert _cap_max_tokens(100000) == 100000
         # 超大值被截断
-        assert _cap_max_tokens(200000) == 32768
-        assert _cap_max_tokens(1000000) == 32768
+        assert _cap_max_tokens(100001) == 100000
+        assert _cap_max_tokens(200000) == 100000
+        assert _cap_max_tokens(1000000) == 100000
         # 非正值回退默认
         assert _cap_max_tokens(0) == 4096
         assert _cap_max_tokens(-1) == 4096
@@ -49,9 +52,13 @@ class TestCapMaxTokensFunction:
 
     def test_hard_limit_constant(self):
         content = LLM_PY.read_text(encoding="utf-8")
-        assert "32768" in content, "llm.py 中未找到 32768 硬上限常量"
+        assert "_MAX_OUTPUT_TOKENS_HARD_LIMIT = 100000" in content, (
+            "llm.py 中未找到 100000 硬上限常量"
+        )
         content_r = RETRY_PY.read_text(encoding="utf-8")
-        assert "32768" in content_r, "retry.py 中未找到 32768 硬上限常量"
+        assert "_MAX_OUTPUT_TOKENS_HARD_LIMIT = 100000" in content_r, (
+            "retry.py 中未找到 100000 硬上限常量"
+        )
 
 
 class TestLlmPyUsesCap:
@@ -118,8 +125,8 @@ class TestAdminValidation:
             )
             raise AssertionError("ModelConfigCreate 应拒绝 max_tokens=200000")
         except Exception as e:
-            assert "32768" in str(e) or "max_tokens" in str(e).lower(), (
-                f"错误信息应包含 32768 或 max_tokens: {e}"
+            assert "100000" in str(e) or "max_tokens" in str(e).lower(), (
+                f"错误信息应包含 100000 或 max_tokens: {e}"
             )
 
         # Update: 200000 应被拒绝
@@ -127,8 +134,34 @@ class TestAdminValidation:
             ModelConfigUpdate(max_tokens=200000)
             raise AssertionError("ModelConfigUpdate 应拒绝 max_tokens=200000")
         except Exception as e:
-            assert "32768" in str(e) or "max_tokens" in str(e).lower(), (
-                f"错误信息应包含 32768 或 max_tokens: {e}"
+            assert "100000" in str(e) or "max_tokens" in str(e).lower(), (
+                f"错误信息应包含 100000 或 max_tokens: {e}"
+            )
+
+    def test_validation_boundary_100000(self):
+        """边界值：100000 恰好通过，100001 被拒绝。"""
+        import sys
+        sys.path.insert(0, str(PROJECT_ROOT / "src"))
+        from app.routers.admin import ModelConfigCreate, ModelConfigUpdate
+
+        mc = ModelConfigCreate(
+            model_id="test-boundary",
+            name="test-boundary",
+            api_base="http://localhost",
+            llm_model="test",
+            max_tokens=100000,
+        )
+        assert mc.max_tokens == 100000
+
+        mu = ModelConfigUpdate(max_tokens=100000)
+        assert mu.max_tokens == 100000
+
+        try:
+            ModelConfigUpdate(max_tokens=100001)
+            raise AssertionError("ModelConfigUpdate 应拒绝 max_tokens=100001")
+        except Exception as e:
+            assert "100000" in str(e) or "max_tokens" in str(e).lower(), (
+                f"错误信息应包含 100000 或 max_tokens: {e}"
             )
 
     def test_validation_accepts_normal(self):
@@ -153,7 +186,7 @@ class TestAdminValidation:
             llm_model="test2",
             max_tokens=32768,
         )
-        assert mc2.max_tokens == 32768
+        assert mc2.max_tokens == 32768  # 旧上限现为合法普通值
 
         mu = ModelConfigUpdate(max_tokens=8192)
         assert mu.max_tokens == 8192

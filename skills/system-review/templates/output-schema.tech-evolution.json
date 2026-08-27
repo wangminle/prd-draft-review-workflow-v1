@@ -1,0 +1,73 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Tech Evolution Dimension Output",
+  "description": "维度5（tech-evolution prompt）的扁平输出结构。Issue #3：不得用完整报告 schema 校验维度结果。",
+  "type": "object",
+  "required": ["current_architecture", "key_metrics", "tech_evolution", "evolution_recommendations"],
+  "properties": {
+    "current_architecture": {
+      "type": "object",
+      "required": ["pattern", "core_decisions"],
+      "properties": {
+        "pattern": {"type": "string", "enum": ["客户端", "云端", "端云协同"]},
+        "core_decisions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["decision", "assessment"],
+            "properties": {
+              "decision": {"type": "string"},
+              "assessment": {"type": "string", "enum": ["合理", "有风险", "不合理"]},
+              "risk": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "key_metrics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "value"],
+        "properties": {
+          "name": {"type": "string"},
+          "value": {"type": "string"},
+          "source_doc_ids": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "tech_evolution": {
+      "type": "object",
+      "required": ["trend", "tech_debt", "alignment_with_strategy"],
+      "properties": {
+        "trend": {"type": "string", "enum": ["逐步完善", "偶有回退", "方向不稳定"]},
+        "tech_debt": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["item", "severity", "suggestion"],
+            "properties": {
+              "item": {"type": "string"},
+              "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+              "suggestion": {"type": "string"}
+            }
+          }
+        },
+        "alignment_with_strategy": {"type": "string", "enum": ["一致", "部分一致", "不一致"]}
+      }
+    },
+    "evolution_recommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["action", "reason", "priority"],
+        "properties": {
+          "action": {"type": "string"},
+          "reason": {"type": "string"},
+          "priority": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    }
+  }
+}

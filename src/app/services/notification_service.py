@@ -50,6 +50,21 @@ def clear_channel(recipient_id: int, channel: list[str] | None = None) -> None:
         _notification_channels.pop(recipient_id, None)
 
 
+def push_transient_event(recipient_id: int, event: dict) -> None:
+    """向用户全部在线 SSE 连接推送瞬时事件（不落库）。
+
+    用于 LLM 重试 toast 等即时提示：复用通知 SSE 通道透传，
+    但不创建 Notification 记录、不计入未读数。
+    用户不在线（无 SSE 连接）时事件直接丢弃。
+    """
+    channels = _notification_channels.get(recipient_id)
+    if not channels:
+        return
+    payload = json.dumps(event, ensure_ascii=False)
+    for channel in channels:
+        channel.append(payload)
+
+
 @dataclass
 class NotificationEvent:
     """通知事件 — 用于 SSE 推送。"""

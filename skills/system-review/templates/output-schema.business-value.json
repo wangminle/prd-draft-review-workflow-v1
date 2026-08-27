@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Business Value Dimension Output",
+  "description": "维度1（business-value prompt）的扁平输出结构。Issue #3：维度结果是扁平 payload，不得用完整报告 schema（顶层 project_name/output_type/dimensions/metadata）校验。",
+  "type": "object",
+  "required": ["strategic_value", "business_goals", "user_insights"],
+  "properties": {
+    "strategic_value": {
+      "type": "object",
+      "required": ["user_value", "tech_barrier", "market_scale", "strategic_synergy", "feasibility"],
+      "properties": {
+        "user_value": {"$ref": "#/$defs/strategic_score"},
+        "tech_barrier": {"$ref": "#/$defs/strategic_score"},
+        "market_scale": {"$ref": "#/$defs/strategic_score"},
+        "strategic_synergy": {"$ref": "#/$defs/strategic_score"},
+        "feasibility": {"$ref": "#/$defs/strategic_score"}
+      }
+    },
+    "business_goals": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["goal", "coverage", "evidence"],
+        "properties": {
+          "goal": {"type": "string"},
+          "coverage": {"type": "string", "enum": ["high", "medium", "low"]},
+          "gap": {"type": "string"},
+          "evidence": {"type": "string"}
+        }
+      }
+    },
+    "user_insights": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["insight", "source_doc_ids", "confidence"],
+        "properties": {
+          "insight": {"type": "string"},
+          "source_doc_ids": {"type": "array", "items": {"type": "string"}},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "strategic_score": {
+      "type": "object",
+      "required": ["score", "evidence"],
+      "properties": {
+        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+        "evidence": {"type": "string"}
+      }
+    }
+  }
+}

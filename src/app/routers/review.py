@@ -130,10 +130,10 @@ async def _load_inactive_skill_ids(db: AsyncSession) -> set[str]:
 def _build_review_retry_config() -> RetryConfig:
     retry_cfg = _settings.get("review", {}).get("retry", {})
     return RetryConfig(
-        max_attempts=retry_cfg.get("max_attempts", 5),
+        max_attempts=retry_cfg.get("max_attempts", 7),
         initial_delay_ms=retry_cfg.get("initial_delay_ms", 2000),
         backoff_factor=retry_cfg.get("backoff_factor", 2.0),
-        max_delay_ms=retry_cfg.get("max_delay_ms", 30000),
+        max_delay_ms=retry_cfg.get("max_delay_ms", 64000),
         timeout_seconds=retry_cfg.get("timeout_seconds", 120.0),
         connect_timeout_seconds=retry_cfg.get("connect_timeout_seconds", 10.0),
     )

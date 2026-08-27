@@ -100,8 +100,8 @@ class ModelConfigUpdate(BaseModel):
     @field_validator("max_tokens")
     @classmethod
     def validate_max_tokens(cls, v):
-        if v is not None and (v < 1 or v > 32768):
-            raise ValueError("max_tokens 取值范围 1-32768（输出 token 上限，非上下文窗口大小）")
+        if v is not None and (v < 1 or v > 100000):
+            raise ValueError("max_tokens 取值范围 1-100000（输出 token 上限，非上下文窗口大小）")
         return v
 
     @field_validator("context_window")
@@ -145,8 +145,8 @@ class ModelConfigCreate(BaseModel):
     @field_validator("max_tokens")
     @classmethod
     def validate_max_tokens(cls, v):
-        if v < 1 or v > 32768:
-            raise ValueError("max_tokens 取值范围 1-32768（输出 token 上限，非上下文窗口大小）")
+        if v < 1 or v > 100000:
+            raise ValueError("max_tokens 取值范围 1-100000（输出 token 上限，非上下文窗口大小）")
         return v
 
     @field_validator("context_window")

@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 # max_tokens 安全上限 -- 防止 DB 中的不合理值（如模型上下文窗口大小）
 # 被当作输出 token 上限传给 API，导致 400 错误。
-_MAX_OUTPUT_TOKENS_HARD_LIMIT = 32768
+_MAX_OUTPUT_TOKENS_HARD_LIMIT = 100000
 
 
 def _cap_max_tokens(max_tokens: int) -> int:
@@ -52,10 +52,12 @@ _OVERFLOW_RE = re.compile("|".join(_OVERFLOW_PATTERNS), re.IGNORECASE)
 
 @dataclass
 class RetryConfig:
-    max_attempts: int = 5
+    # 1 次首发 + 6 次重试；退避等待序列 2/4/8/16/32/64 秒。
+    # max_delay_ms 须 >= 64000，否则第 6 次 64s 等待会被钳制。
+    max_attempts: int = 7
     initial_delay_ms: int = 2000
     backoff_factor: float = 2.0
-    max_delay_ms: int = 30000
+    max_delay_ms: int = 64000
     timeout_seconds: float = 120.0
     connect_timeout_seconds: float = 10.0
 
@@ -66,6 +68,37 @@ def _is_context_overflow(error_text: str) -> bool:
 
 def _is_retryable_status(status_code: int) -> bool:
     return status_code == 429 or status_code >= 500
+
+
+def _notify_retry(
+    user_id: int | None,
+    attempt: int,
+    total_retries: int,
+    delay_seconds: float,
+    reason: str,
+) -> None:
+    """重试等待前向用户在线 SSE 连接推送瞬时 toast 事件（纯内存，不落库）。
+
+    user_id 为空（如管理后台连通性测试）时不推送；
+    推送失败不影响重试主流程。
+    """
+    if user_id is None:
+        return
+    try:
+        from app.services.notification_service import push_transient_event
+
+        push_transient_event(
+            user_id,
+            {
+                "type": "llm_retry",
+                "title": (
+                    f"模型调用失败（{reason}），{delay_seconds:.0f} 秒后自动重试"
+                    f"（第 {attempt}/{total_retries} 次）"
+                ),
+            },
+        )
+    except Exception:
+        logger.debug("LLM retry toast push failed", exc_info=True)
 
 
 def _parse_retry_after(headers: httpx.Headers) -> float | None:
@@ -157,6 +190,10 @@ async def retryable_chat(
                 raise ContextOverflowError(f"Context overflow: {error_text[:200]}")
 
             if _is_retryable_status(resp.status_code):
+                last_error = RuntimeError(f"LLM API error {resp.status_code}: {error_text[:200]}")
+                # 最后一次尝试失败：不再等待/推送，直接进入兜底 LLMRetryError
+                if attempt >= config.max_attempts - 1:
+                    break
                 retry_seconds = _parse_retry_after(resp.headers)
                 if retry_seconds is None:
                     retry_seconds = min(
@@ -168,7 +205,13 @@ async def retryable_chat(
                     "LLM API retryable error %d, attempt %d/%d, waiting %.1fs",
                     resp.status_code, attempt + 1, config.max_attempts, retry_seconds,
                 )
-                last_error = RuntimeError(f"LLM API error {resp.status_code}: {error_text[:200]}")
+                _notify_retry(
+                    user_id,
+                    attempt + 1,
+                    config.max_attempts - 1,
+                    retry_seconds,
+                    "请求被限流" if resp.status_code == 429 else f"服务端错误 {resp.status_code}",
+                )
                 await asyncio.sleep(retry_seconds)
                 continue
 
@@ -178,31 +221,40 @@ async def retryable_chat(
             raise
         except httpx.TimeoutException as e:
             last_error = e
+            if attempt >= config.max_attempts - 1:
+                break
             delay = min(
                 config.initial_delay_ms / 1000.0 * (config.backoff_factor ** attempt),
                 config.max_delay_ms / 1000.0,
             )
             logger.warning("LLM timeout, attempt %d/%d, waiting %.1fs", attempt + 1, config.max_attempts, delay)
+            _notify_retry(user_id, attempt + 1, config.max_attempts - 1, delay, "请求超时")
             await asyncio.sleep(delay)
             continue
         except httpx.ConnectError as e:
             last_error = e
+            if attempt >= config.max_attempts - 1:
+                break
             delay = min(
                 config.initial_delay_ms / 1000.0 * (config.backoff_factor ** attempt),
                 config.max_delay_ms / 1000.0,
             )
             logger.warning("LLM connection error, attempt %d/%d, waiting %.1fs", attempt + 1, config.max_attempts, delay)
+            _notify_retry(user_id, attempt + 1, config.max_attempts - 1, delay, "连接失败")
             await asyncio.sleep(delay)
             continue
         except (RuntimeError, LLMRetryError):
             raise
         except Exception as e:
             last_error = e
+            if attempt >= config.max_attempts - 1:
+                break
             delay = min(
                 config.initial_delay_ms / 1000.0 * (config.backoff_factor ** attempt),
                 config.max_delay_ms / 1000.0,
             )
             logger.warning("LLM unexpected error, attempt %d/%d: %s", attempt + 1, config.max_attempts, e)
+            _notify_retry(user_id, attempt + 1, config.max_attempts - 1, delay, "未知错误")
             await asyncio.sleep(delay)
             continue
 

@@ -56,10 +56,11 @@ defaults:
 review:
   skills_dir: "./skills"
   retry:
-    max_attempts: 5
+    # 1 次首发 + 6 次重试，退避等待 2/4/8/16/32/64 秒；重试时向用户页面推送 toast（SSE llm_retry 事件）
+    max_attempts: 7
     initial_delay_ms: 2000
     backoff_factor: 2.0
-    max_delay_ms: 30000
+    max_delay_ms: 64000
     timeout_seconds: 300
     connect_timeout_seconds: 10
   pipeline:

@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PM Assessment Dimension Output",
+  "description": "维度6（pm-assessment prompt）的扁平输出结构。Issue #3：不得用完整报告 schema 校验维度结果。评分维度键不强制固定集合——团队评分量规（scoring_overrides）可替换维度，但每个出现的评分必须带 1-5 分与证据。",
+  "type": "object",
+  "required": ["writing_scores", "thinking_scores", "pm_type", "highlights", "blindspots", "growth_path"],
+  "properties": {
+    "writing_scores": {"$ref": "#/$defs/score_set"},
+    "thinking_scores": {"$ref": "#/$defs/score_set"},
+    "pm_type": {"type": "string", "enum": ["技术型", "商业型", "均衡型"]},
+    "highlights": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string"}
+    },
+    "blindspots": {
+      "type": "array",
+      "minItems": 3,
+      "items": {"type": "string"}
+    },
+    "growth_path": {"$ref": "#/$defs/growth_path"}
+  },
+  "$defs": {
+    "score_set": {
+      "type": "object",
+      "properties": {
+        "logic": {"$ref": "#/$defs/dimension_score"},
+        "tech_depth": {"$ref": "#/$defs/dimension_score"},
+        "boundary": {"$ref": "#/$defs/dimension_score"},
+        "business": {"$ref": "#/$defs/dimension_score"},
+        "iteration": {"$ref": "#/$defs/dimension_score"},
+        "experience": {"$ref": "#/$defs/dimension_score"},
+        "data": {"$ref": "#/$defs/dimension_score"}
+      }
+    },
+    "dimension_score": {
+      "type": "object",
+      "required": ["score", "evidence"],
+      "properties": {
+        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+        "evidence": {"type": "string"}
+      }
+    },
+    "growth_path": {
+      "type": "object",
+      "required": ["short_term", "mid_term", "long_term"],
+      "properties": {
+        "short_term": {"type": "array", "items": {"type": "string"}},
+        "mid_term": {"type": "array", "items": {"type": "string"}},
+        "long_term": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

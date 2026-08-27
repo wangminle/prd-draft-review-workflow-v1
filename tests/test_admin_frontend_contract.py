@@ -248,3 +248,59 @@ def test_admin_has_governance_tab():
     assert "listGovernanceAgents(status" in API_JS
     assert "archiveGovernanceAgent(agentId)" in API_JS
     assert "getGovernancePermissionsAudit()" in API_JS
+
+
+def test_model_config_fields_avoid_login_password_manager():
+    """模型配置表单不触发浏览器登录密码管理弹框。
+
+    浏览器将「LLM 模型名」文本框 + API Key 密码框启发式识别为登录表单，
+    弹出保存用户名/密码提示。修复：API Key 密码框使用 autocomplete="new-password"，
+    模型名等文本框加专用 name 标识 + autocomplete="off" 打破用户名识别。
+    """
+    # 新建/编辑模型弹窗：API Key 密码框声明 new-password（对密码框 off 无效）
+    assert 'id="modal-new-api-key" name="model-config-api-key"' in ADMIN_JS
+    assert 'id="modal-new-api-key" name="model-config-api-key" placeholder="输入该模型的 API Key" autocomplete="new-password"' in ADMIN_JS
+    assert 'id="modal-api-key" name="model-config-api-key"' in ADMIN_JS
+    assert 'id="modal-api-key" name="model-config-api-key" placeholder="输入新的 API Key（留空不修改）" autocomplete="new-password"' in ADMIN_JS
+
+    # LLM 模型名/模型 ID/显示名称/API Base 文本框：专用 name + autocomplete="off"
+    for needle in (
+        'id="modal-new-model-id" name="model-config-id" autocomplete="off"',
+        'id="modal-new-model-name" name="model-config-display-name" autocomplete="off"',
+        'id="modal-new-api-base" name="model-config-api-base" autocomplete="off"',
+        'id="modal-new-llm-model" name="model-config-llm-model" autocomplete="off"',
+        'id="modal-model-name" name="model-config-display-name" autocomplete="off"',
+        'id="modal-api-base" name="model-config-api-base" autocomplete="off"',
+        'id="modal-llm-model" name="model-config-llm-model" autocomplete="off"',
+    ):
+        assert needle in ADMIN_JS, f"缺少专用标识的模型配置输入框: {needle}"
+
+
+def test_pi_agent_and_user_passwords_use_new_password():
+    """Pi Agent API Key 与用户管理密码框同样避免登录密码管理器误判。"""
+    for needle in (
+        'id="pi-llm-api-key" name="pi-llm-api-key"',
+        'id="pi-search-api-key" name="pi-search-api-key"',
+        'id="pi-vision-api-key" name="pi-vision-api-key"',
+        'id="modal-password" name="user-reset-password"',
+        'id="modal-new-password" name="user-initial-password"',
+        'id="pi-llm-model" name="pi-llm-model-name" autocomplete="off"',
+        'id="pi-vision-model" name="pi-vision-model-name" autocomplete="off"',
+    ):
+        assert needle in ADMIN_JS, f"缺少专用标识: {needle}"
+
+    # admin.js 中不应残留 autocomplete="off" 的密码框（对密码字段无效，须用 new-password）
+    import re
+    bare = re.findall(r'type="password"[^>]*autocomplete="off"', ADMIN_JS)
+    assert not bare, f"admin.js 密码框仍使用无效的 autocomplete=off: {bare}"
+
+
+def test_login_form_keeps_standard_password_manager_semantics():
+    """登录页保持标准 username/current-password 语义，浏览器密码管理器正常工作。"""
+    assert 'id="login-username"' in INDEX_HTML
+    assert 'autocomplete="username"' in INDEX_HTML
+    assert 'id="login-password"' in INDEX_HTML
+    assert 'autocomplete="current-password"' in INDEX_HTML
+    # 登录表单不得使用 new-password（会禁用已保存密码的自动填充）
+    login_form_block = INDEX_HTML.split('id="login-form"', 1)[1].split("</form>", 1)[0]
+    assert 'autocomplete="new-password"' not in login_form_block

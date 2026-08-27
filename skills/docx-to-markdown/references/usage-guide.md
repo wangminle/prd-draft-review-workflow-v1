@@ -87,7 +87,7 @@ output/
 
 #### `detect_image_format(image_data)`
 
-通过文件头检测图片真实格式。
+通过文件头检测图片真实格式；无法识别时返回 `None`（调用方保留原扩展名，避免误标为 `.png` 损坏文件）。
 
 **支持格式：**
 - PNG (magic: `\x89PNG\r\n\x1a\n`)
@@ -95,6 +95,9 @@ output/
 - GIF (magic: `GIF87a` / `GIF89a`)
 - WEBP (magic: `RIFF...WEBP`)
 - BMP (magic: `BM`)
+- TIFF (magic: `II*\x00` / `MM\x00*`)
+- WMF (magic: `\xd7\xcd\xc6\x9a`，placeable header)
+- EMF (magic: offset 40 处为 ` EMF`)
 
 #### `html_to_markdown(html, heading_level_map=None)`
 
@@ -249,9 +252,9 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 #### `run_conversion(input_file, output_file, engine)`
 
 **引擎策略：**
-1. `auto`：先尝试 `pandoc`，不可用则回退 Python 渲染
-2. `pandoc`：强制使用 pandoc
-3. `python`：强制使用 Python 渲染（需安装 `markdown` + `reportlab`）
+1. `auto`：先尝试 `pandoc`（失败时自动用 `xelatex` + 常见 CJK 字体重试），仍失败则回退 Python 渲染
+2. `pandoc`：强制使用 pandoc（失败直接抛错，不回退）
+3. `python`：强制使用 Python 渲染（需安装 `markdown` + `reportlab`；渲染前对文本做 XML 转义，含 `<`/`>`/`&` 的内容安全）
 
 ### 中文字体支持
 

@@ -48,6 +48,9 @@ coverage.json
 !.env.example
 .venv/
 
+# Dependencies are in requirements.txt; empty uv.lock makes LWA skip pip (Issue #1).
+uv.lock
+
 # Logs
 *.log
 

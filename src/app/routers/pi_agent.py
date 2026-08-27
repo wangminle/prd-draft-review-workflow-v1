@@ -241,6 +241,20 @@ async def update_vision_api_key(
     return {"status": "ok", "api_key_masked": mask_key(req.api_key) if req.api_key else ""}
 
 
+class PiAgentTempTestConfig(BaseModel):
+    """连接测试/测速的可选临时配置（GitHub Issue #2）。
+
+    用于「先测试、后保存」：前端把表单当前值放进请求体，后端优先用
+    请求值测试；未传字段回退数据库已保存配置。临时值（尤其 api_key）
+    仅在本次请求内存中生效，不落库、不写日志——保存仍需走「保存配置」。
+    """
+
+    api_key: str | None = None
+    llm_provider: str | None = None
+    llm_api_base: str | None = None
+    llm_model: str | None = None
+
+
 _OPENAI_COMPATIBLE_PROVIDERS = frozenset({
     "deepseek",
     "openai",
@@ -248,8 +262,30 @@ _OPENAI_COMPATIBLE_PROVIDERS = frozenset({
 })
 
 
+def _resolve_temp_test_config(
+    body: PiAgentTempTestConfig, config
+) -> tuple[str, str | None, str, str, bool]:
+    """合并临时测试配置与数据库配置。
+
+    返回 (provider, api_key_or_None, api_base, llm_model, has_temp)。
+    api_key 为 None 表示「请求未携带临时 Key，需回退数据库密文」。
+    """
+    temp_key = (body.api_key or "").strip()
+    has_temp = any((
+        temp_key,
+        (body.llm_provider or "").strip(),
+        (body.llm_api_base or "").strip(),
+        (body.llm_model or "").strip(),
+    ))
+    provider = (body.llm_provider or "").strip() or config.llm_provider
+    api_base = (body.llm_api_base or "").strip() or config.llm_api_base
+    llm_model = (body.llm_model or "").strip() or config.llm_model
+    return provider, (temp_key or None), api_base, llm_model, has_temp
+
+
 @router.post("/config/test-connection")
 async def test_pi_agent_connection(
+    req: PiAgentTempTestConfig | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -258,39 +294,57 @@ async def test_pi_agent_connection(
     Only providers that use the OpenAI-compatible /chat/completions
     protocol are currently supported.  Other providers (e.g. Anthropic)
     return a clear unsupported status instead of a misleading error.
+
+    可选请求体（Issue #2）：api_key / llm_provider / llm_api_base / llm_model
+    为表单临时值，优先于数据库配置；仅本次请求生效，不落库、不写日志。
     """
     _require_admin(user)
     secret = _get_jwt_secret()
     repo = PiAgentConfigRepository(db)
     config = await repo.get_or_create()
 
-    if config.llm_provider not in _OPENAI_COMPATIBLE_PROVIDERS:
+    body = req or PiAgentTempTestConfig()
+    provider, temp_key, api_base, llm_model, has_temp = _resolve_temp_test_config(body, config)
+
+    if provider not in _OPENAI_COMPATIBLE_PROVIDERS:
         return {
             "status": "fail",
-            "detail": f"当前连接测试不支持 provider='{config.llm_provider}'，"
+            "detail": f"当前连接测试不支持 provider='{provider}'，"
                       f"仅支持 OpenAI 兼容协议的 Provider",
         }
 
-    if not config.llm_encrypted_api_key:
+    if temp_key:
+        api_key = temp_key
+    elif config.llm_encrypted_api_key:
+        try:
+            api_key = decrypt_key(config.llm_encrypted_api_key, secret)
+        except Exception:
+            return {"status": "fail", "detail": "LLM API Key 解密失败"}
+    else:
         return {"status": "fail", "detail": "未配置 LLM API Key"}
 
-    try:
-        api_key = decrypt_key(config.llm_encrypted_api_key, secret)
-    except Exception:
-        return {"status": "fail", "detail": "LLM API Key 解密失败"}
+    test_result = await check_connection(api_base, api_key, llm_model)
 
-    test_result = await check_connection(config.llm_api_base, api_key, config.llm_model)
+    if has_temp:
+        # 临时配置的测试结果不代表已保存配置：不更新库内测试状态，
+        # 并显式告知前端「当前配置尚未保存」。commit 仅持久化
+        # get_or_create 可能新建的默认配置行（不含任何临时值）。
+        test_result["config_saved"] = False
+        await db.commit()
+        return test_result
 
     await repo.update_test_status(
         status=test_result["status"],
         test_time=now_cn(),
     )
     await db.commit()
+    test_result["config_saved"] = True
     return test_result
 
 
 @router.post("/config/speed-test")
 async def test_pi_agent_speed(
+    req: PiAgentTempTestConfig | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
@@ -298,29 +352,43 @@ async def test_pi_agent_speed(
 
     Only providers that use the OpenAI-compatible /chat/completions
     protocol are currently supported.
+
+    可选请求体（Issue #2）与 test-connection 相同：表单临时值优先，
+    仅本次请求生效，不落库、不写日志。
     """
     _require_admin(user)
     secret = _get_jwt_secret()
     repo = PiAgentConfigRepository(db)
     config = await repo.get_or_create()
 
-    if config.llm_provider not in _OPENAI_COMPATIBLE_PROVIDERS:
+    body = req or PiAgentTempTestConfig()
+    provider, temp_key, api_base, llm_model, has_temp = _resolve_temp_test_config(body, config)
+
+    if provider not in _OPENAI_COMPATIBLE_PROVIDERS:
         return {
             "status": "fail",
             "latency_ms": None,
-            "detail": f"当前测速不支持 provider='{config.llm_provider}'，"
+            "detail": f"当前测速不支持 provider='{provider}'，"
                       f"仅支持 OpenAI 兼容协议的 Provider",
         }
 
-    if not config.llm_encrypted_api_key:
+    if temp_key:
+        api_key = temp_key
+    elif config.llm_encrypted_api_key:
+        try:
+            api_key = decrypt_key(config.llm_encrypted_api_key, secret)
+        except Exception:
+            return {"status": "fail", "detail": "LLM API Key 解密失败", "latency_ms": None}
+    else:
         return {"status": "fail", "detail": "未配置 LLM API Key", "latency_ms": None}
 
-    try:
-        api_key = decrypt_key(config.llm_encrypted_api_key, secret)
-    except Exception:
-        return {"status": "fail", "detail": "LLM API Key 解密失败", "latency_ms": None}
+    test_result = await speed_test(api_base, api_key, llm_model)
 
-    test_result = await speed_test(config.llm_api_base, api_key, config.llm_model)
+    if has_temp:
+        test_result["config_saved"] = False
+        # 同 test-connection：commit 仅落 get_or_create 的默认行，不落临时值
+        await db.commit()
+        return test_result
 
     await repo.update_test_status(
         status=test_result["status"],
@@ -328,4 +396,5 @@ async def test_pi_agent_speed(
         latency_ms=test_result.get("latency_ms"),
     )
     await db.commit()
+    test_result["config_saved"] = True
     return test_result

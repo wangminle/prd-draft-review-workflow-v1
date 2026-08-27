@@ -34,3 +34,19 @@ def test_gitignore_allows_runtime_templates():
     assert not _git_ignores("runtime/README.md")
     assert not _git_ignores("runtime/config/ui-branding.example.yaml")
     assert not _git_ignores(".env.example")
+
+
+def test_gitignore_blocks_uv_lock():
+    """空壳 uv.lock 会让 LWA 走 uv sync 而装不到 pip 依赖（Issue #1）。"""
+    assert _git_ignores("uv.lock")
+
+
+def test_uv_lock_is_not_tracked():
+    result = subprocess.run(
+        ["git", "ls-files", "--", "uv.lock"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert result.stdout.strip() == ""

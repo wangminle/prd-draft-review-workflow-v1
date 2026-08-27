@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Competitive Positioning Dimension Output",
+  "description": "维度3（competition prompt）的扁平输出结构，对齐 prompt 的信息来源分级（source/confidence）。Issue #3：不得用完整报告 schema 校验维度结果。open_questions 仅在缺少竞品资料时必填，故顶层不强制。",
+  "type": "object",
+  "required": ["market_landscape", "competitor_comparison", "differentiation"],
+  "properties": {
+    "market_landscape": {
+      "type": "object",
+      "required": ["position", "key_players", "tech_route_difference", "has_competition_data"],
+      "properties": {
+        "position": {"type": "string", "enum": ["leading", "following", "exploring"]},
+        "key_players": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "source", "confidence"],
+            "properties": {
+              "name": {"type": "string"},
+              "source": {"type": "string", "enum": ["input_evidence", "industry_template", "model_inference"]},
+              "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+            }
+          }
+        },
+        "tech_route_difference": {"type": "string"},
+        "has_competition_data": {"type": "boolean"}
+      }
+    },
+    "competitor_comparison": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["dimension", "competitors"],
+        "properties": {
+          "dimension": {"type": "string"},
+          "us": {"type": "string"},
+          "competitors": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "source", "confidence"],
+              "properties": {
+                "name": {"type": "string"},
+                "status": {"type": "string"},
+                "source": {"type": "string", "enum": ["input_evidence", "industry_template", "model_inference"]},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "differentiation": {
+      "type": "object",
+      "required": ["unique_strengths", "weaknesses", "opportunities"],
+      "properties": {
+        "unique_strengths": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/sourced_item"}
+        },
+        "weaknesses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourced_item"}
+        },
+        "opportunities": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/sourced_item"}
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "当缺少竞品资料时必填，列出待调研问题"
+    }
+  },
+  "$defs": {
+    "sourced_item": {
+      "type": "object",
+      "required": ["item", "source", "confidence"],
+      "properties": {
+        "item": {"type": "string"},
+        "source": {"type": "string", "enum": ["input_evidence", "industry_template", "model_inference"]},
+        "confidence": {"type": "string", "enum": ["high", "medium", "low"]}
+      }
+    }
+  }
+}

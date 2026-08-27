@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Requirement Architecture Dimension Output",
+  "description": "维度2（architecture prompt）的扁平输出结构。Issue #3：维度结果是扁平 payload，不得用完整报告 schema 校验。",
+  "type": "object",
+  "required": ["evolution_stages", "category_assessment", "dependency_issues", "architecture_gaps"],
+  "properties": {
+    "evolution_stages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["stage", "versions", "core_problems", "key_solutions"],
+        "properties": {
+          "stage": {"type": "string", "enum": ["起步期", "发展期", "成熟期"]},
+          "versions": {"type": "array", "items": {"type": "string"}},
+          "core_problems": {"type": "array", "items": {"type": "string"}},
+          "key_solutions": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "category_assessment": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "doc_count", "assessment"],
+        "properties": {
+          "category": {"type": "string"},
+          "doc_count": {"type": "integer", "minimum": 0},
+          "assessment": {"type": "string", "enum": ["合理", "归属模糊", "覆盖不足"]},
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "dependency_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type", "description", "severity"],
+        "properties": {
+          "type": {"type": "string", "enum": ["cross_category", "circular", "broken_chain", "overlap"]},
+          "description": {"type": "string"},
+          "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+          "involved_docs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "architecture_gaps": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "required": ["type", "description", "suggestion"],
+        "properties": {
+          "type": {"type": "string", "enum": ["coverage_gap", "redundancy", "direction_inconsistency"]},
+          "description": {"type": "string"},
+          "suggestion": {"type": "string"}
+        }
+      }
+    }
+  }
+}

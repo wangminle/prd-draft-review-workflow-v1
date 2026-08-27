@@ -308,7 +308,7 @@ const Admin = {
             </div>
             <div class="field">
                 <label>新密码（留空不修改）</label>
-                <input type="password" id="modal-password" placeholder="留空则不修改">
+                <input type="password" id="modal-password" name="user-reset-password" placeholder="留空则不修改" autocomplete="new-password">
             </div>
             <div class="field">
                 <label>角色</label>
@@ -358,7 +358,7 @@ const Admin = {
             </div>
             <div class="field">
                 <label>密码</label>
-                <input type="password" id="modal-new-password" required minlength="6">
+                <input type="password" id="modal-new-password" name="user-initial-password" required minlength="6" autocomplete="new-password">
             </div>
             <div class="field">
                 <label>角色</label>
@@ -606,31 +606,31 @@ const Admin = {
             <h3>新建模型</h3>
             <div class="field">
                 <label>模型 ID（唯一标识，如 deepseek-v4-flash）</label>
-                <input id="modal-new-model-id" placeholder="deepseek-v4-flash">
+                <input id="modal-new-model-id" name="model-config-id" autocomplete="off" placeholder="deepseek-v4-flash">
             </div>
             <div class="field">
                 <label>显示名称</label>
-                <input id="modal-new-model-name" placeholder="DeepSeek V4 Flash">
+                <input id="modal-new-model-name" name="model-config-display-name" autocomplete="off" placeholder="DeepSeek V4 Flash">
             </div>
             <div class="field">
                 <label>API Base URL</label>
-                <input id="modal-new-api-base" placeholder="https://api.deepseek.com/v1">
+                <input id="modal-new-api-base" name="model-config-api-base" autocomplete="off" placeholder="https://api.deepseek.com/v1">
             </div>
             <div class="field">
                 <label>LLM 模型名</label>
-                <input id="modal-new-llm-model" placeholder="deepseek-v4-flash">
+                <input id="modal-new-llm-model" name="model-config-llm-model" autocomplete="off" placeholder="deepseek-v4-flash">
             </div>
             <div class="field">
                 <label>API Key</label>
                 <div class="sensitive-input">
-                    <input type="password" id="modal-new-api-key" placeholder="输入该模型的 API Key" autocomplete="off">
+                    <input type="password" id="modal-new-api-key" name="model-config-api-key" placeholder="输入该模型的 API Key" autocomplete="new-password">
                     <button type="button" class="sensitive-toggle-btn" data-toggle-target="modal-new-api-key">可见</button>
                 </div>
             </div>
             <div class="field">
                 <label>Max Tokens（最大输出）</label>
                 <input type="number" id="modal-new-max-tokens" value="4096">
-                <small style="color:var(--color-text-muted)">输出 token 上限（1-32768），控制单次回复长度</small>
+                <small style="color:var(--color-text-muted)">输出 token 上限（1-100000），控制单次回复长度</small>
             </div>
             <div class="field">
                 <label>Context Window（上下文窗口）</label>
@@ -729,28 +729,28 @@ const Admin = {
             </div>
             <div class="field">
                 <label>显示名称</label>
-                <input id="modal-model-name" placeholder="如: DeepSeek V4 Flash">
+                <input id="modal-model-name" name="model-config-display-name" autocomplete="off" placeholder="如: DeepSeek V4 Flash">
             </div>
             <div class="field">
                 <label>API Key</label>
                 <div class="sensitive-input">
-                    <input type="password" id="modal-api-key" placeholder="输入新的 API Key（留空不修改）" autocomplete="off">
+                    <input type="password" id="modal-api-key" name="model-config-api-key" placeholder="输入新的 API Key（留空不修改）" autocomplete="new-password">
                     <button type="button" class="sensitive-toggle-btn" data-toggle-target="modal-api-key">可见</button>
                 </div>
                 <small style="color:var(--color-text-muted)">输入新值将覆盖已有 Key，留空则不修改</small>
             </div>
             <div class="field">
                 <label>API Base URL</label>
-                <input id="modal-api-base" placeholder="https://api.example.com/v1">
+                <input id="modal-api-base" name="model-config-api-base" autocomplete="off" placeholder="https://api.example.com/v1">
             </div>
             <div class="field">
                 <label>LLM 模型名</label>
-                <input id="modal-llm-model" placeholder="model-name">
+                <input id="modal-llm-model" name="model-config-llm-model" autocomplete="off" placeholder="model-name">
             </div>
             <div class="field">
                 <label>Max Tokens（最大输出）</label>
                 <input type="number" id="modal-max-tokens" value="4096">
-                <small style="color:var(--color-text-muted)">输出 token 上限（1-32768），控制单次回复长度</small>
+                <small style="color:var(--color-text-muted)">输出 token 上限（1-100000），控制单次回复长度</small>
             </div>
             <div class="field">
                 <label>Context Window（上下文窗口）</label>
@@ -1547,12 +1547,12 @@ const Admin = {
                     </div>
                     <div class="field">
                         <label>模型名</label>
-                        <input id="pi-llm-model" value="${this._escAttr(cfg.llm_model || '')}" placeholder="deepseek-chat">
+                        <input id="pi-llm-model" name="pi-llm-model-name" autocomplete="off" value="${this._escAttr(cfg.llm_model || '')}" placeholder="deepseek-chat">
                     </div>
                     <div class="field">
                         <label>API Key</label>
                         <div class="sensitive-input">
-                            <input type="password" id="pi-llm-api-key" placeholder="${cfg.llm_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <input type="password" id="pi-llm-api-key" name="pi-llm-api-key" placeholder="${cfg.llm_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="new-password">
                             <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-llm-api-key">可见</button>
                         </div>
                         ${cfg.llm_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.llm_api_key_masked)}</small>` : ''}
@@ -1601,7 +1601,7 @@ const Admin = {
                     <div class="field">
                         <label>API Key (外部检索)</label>
                         <div class="sensitive-input">
-                            <input type="password" id="pi-search-api-key" placeholder="${cfg.search_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <input type="password" id="pi-search-api-key" name="pi-search-api-key" placeholder="${cfg.search_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="new-password">
                             <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-search-api-key">可见</button>
                         </div>
                         ${cfg.search_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.search_api_key_masked)}</small>` : ''}
@@ -1639,14 +1639,14 @@ const Admin = {
                     <div class="field">
                         <label>API Key</label>
                         <div class="sensitive-input">
-                            <input type="password" id="pi-vision-api-key" placeholder="${cfg.vision_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="off">
+                            <input type="password" id="pi-vision-api-key" name="pi-vision-api-key" placeholder="${cfg.vision_api_key_masked ? '已配置，留空不修改' : '输入 API Key'}" autocomplete="new-password">
                             <button type="button" class="sensitive-toggle-btn" data-toggle-target="pi-vision-api-key">可见</button>
                         </div>
                         ${cfg.vision_api_key_masked ? `<small style="color:var(--color-text-muted)">当前: ${this._esc(cfg.vision_api_key_masked)}</small>` : ''}
                     </div>
                     <div class="field">
                         <label>视觉模型名</label>
-                        <input id="pi-vision-model" value="${this._escAttr(cfg.vision_model || '')}" placeholder="gpt-4o / deepseek-vl">
+                        <input id="pi-vision-model" name="pi-vision-model-name" autocomplete="off" value="${this._escAttr(cfg.vision_model || '')}" placeholder="gpt-4o / deepseek-vl">
                     </div>
                 </div>
             </div>
@@ -1746,9 +1746,11 @@ const Admin = {
                 feedback.textContent = '测试中...';
                 feedback.style.color = 'var(--blue-6)';
                 try {
-                    const result = await API.testPiAgentConnection();
+                    const result = await API.testPiAgentConnection(this._collectPiAgentTempTestConfig());
                     if (result.status === 'ok') {
-                        feedback.textContent = '连接成功 ✓';
+                        feedback.textContent = result.config_saved === false
+                            ? '连接成功 ✓（当前配置尚未保存）'
+                            : '连接成功 ✓';
                         feedback.style.color = 'var(--green-6)';
                     } else {
                         feedback.textContent = '连接失败: ' + (result.detail || '');
@@ -1770,9 +1772,11 @@ const Admin = {
                 feedback.textContent = '测速中...';
                 feedback.style.color = 'var(--blue-6)';
                 try {
-                    const result = await API.speedTestPiAgent();
+                    const result = await API.speedTestPiAgent(this._collectPiAgentTempTestConfig());
                     if (result.status === 'ok') {
-                        feedback.textContent = `延迟 ${result.latency_ms}ms ✓`;
+                        feedback.textContent = result.config_saved === false
+                            ? `延迟 ${result.latency_ms}ms ✓（当前配置尚未保存）`
+                            : `延迟 ${result.latency_ms}ms ✓`;
                         feedback.style.color = 'var(--green-6)';
                     } else {
                         feedback.textContent = '测速失败: ' + (result.detail || '');
@@ -1791,6 +1795,28 @@ const Admin = {
         if (saveBtn) {
             saveBtn.addEventListener('click', () => this.savePiAgentConfig());
         }
+    },
+
+    _collectPiAgentTempTestConfig() {
+        // Issue #2：连接测试/测速优先用表单当前值（临时配置，后端不落库）。
+        // 仅当表单与已保存配置存在差异（或填了新 Key）时才发送请求体，
+        // 避免未改动时也显示「当前配置尚未保存」。
+        const cfg = this._piAgentData || {};
+        const provider = document.getElementById('pi-llm-provider')?.value || '';
+        const apiBase = document.getElementById('pi-llm-api-base')?.value.trim() || '';
+        const model = document.getElementById('pi-llm-model')?.value.trim() || '';
+        const apiKey = document.getElementById('pi-llm-api-key')?.value.trim() || '';
+        const changed = provider !== (cfg.llm_provider || '')
+            || apiBase !== (cfg.llm_api_base || '')
+            || model !== (cfg.llm_model || '')
+            || apiKey !== '';
+        if (!changed) return undefined;
+        return {
+            llm_provider: provider || undefined,
+            llm_api_base: apiBase || undefined,
+            llm_model: model || undefined,
+            api_key: apiKey || undefined,
+        };
     },
 
     async savePiAgentConfig() {

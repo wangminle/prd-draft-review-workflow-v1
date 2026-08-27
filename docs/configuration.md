@@ -111,7 +111,7 @@ Agent 扩展回调优先使用 `AGENT_API_BASE`；未设置时拼 `http://127.0.
 
 | 字段 | 说明 |
 |------|------|
-| `max_tokens` | 单次最大输出 token 数,传给 LLM API 控制回复长度。运行时硬上限 **32768**（超过会被截断）；管理后台创建/更新模型时拒绝 1–32768 以外的值 |
+| `max_tokens` | 单次最大输出 token 数,传给 LLM API 控制回复长度。运行时硬上限 **100000**（超过会被截断）；管理后台创建/更新模型时拒绝 1–100000 以外的值 |
 | `context_window` | 模型上下文窗口大小(如 200000)。对话历史预估 token 超过 `context_window - max_tokens - 512`(安全余量)时,自动从最旧消息开始截断并插入压缩提示。设为 `0` 表示不启用自动压缩(向后兼容) |
 
 | 模型 | id | base_url | model | max_tokens | temperature | 默认 enabled |
@@ -356,7 +356,7 @@ Each model object has: `id`, `name`, `adapter` (`openai_compatible`), `base_url`
 
 | Field | Description |
 |-------|-------------|
-| `max_tokens` | Maximum output tokens per call, sent to the LLM API to control response length. Runtime hard cap is **32768** (larger values are truncated); the admin API rejects values outside 1–32768 |
+| `max_tokens` | Maximum output tokens per call, sent to the LLM API to control response length. Runtime hard cap is **100000** (larger values are truncated); the admin API rejects values outside 1–100000 |
 | `context_window` | Model's total context window (e.g., 200000). When estimated conversation tokens exceed `context_window - max_tokens - 512` (safety margin), older history messages are truncated from the head and a compression notice is inserted. Set to `0` to disable auto-compression (backward compatible) |
 
 | Model | id | base_url | model | max_tokens | temperature | Default enabled |
