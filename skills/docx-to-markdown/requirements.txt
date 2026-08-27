@@ -7,5 +7,6 @@ openpyxl
 markdown
 reportlab
 
-# 安全 XML 解析（可选，如未安装则回退到标准库 xml.etree）
-defusedxml>=0.7.0
+# 可选依赖（增强 XML 解析安全，防御实体膨胀/外部实体等攻击；
+# 未安装自动回退标准库 xml.etree，功能不受影响）
+defusedxml

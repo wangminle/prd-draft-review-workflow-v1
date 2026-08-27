@@ -170,6 +170,7 @@ const Review = {
             const docList = document.getElementById('doc-list');
             if (docList) docList.innerHTML = '';
             const resultContent = document.getElementById('result-content');
+            if (window.RichContent) window.RichContent.revoke(resultContent);
             if (resultContent) resultContent.innerHTML = '';
         }
     },
@@ -774,6 +775,7 @@ const Review = {
                 }
                 badge.textContent = reviewed.label;
                 badge.classList.toggle('badge-cancelled', reviewed.status === 'cancelled');
+                badge.classList.toggle('badge-failed', reviewed.status === 'failed');
             } else {
                 if (badge) badge.remove();
             }
@@ -1068,6 +1070,7 @@ const Review = {
     _renderEmbeddedProgress(mode, taskInfo = null) {
         const modeConfig = this.MODE_MAP[mode] || this.MODE_MAP.quick;
         const statusText = taskInfo?.status === 'pending' ? '排队中' : '审查进行中';
+        if (window.RichContent) window.RichContent.revoke(document.getElementById('result-content'));
         document.getElementById('result-content').innerHTML = `
             <div class="embedded-progress">
                 <div class="progress-header">
@@ -1238,6 +1241,7 @@ const Review = {
         const titleEl = document.getElementById('result-project-name');
         if (titleEl) titleEl.textContent = `${this.selectedDocName || '文档'} — ${modeConfig.label}`;
         this._updateResultActions();
+        if (window.RichContent) window.RichContent.revoke(document.getElementById('result-content'));
         document.getElementById('result-content').innerHTML = `
             <div class="empty-state">
                 <p style="font-size:var(--fs-15);color:var(--color-text-secondary);margin-bottom:var(--sp-3)">当前文档暂无"${modeConfig.label}"审查结果</p>
@@ -1297,6 +1301,7 @@ const Review = {
             const aggregated = await this._aggregateDocReports(currentReport);
             this._renderReport(aggregated);
         } catch (e) {
+            if (window.RichContent) window.RichContent.revoke(document.getElementById('result-content'));
             document.getElementById('result-content').innerHTML = '<div class="empty-state"><p>加载报告失败</p></div>';
         }
         // P4: 结果显示后触发协作审查/产物/评论/讲解准备面板
@@ -2411,6 +2416,7 @@ const Review = {
         this._lastReport = report;
         const contentEl = document.getElementById('result-content');
         const activeTab = document.querySelector('.result-tab.active')?.dataset.tab || 'overview';
+        if (window.RichContent) window.RichContent.revoke(contentEl);
         if (activeTab === 'overview') contentEl.innerHTML = this._renderOverview(report);
         else if (activeTab === 'per-analysis') contentEl.innerHTML = this._renderPerAnalysis(report);
         else if (activeTab === 'system-review') contentEl.innerHTML = this._renderSystemReview(report);
@@ -2418,6 +2424,8 @@ const Review = {
         else if (activeTab === 'insight') contentEl.innerHTML = this._renderInsight(report);
         else if (activeTab === 'draft') contentEl.innerHTML = this._renderDraft(report);
         this._renderMermaidCharts();
+        // Issue #6/#7: 报告渲染完成后一次性渲染公式与 SVG
+        if (window.RichContent) window.RichContent.enhance(contentEl);
         // P2.C.3: 补充引用来源的 title
         this._fillCitationTitlesInReport(contentEl);
     },
@@ -2837,6 +2845,10 @@ const Review = {
     _renderMarkdownWithLibraries(text) {
         // P2.C.3/P2.C.4: 替换 [来源ID:x] 引用标记为可点击链接 + 段落标注
         text = this._replaceCitationMarkers(text);
+        // Issue #6: 先保护公式区段（marked 会吃掉 \[ \( 定界符），DOM 插入后再渲染
+        if (window.RichContent) {
+            text = window.RichContent.protectMath(text);
+        }
 
         const renderer = new window.marked.Renderer();
         renderer.code = (code, infostring) => {
@@ -2846,6 +2858,15 @@ const Review = {
 
             if (lang.toLowerCase() === 'mermaid') {
                 return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(rawCode)}</pre></div></div>`;
+            }
+
+            // Issue #7: svg 只输出转义源码占位容器，图形由 RichContent 清洗后以 Blob URL 隔离预览
+            if (lang.toLowerCase() === 'svg') {
+                return `<div class="svg-container">`
+                    + `<div class="code-block-header"><span class="code-lang">SVG</span><button type="button" class="svg-toggle-btn">查看源码</button></div>`
+                    + `<div class="svg-body"><img class="svg-preview-img" alt="SVG 图形预览" hidden><p class="svg-error" hidden></p></div>`
+                    + `<pre class="svg-source">${this._esc(rawCode)}</pre>`
+                    + `</div>`;
             }
 
             const safeCode = this._esc(rawCode);
@@ -2859,8 +2880,9 @@ const Review = {
             gfm: true,
             renderer,
         });
+        // Issue #7: 收紧为 HTML-only；SVG/Mermaid/KaTeX 均在清洗后经受控流程生成
         return window.DOMPurify.sanitize(window.marked.parse(text), {
-            USE_PROFILES: { html: true, svg: true, svgFilters: true },
+            USE_PROFILES: { html: true },
         });
     },
 

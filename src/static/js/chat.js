@@ -176,6 +176,7 @@ const Chat = {
             if (!this._isConversationCurrent(requestConvId)) return;
             const messages = this._normalizeHistoryMessages(data.messages || []);
             const container = document.getElementById('chat-messages');
+            if (window.RichContent) window.RichContent.revoke(container);
             container.innerHTML = '';
             messages.forEach(m => this._appendMessage(m.role, m.content));
             this._scrollBottom();
@@ -488,8 +489,10 @@ const Chat = {
             }
 
             if (!fullText && !reasoningText && !hadError) {
+                if (window.RichContent) window.RichContent.revoke(contentEl);
                 contentEl.innerHTML = '<span class="msg-error">未收到回复</span>';
             } else if (!fullText && reasoningText) {
+                if (window.RichContent) window.RichContent.revoke(contentEl);
                 contentEl.innerHTML = '';
                 const rEl = document.createElement('div');
                 rEl.className = 'msg-reasoning';
@@ -514,6 +517,7 @@ const Chat = {
             }
 
         } catch (e) {
+            if (window.RichContent) window.RichContent.revoke(contentEl);
             if (this._streamCtrl && this._streamCtrl.signal.aborted) {
                 contentEl.innerHTML = '<span class="msg-error">已取消</span>';
             } else {
@@ -600,6 +604,10 @@ const Chat = {
     _renderMarkdownWithLibraries(text) {
         // P2.C.4: 标注知识库引用段落（仅在有 pending citations 时生效）
         text = this._annotateKnowledgeParagraphs(text);
+        // Issue #6: 先保护公式区段（marked 会吃掉 \[ \( 定界符），DOM 插入后再渲染
+        if (window.RichContent) {
+            text = window.RichContent.protectMath(text);
+        }
 
         const renderer = new window.marked.Renderer();
         renderer.code = (code, infostring) => {
@@ -611,6 +619,15 @@ const Chat = {
                 return `<div class="mermaid-container"><div class="mermaid-chart"><pre class="mermaid-source">${this._esc(rawCode)}</pre></div></div>`;
             }
 
+            // Issue #7: svg 只输出转义源码占位容器，图形由 RichContent 清洗后以 Blob URL 隔离预览
+            if (lang === 'svg') {
+                return `<div class="svg-container">`
+                    + `<div class="code-block-header"><span class="code-lang">SVG</span><button type="button" class="svg-toggle-btn">查看源码</button></div>`
+                    + `<div class="svg-body"><img class="svg-preview-img" alt="SVG 图形预览" hidden><p class="svg-error" hidden></p></div>`
+                    + `<pre class="svg-source">${this._esc(rawCode)}</pre>`
+                    + `</div>`;
+            }
+
             const safeCode = this._esc(rawCode);
             const safeLangClass = this._escAttr(lang || 'text');
             return `<pre><code class="language-${safeLangClass}">${safeCode}</code></pre>`;
@@ -620,8 +637,9 @@ const Chat = {
             breaks: true,
             renderer,
         });
+        // Issue #7: 收紧为 HTML-only；SVG/Mermaid/KaTeX 均在清洗后经受控流程生成
         return window.DOMPurify.sanitize(window.marked.parse(text), {
-            USE_PROFILES: { html: true, svg: true, svgFilters: true },
+            USE_PROFILES: { html: true },
         });
     },
 
@@ -687,6 +705,10 @@ const Chat = {
     _renderMermaidOnStreamEnd(scope) {
         if (this._mermaidDebounceTimer) clearTimeout(this._mermaidDebounceTimer);
         this._renderMermaidCharts(scope);
+        // Issue #6/#7: 流结束后一次性渲染公式与 SVG（与 Mermaid 同一时机，流式期间不渲染）
+        if (window.RichContent) {
+            window.RichContent.enhance(scope);
+        }
     },
 
     async _renderMermaidCharts(scope = document) {

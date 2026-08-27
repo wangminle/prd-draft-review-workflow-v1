@@ -1,0 +1,10 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Report Polish Output",
+  "description": "report-polish（管线内报告润色 / PRD 草稿生成）走纯文本调用链 plain_chat，产出始终包装为 {\"raw_text\": <润色后的 Markdown>}（BUG-170）。raw_text 必填且须含非空白字符：空响应、纯空格/换行或 JSON 误解析产物不得被当作报告成功（BUG-173）。文件清单结构 {project_name, files, summary} 属于 scripts/generate.py CLI 产物，由 skill 级 output-schema.json 校验，与本步骤无关。",
+  "type": "object",
+  "required": ["raw_text"],
+  "properties": {
+    "raw_text": {"type": "string", "minLength": 1, "pattern": "\\S"}
+  }
+}

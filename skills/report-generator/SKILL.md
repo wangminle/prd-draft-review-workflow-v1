@@ -210,6 +210,6 @@ pip3 install -r requirements.txt
 
 | Prompt | Purpose |
 |--------|---------|
-| `report-polish.md` | Optional LLM-based report polishing |
+| `report-polish.md` | Optional LLM-based report polishing. In the review pipeline this step uses `plain_chat` (raw Markdown wrapped as `{"raw_text": ...}`), validated by `templates/output-schema.report-polish.json` (`raw_text` required, must contain a non-whitespace character). The skill-level `templates/output-schema.json` is the CLI file-list schema for `scripts/generate.py`, not for polish. |
 
 For detailed API and customization, see [references/usage-guide.md](references/usage-guide.md).

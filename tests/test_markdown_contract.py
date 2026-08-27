@@ -114,17 +114,18 @@ class TestMarkdownRenderingSplit:
         assert "split('\\n')" in wrap_block
         assert "result" in wrap_block
 
-    def test_chat_dompurify_allows_svg(self):
+    def test_chat_dompurify_html_only_profile(self):
         lib_block = CHAT_JS.split("_renderMarkdownWithLibraries(text) {", 1)[1].split("_renderMarkdownFallback(text) {", 1)[0]
         assert "USE_PROFILES" in lib_block
-        assert "svg: true" in lib_block
-        assert "svgFilters: true" in lib_block
+        # Issue #7: 主 Markdown 收紧为 HTML-only，SVG 预览走 RichContent 受控流程
+        assert "USE_PROFILES: { html: true }" in lib_block
+        assert "svg: true" not in lib_block
 
-    def test_review_dompurify_allows_svg(self):
+    def test_review_dompurify_html_only_profile(self):
         lib_block = REVIEW_JS.split("_renderMarkdownWithLibraries(text) {", 1)[1].split("_renderMarkdownFallback(text) {", 1)[0]
         assert "USE_PROFILES" in lib_block
-        assert "svg: true" in lib_block
-        assert "svgFilters: true" in lib_block
+        assert "USE_PROFILES: { html: true }" in lib_block
+        assert "svg: true" not in lib_block
 
     def test_chat_mermaid_container_in_library_render(self):
         lib_block = CHAT_JS.split("_renderMarkdownWithLibraries(text) {", 1)[1].split("_renderMarkdownFallback(text) {", 1)[0]

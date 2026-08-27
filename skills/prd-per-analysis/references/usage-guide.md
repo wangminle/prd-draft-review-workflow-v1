@@ -103,7 +103,7 @@ Vision analysis approximately doubles the token cost per document (image classif
 
 ## Output Structure
 
-Each analysis produces a JSON file matching the schema in `templates/output-schema.json`.
+Each analysis produces a JSON file matching `templates/output-schema.per-doc-analysis.json` (same shape as `templates/output-schema.json`).
 
 Key fields:
 - `core_problem`: 1-2 sentence summary

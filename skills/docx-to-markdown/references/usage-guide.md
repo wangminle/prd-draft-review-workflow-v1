@@ -12,8 +12,8 @@
 
 ## convert_docx.py 详解
 
-> **执行目录前提**：以下所有 `python3 scripts/...` 命令均假设当前工作目录为 skill 根目录 `skills/docx-to-markdown/`。
-> 若从仓库根目录执行，需加上路径前缀：`python3 skills/docx-to-markdown/scripts/...`
+> **执行目录前提**：以下所有 `python scripts/...` 命令均假设当前工作目录为 skill 根目录 `skills/docx-to-markdown/`。
+> 若从仓库根目录执行，需加上路径前缀：`python skills/docx-to-markdown/scripts/...`
 
 ### 核心功能
 
@@ -23,12 +23,12 @@
 
 ```bash
 # 在 skills/docx-to-markdown/ 目录下执行
-python3 scripts/convert_docx.py <docx文件路径> <输出目录>
+python scripts/convert_docx.py <docx文件路径> <输出目录>
 ```
 
 **示例：**
 ```bash
-python3 scripts/convert_docx.py report.docx ./output
+python scripts/convert_docx.py report.docx ./output
 ```
 
 **输出（自动创建以文件名命名的子文件夹）：**
@@ -57,6 +57,52 @@ output/
 
 **异常：**
 - 当输入文件不是有效 DOCX/ZIP，或缺少 `word/document.xml` 时抛出 `ValueError`
+- 当输入触发资源耗尽防线（zip bomb / 超大资源，见下文安全防线）时抛出 `DocxSecurityError`
+
+**完成标记：** 转换全部成功后会在输出目录原子写入 `.converted` JSON
+（`{"folder_name": ..., "source_sha256": ...}`），批处理据此判断输出完整且与当前源一致。
+
+#### 安全防线（资源耗尽防御）
+
+解压前依据 ZIP 中央目录元数据校验，实际读取时再按真实解压量兜底。阈值集中在
+模块级 `DOCX_SECURITY_LIMITS` dict 中，可按需收紧或测试注入：
+
+| 防线 | 默认阈值 |
+|------|---------|
+| ZIP 总解压上限 | 500 MB |
+| 单 entry 解压上限 | 100 MB |
+| 单 entry 压缩比 | 100x |
+| 总压缩比（仅当压缩后总大小 > 1MB 时判定，避免小文件舍入误伤） | 100x |
+| 图片数量（`word/media/`） | 500 |
+| 单图文件大小 | 20 MB |
+| 单图像素（解压炸弹检测） | 5000 万 |
+| 嵌入 Excel 大小 | 50 MB |
+
+`DocxSecurityError(ValueError)`：继承 `ValueError` 以兼容既有异常处理，但调用方
+应精确捕获本类——安全拒绝表示输入恶意/异常，**不可降级重试**（降级会绕过防线）。
+
+XML 解析统一走 `_safe_xml_fromstring` 入口：安装了 `defusedxml` 时防御实体膨胀/
+外部实体攻击，未安装自动回退标准库 `xml.etree`（功能等价，仅防护降级）。
+
+#### `validate_docx_zip_security(zip_ref)`
+
+对已打开的 `zipfile.ZipFile` 执行上表安全校验（只读声明值不解压）。超限抛
+`DocxSecurityError`。`convert_docx_to_markdown` 在结构校验后自动调用。
+
+#### `image_pixel_count(image_data)`
+
+从图片头部解析宽高并返回像素数（宽×高），用于解压炸弹检测；仅读头部几十字节、
+不解码像素。支持 PNG/JPEG/GIF/BMP/WEBP/TIFF；WMF/EMF 等矢量格式及未知格式返回 `None`。
+
+#### `read_zip_entry_bounded(zip_ref, name, max_bytes)`
+
+带实际上限的条目读取：边解压边计数，超过 `max_bytes` 立即抛 `DocxSecurityError`，
+防御中央目录元数据与实际数据不一致的恶意构造。
+
+#### `sha256_file(path)` / `write_conversion_sentinel(...)` / `read_conversion_sentinel(directory)`
+
+完成标记相关工具：流式计算源文件 SHA-256；原子写入（tmp + rename）与读取
+`.converted` JSON。旧格式（纯文本）或损坏的 sentinel 读取时返回 `None`。
 
 **输出结构：**
 - 当 `create_subfolder=True` 时：`output_dir/文件名/文件名.md` + `assets/`
@@ -165,20 +211,23 @@ mammoth 通常忽略文本框/形状中的内容，此函数作为补充提取�
 ### 命令行用法
 
 ```bash
-python3 scripts/batch_convert.py [源目录] [输出目录] [--force] [--timeout 秒]
+python scripts/batch_convert.py [源目录] [输出目录] [--force] [--timeout 秒数]
 ```
 
 **默认值：**
 - 源目录: `1-Reference`
 - 输出目录: `2-Temp`
-- `--timeout`: 单文档处理超时秒数（默认 300，<=0 不限制；依赖 SIGALRM，Windows 平台自动跳过）
+- 超时: `300` 秒/文档
 
 **示例：**
 ```bash
-python3 scripts/batch_convert.py ./documents ./markdown_output
+python scripts/batch_convert.py ./documents ./markdown_output
+
+# 单文档超时 120 秒
+python scripts/batch_convert.py ./documents ./markdown_output --timeout 120
 
 # 强制重新转换已存在的输出目录
-python3 scripts/batch_convert.py ./documents ./markdown_output --force
+python scripts/batch_convert.py ./documents ./markdown_output --force
 ```
 
 ### 核心函数
@@ -189,17 +238,27 @@ python3 scripts/batch_convert.py ./documents ./markdown_output --force
 - `source_dir`: 源文件目录
 - `output_dir`: 输出目录
 - `force`: 为 `True` 时强制重新转换已存在的输出目录（删除旧目录后重新生成）
-- `timeout`: 单文档转换超时秒数（默认 300，<=0 表示不限制；POSIX only）
+- `timeout`: 单文档转换超时秒数（`<=0` 不限制；仅 POSIX 主线程生效，
+  Windows 无 SIGALRM 自动跳过，非主线程安装失败降级为无超时）
 
 ### 特性
 
-1. **自动跳过** - 仅当输出目录、Markdown 文件与 `.converted` 完成标记三者齐备、且标记中记录的源文件 SHA-256 与当前源文件一致时才跳过；源文件变更后会自动重新转换（无需 `--force`）
-2. **`--force` 模式** - 删除已有输出目录后重新转换，适合需要强制全量重建的场景
-3. **进度显示** - 显示 `[当前/总数]` 进度
-4. **统计汇总** - 结束时显示成功/跳过/失败三项数量
-5. **文件名清理与防冲突** - 自动清理非法字符；发生字符替换或超长截断时附加源文件名短 hash
-6. **大小写去重** - macOS 等大小写不敏感文件系统上自动去重 `.docx`/`.DOCX`
-7. **安全防线** - 拒绝超限 ZIP（总解压 500MB/单 entry 100MB/单 entry 与总压缩比 >100x；总压缩比仅当压缩后总大小 >1MB 时判定，避免小文件误伤）、超限嵌入 Excel、超量或超像素图片；转换采用临时文件原子写入，中途失败自动清理半成品目录
+1. **SHA-256 完成标记跳过** - 跳过需满足：输出目录 + md + 有效 `.converted`
+   sentinel 齐备，且 sentinel 记录的源 SHA-256 与当前源文件一致；
+   **源文件变更后自动重转，无需 `--force`**。旧格式（纯文本）sentinel 视为无效，
+   按半成品清理后重转
+2. **`--force` 模式** - 删除已有输出目录后重新转换，适合强制全量重建
+3. **单文档超时** - `--timeout`（默认 300 秒）基于 POSIX `signal.alarm` 实现，
+   超时抛 `TimeoutError` 计为失败；结束后恢复原信号 handler
+4. **半成品清理** - 转换失败（含超时/安全拒绝）时清理输出目录；非 `--force`
+   路径下既有输出不可信（sentinel 缺失/无效/哈希不匹配）时同样清理重转
+5. **进度显示** - 显示 `[当前/总数]` 进度
+6. **统计汇总** - 结束时显示成功/跳过/失败数量
+7. **文件名清理与防冲突** - 自动清理非法字符；清洗发生字符替换/超长截断时
+   附加源文件名短 hash，防止不同原始名称映射到同一输出目录
+8. **大小写去重** - macOS 等大小写不敏感文件系统上自动去重 `.docx`/`.DOCX`
+
+> 安全拒绝（`DocxSecurityError`）在批处理中计为失败并清理输出，不降级不重试。
 
 ### 输出结构
 
@@ -228,15 +287,15 @@ output_dir/
 ### 命令行用法
 
 ```bash
-python3 scripts/md_to_pdf.py <markdown文件路径> [pdf输出路径] [--engine auto|pandoc|python]
+python scripts/md_to_pdf.py <markdown文件路径> [pdf输出路径] [--engine auto|pandoc|python]
 ```
 
 **示例：**
 ```bash
-python3 scripts/md_to_pdf.py document.md                           # 默认 auto（优先 pandoc）
-python3 scripts/md_to_pdf.py document.md output.pdf --engine auto
-python3 scripts/md_to_pdf.py document.md output.pdf --engine pandoc
-python3 scripts/md_to_pdf.py document.md output.pdf --engine python
+python scripts/md_to_pdf.py document.md                           # 默认 auto（优先 pandoc）
+python scripts/md_to_pdf.py document.md output.pdf --engine auto
+python scripts/md_to_pdf.py document.md output.pdf --engine pandoc
+python scripts/md_to_pdf.py document.md output.pdf --engine python
 ```
 
 ### 核心函数
@@ -252,13 +311,13 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 #### `run_conversion(input_file, output_file, engine)`
 
 **引擎策略：**
-1. `auto`：先尝试 `pandoc`（失败时自动用 `xelatex` + 常见 CJK 字体重试），仍失败则回退 Python 渲染
-2. `pandoc`：强制使用 pandoc（失败直接抛错，不回退）
-3. `python`：强制使用 Python 渲染（需安装 `markdown` + `reportlab`；渲染前对文本做 XML 转义，含 `<`/`>`/`&` 的内容安全）
+1. `auto`：先尝试 `pandoc`；若 pandoc 失败（如默认 pdflatex 无法排版中文），自动用 `xelatex` 依次尝试 PingFang SC / Noto Sans CJK SC / Microsoft YaHei / SimSun 字体重试；若仍失败或无 pandoc，回退 Python 渲染引擎
+2. `pandoc`：强制使用 pandoc（失败直接抛异常，不回退）
+3. `python`：强制使用 Python 渲染（需安装 `markdown` + `reportlab`）
 
 ### 中文字体支持
 
-自动检测系统字体：
+**Python 引擎**：自动检测系统字体并注册：
 
 | 系统 | 字体路径 |
 |-----|---------|
@@ -268,14 +327,26 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 
 如果系统字体无法注册，会自动回退到 ReportLab 内置的 CID 字体（如 `STSong-Light`）。
 
+**pandoc 引擎**：默认使用 pdflatex，无法排版中文。脚本检测到失败后，若系统有 `xelatex`，会依次尝试常见 CJK 字体重试：
+1. PingFang SC（macOS）
+2. Noto Sans CJK SC（Linux）
+3. Microsoft YaHei（Windows）
+4. SimSun（Windows 通用）
+
+所有字体均失败时，`auto` 模式回退到 Python 引擎；`pandoc` 模式抛出异常。
+
+### 文本安全
+
+Python 引擎在将文本传入 reportlab `Paragraph` 前统一调用 `xml.sax.saxutils.escape()` 转义 `<`、`>`、`&`，避免含特殊字符的文本（如 `A<B`、`C&D`）被误解析为 XML 标签导致崩溃。`Preformatted`（代码块/表格）不需要转义，reportlab 不对其解析 XML 标签。
+
 ### 样式配置
 
 | 元素 | 字体大小 | 颜色 |
 |-----|---------|-----|
-| 标题 (H1) | 14pt | #1a5490 |
-| 标题 (H2) | 12pt | #2c3e50 |
-| 标题 (H3/H4) | 11pt / 10pt | #34495e |
-| 正文 | 10pt | 黑色（ReportLab 默认） |
+| 标题 (H1) | 18pt | #1a5490 |
+| 标题 (H2) | 14pt | #1a5490 |
+| 标题 (H3) | 12pt | #2c3e50 |
+| 正文 | 10pt | 黑色 |
 | 列表 | 10pt | 黑色，缩进 20pt |
 
 ### 页面设置
@@ -308,7 +379,13 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 
 ### Q: PDF 中文显示为方块？
 
-确保系统有支持的中文字体。脚本会依次尝试系统字体并回退到 ReportLab 内置 CID 字体（如 `STSong-Light`）。
+**Python 引擎**：确保系统有支持的中文字体。脚本会依次尝试系统字体并回退到 ReportLab 内置 CID 字体（如 `STSong-Light`）。
+
+**pandoc 引擎**：默认 pdflatex 无法排版中文。`auto` 模式下脚本会自动切换到 `xelatex` 并尝试 CJK 字体；若使用 `--engine pandoc` 且 pandoc 失败，请确认系统已安装 `xelatex`（TeX Live / MacTeX / MiKTeX），或改用 `--engine auto` 让脚本自动回退。
+
+### Q: Markdown 含 `<` 或 `&` 等字符，转 PDF 时崩溃？
+
+已修复。Python 引擎在传入 reportlab 前统一 `escape()`，含 `A<B`、`C&D` 等文本可正常输出 PDF。pandoc 引擎无此问题。
 
 ### Q: 批量转换时某些文件失败？
 
@@ -319,11 +396,29 @@ python3 scripts/md_to_pdf.py document.md output.pdf --engine python
 
 ### Q: 文档更新后想重新转换，但输出已存在怎么办？
 
-使用 `--force` 参数强制重新转换：
+直接重跑批处理即可：转换成功时会写入 `.converted` 完成标记（记录源文件
+SHA-256），源文件变更后哈希不一致会**自动清理重转**，无需任何参数。
+仅当想强制重建全部输出时才需要 `--force`：
 ```bash
-python3 scripts/batch_convert.py ./documents ./output --force
+python scripts/batch_convert.py ./documents ./output --force
 ```
-该模式会删除已有输出目录后重新生成。
+
+### Q: 恶意/异常 DOCX 会把进程拖死吗？
+
+不会。解压前会依据 ZIP 元数据做资源耗尽防线（总解压 500MB、单 entry 100MB、
+压缩比 100x、图片数量/大小/像素上限等，见上文「安全防线」），实际读取时再按
+真实解压量兜底。超限抛 `DocxSecurityError`——批处理计为失败并清理输出；
+它继承 `ValueError` 以兼容既有处理，但调用方应精确捕获本类且**不可降级重试**。
+
+### Q: 批处理时单个文档卡死怎么办？
+
+用 `--timeout`（默认 300 秒）限制单文档转换时长，超时计为失败并清理该文档的
+半成品输出。该机制基于 POSIX `signal.alarm`，Windows 上自动跳过（无超时保护）。
+
+### Q: 需要额外安装 defusedxml 吗？
+
+可选。安装后 DOCX 内 XML 解析启用实体膨胀/外部实体防御；未安装自动回退标准库，
+功能不受影响。`pip install defusedxml` 即可启用。
 
 ### Q: 脚注能自动转换吗？
 

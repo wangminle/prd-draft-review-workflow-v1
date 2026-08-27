@@ -93,7 +93,13 @@ records the method (`feature_id` / `positional_fallback`) and warnings.
 
 ## Output Structure
 
-The output JSON matches the schema in `templates/output-schema.json`.
+The output JSON matches the aggregate schema in `templates/output-schema.json`.
+
+Each LLM sub-step is also validated against its own per-prompt schema:
+`templates/output-schema.evolution-match.json`,
+`templates/output-schema.feature-extraction.json`,
+`templates/output-schema.gap-assessment.json`.
+Do not apply the aggregate schema to those intermediate outputs.
 
 Key top-level fields:
 - `evolution`: Evolution tracking results (when output-type includes evolution)

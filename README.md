@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.12。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.14。
 
 ### 架构设计
 
@@ -73,7 +73,8 @@ flowchart LR
 - 安全启动与密钥治理：`JWT_SECRET` 可留空（`./start.sh` 首次生成并写入项目根目录 `.env`），拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；聊天附件 `file_id` 经安全路径解析防目录穿越；SQLite 连接启用 `foreign_keys=ON`；生命周期结束前先停止审查后台任务与 Embedding Worker，再释放 SQLAlchemy engine。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
-- 实时任务体验：评审流程支持流式进度反馈，适合长流程 AI 审查任务。
+- 实时任务体验：评审流程支持流式进度反馈；LLM 瞬时失败会自动重试（默认 7 次、退避 2–64 秒），等待期间页面弹出 toast 提示，不写入通知列表。
+- 富内容渲染：智能对话与评审报告支持 Markdown、Mermaid、KaTeX 数学公式（含 `\ce{}` 化学式，不定界 `$` 以免误伤金额）以及隔离式 SVG 预览（Blob URL + 恶意 SVG 拒绝，可切换源码/图形）。
 - 内网部署友好：SQLite + runtime 目录隔离，部署简单，便于迁移和备份；跨平台支持 Linux 与 Windows（路径分隔符归一化、aiosqlite 连接释放兼容文件锁）。
 
 ### 后台管理功能
@@ -120,7 +121,7 @@ src/app/services/           应用服务、SkillRunner、LLM 适配、品牌配�
 src/app/repositories/       数据访问层（含 Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact）
 src/app/storage/            文档与运行时文件存储归口（ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage）
 src/app/log_writers/        审计、前端、LLM 会话日志
-src/static/                 前端 SPA（含 workspace.js 资料库、notification.js 通知模块）
+src/static/                 前端 SPA（含 workspace.js 资料库、notification.js 通知模块、rich-content.js 富内容渲染、vendor/katex 本地 KaTeX）
 skills/                     需求评审技能链
 src/agent/extensions/       Agent 安全 Extension（deny-by-default 白名单、授权范围、高风险审批门控）
 package.json                Pi Agent npm 依赖声明（pi-coding-agent）
@@ -166,7 +167,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.12.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.14.
 
 ### Architecture
 
@@ -229,7 +230,8 @@ Supported review modes:
 - Secure startup and secret hygiene: `JWT_SECRET` may be empty (`./start.sh` generates one and writes it to the project-root `.env`); example/short secrets are rejected; optional `ADMIN_INITIAL_PASSWORD`; chat attachment `file_id` is resolved safely to block path traversal; SQLite connections enable `foreign_keys=ON`; lifespan stops review pipeline tasks and the Embedding Worker before disposing the SQLAlchemy engine.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
-- Streaming progress for long-running AI review tasks.
+- Streaming progress for long-running AI review tasks; transient LLM failures retry automatically (7 attempts, 2–64s backoff) with an in-page toast (not stored in the notification inbox).
+- Rich content in chat and review reports: Markdown, Mermaid, KaTeX math (including `\ce{}` chemistry; single `$` delimiters are disabled to avoid currency false positives), and sandboxed SVG preview (Blob URL, malicious SVG rejected, source/graphic toggle).
 - Deployment-friendly runtime isolation using SQLite and a dedicated runtime directory; cross-platform support for Linux and Windows (path separator normalization, aiosqlite connection release for file-lock compatibility).
 
 ### Admin Console
@@ -276,7 +278,7 @@ src/app/services/           Application services, SkillRunner, LLM integration, 
 src/app/repositories/       Persistence layer (incl. Workspace/KnowledgeSource/ProjectSourceRef/Agent/ReviewRequest/Notification/Artifact)
 src/app/storage/            Runtime file storage consolidation (ChatFileStorage/KnowledgeFileStorage/ReviewFileStorage)
 src/app/log_writers/        Audit, frontend, and LLM session logs
-src/static/                 Frontend SPA (incl. workspace.js knowledge library, notification.js notification module)
+src/static/                 Frontend SPA (incl. workspace.js knowledge library, notification.js notification module, rich-content.js rendering, vendor/katex local KaTeX)
 skills/                     Review skill chain
 src/agent/extensions/       Agent security Extension (deny-by-default whitelist, scope enforcement, approval gating)
 package.json                Pi Agent npm dependency (pi-coding-agent)

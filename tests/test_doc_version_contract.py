@@ -104,3 +104,59 @@ def test_update_script_compares_package_version_not_const():
     assert '[ "$CURRENT_VERSION" = "$PACKAGE_VERSION" ]' in script
     assert '${PACKAGE_VERSION:-$NEW_VERSION}' in script
     assert 'vf = root / "VERSION"' in script
+
+
+def _version() -> str:
+    return (ROOT / "VERSION").read_text(encoding="utf-8").strip()
+
+
+def test_user_facing_docs_quote_current_version():
+    """发版后 README/健康检查示例/顶栏兜底必须跟 VERSION 走，避免再停在上一版。"""
+    ver = _version()
+    checks = [
+        ("README.md", f"当前版本 V{ver}"),
+        ("README.md", f"Current version V{ver}"),
+        ("docs/getting-started.md", f'"version":"{ver}"'),
+        ("docs/troubleshooting.md", f'"version":"{ver}"'),
+        ("docs/api-reference.md", f'"version":"{ver}"'),
+        ("docs/packaging-and-deployment.md", f"V{ver}"),
+        ("src/static/index.html", f"Ver. {ver}"),
+        ("runtime/config/ui-branding.example.yaml", f'app_version: "{ver}"'),
+        ("update.sh", f'NEW_VERSION="{ver}"'),
+        ("package.json", f'"version": "{ver}"'),
+    ]
+    for rel, needle in checks:
+        assert needle in _read(rel), f"{rel} missing {needle!r}"
+
+
+def test_configuration_retry_defaults_match_config_yaml():
+    text = _read("docs/configuration.md")
+    assert "| `max_attempts` | `7` |" in text
+    assert "| `max_delay_ms` | `64000` |" in text
+    assert "| `max_attempts` | `5` |" not in text
+    assert "| `max_delay_ms` | `30000` |" not in text
+    troubleshoot = _read("docs/troubleshooting.md")
+    assert "max_attempts: 7" in troubleshoot
+    assert "max_attempts: 5" not in troubleshoot
+
+
+def test_pi_agent_docs_cover_unsaved_temp_config():
+    admin = _read("docs/admin-guide.md")
+    api = _read("docs/api-reference.md")
+    assert "config_saved" in admin
+    assert "尚未保存" in admin
+    assert "config_saved" in api
+
+
+def test_packaging_docs_pip_not_uv_lock():
+    text = _read("docs/packaging-and-deployment.md")
+    assert "`uv.lock`" in text
+    assert "requirements.txt" in text
+    assert "uv sync" in text
+
+
+def test_user_guide_covers_katex_and_svg():
+    text = _read("docs/user-guide.md")
+    assert "KaTeX" in text
+    assert r"\ce{}" in text
+    assert "SVG" in text

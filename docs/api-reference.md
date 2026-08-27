@@ -10,7 +10,7 @@
 
 本文件为「AI 需求评审工作流平台」的 API 参考，面向集成方与二次开发者。所有业务接口均以 `/api` 为前缀,后端基于 FastAPI。
 
-> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.12`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
+> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.14`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
 
 ---
 
@@ -70,7 +70,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 
 | 方法 | 路径 | 用途 | 鉴权 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.12"}` | 公开 |
+| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.14"}` | 公开 |
 | GET | `/api/app/branding` | 品牌配置(登录页 logo、顶栏 logo、favicon 等) | 公开 |
 | GET | `/assets/branding/{path}` | 静态品牌资产文件(防目录穿越) | 公开 |
 | POST | `/api/log` | 前端日志上报(写入 `runtime/logs/frontend.jsonl` 并记审计) | 用户(可选) |
@@ -239,8 +239,8 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 | PUT | `/config/llm-api-key` | 设置 LLM API Key | 用户 |
 | PUT | `/config/search-api-key` | 设置搜索 API Key | 用户 |
 | PUT | `/config/vision-api-key` | 设置视觉 API Key | 用户 |
-| POST | `/config/test-connection` | 测试连接 | 用户 |
-| POST | `/config/speed-test` | 测速 | 用户 |
+| POST | `/config/test-connection` | 测试连接(可选请求体 `api_key`/`llm_provider`/`llm_api_base`/`llm_model`;临时值不落库,响应含 `config_saved`) | 用户 |
+| POST | `/config/speed-test` | 测速(同上) | 用户 |
 
 ### 通知与评论 `/api/notifications`
 
@@ -408,7 +408,7 @@ The "Auth" column in the tables below uses these markers:
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.12"}` | Public |
+| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.14"}` | Public |
 | GET | `/api/app/branding` | Branding config (login logo, topbar logo, favicon, etc.) | Public |
 | GET | `/assets/branding/{path}` | Static branding assets (path-traversal protected) | Public |
 | POST | `/api/log` | Frontend log ingestion (writes `runtime/logs/frontend.jsonl` + audit) | User (optional) |
@@ -577,8 +577,8 @@ Chat attachment upload and URL content fetching.
 | PUT | `/config/llm-api-key` | Set LLM API Key | User |
 | PUT | `/config/search-api-key` | Set search API Key | User |
 | PUT | `/config/vision-api-key` | Set vision API Key | User |
-| POST | `/config/test-connection` | Test connection | User |
-| POST | `/config/speed-test` | Speed test | User |
+| POST | `/config/test-connection` | Test connection (optional body `api_key`/`llm_provider`/`llm_api_base`/`llm_model`; temp values are not saved; response includes `config_saved`) | User |
+| POST | `/config/speed-test` | Speed test (same) | User |
 
 ### Notifications & Comments `/api/notifications`
 

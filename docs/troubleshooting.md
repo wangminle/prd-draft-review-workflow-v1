@@ -16,7 +16,7 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.12"}
+# 预期返回: {"status":"ok","version":"0.3.14"}
 ```
 
 ---
@@ -63,7 +63,7 @@ curl http://localhost:17957/api/health
 - **解决**:
   1. 在**管理后台**用「测试连接」和「测速」按钮验证当前配置是否可达。
   2. 检查 `.env` 中 `OPENAI_API_BASE`、代理设置,以及内网到模型服务的网络。
-  3. 评审任务有**内置重试机制**(`config.yaml` 的 `review.retry`):`max_attempts: 5`、`initial_delay_ms: 2000`、`backoff_factor: 2.0`、`timeout_seconds: 300`。瞬时抖动会自动重试,持续失败通常是上述配置或网络问题。
+  3. 评审任务有**内置重试机制**(`config.yaml` 的 `review.retry`):`max_attempts: 7`(1 次首发 + 6 次重试)、`initial_delay_ms: 2000`、`backoff_factor: 2.0`、`max_delay_ms: 64000`、`timeout_seconds: 300`,退避等待 2/4/8/16/32/64 秒。重试等待期间页面会弹出 toast(`llm_retry` SSE 事件,不写入通知列表)。瞬时抖动会自动重试,持续失败通常是上述配置或网络问题。
 
 ---
 
@@ -192,7 +192,7 @@ curl http://localhost:17957/api/health
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.12"}
+  # 预期返回: {"status":"ok","version":"0.3.14"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -228,7 +228,7 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.12"}
+# Expected: {"status":"ok","version":"0.3.14"}
 ```
 
 ---
@@ -275,7 +275,7 @@ curl http://localhost:17957/api/health
 - **Fix**:
   1. In the **admin console**, use the **Test Connection** and **Speed Test** buttons to verify reachability.
   2. Check `.env` for `OPENAI_API_BASE`, proxy settings, and intranet connectivity to the model service.
-  3. Review tasks have a **built-in retry mechanism** (`config.yaml`, `review.retry`): `max_attempts: 5`, `initial_delay_ms: 2000`, `backoff_factor: 2.0`, `timeout_seconds: 300`. Transient blips are retried automatically; persistent failure is usually config or network.
+  3. Review tasks have a **built-in retry mechanism** (`config.yaml`, `review.retry`): `max_attempts: 7` (1 initial + 6 retries), `initial_delay_ms: 2000`, `backoff_factor: 2.0`, `max_delay_ms: 64000`, `timeout_seconds: 300`, with backoff waits of 2/4/8/16/32/64 seconds. An in-page toast (`llm_retry` SSE event, not stored in the inbox) appears while waiting. Transient blips are retried automatically; persistent failure is usually config or network.
 
 ---
 
@@ -404,7 +404,7 @@ curl http://localhost:17957/api/health
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.12"}
+  # Expected: {"status":"ok","version":"0.3.14"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).

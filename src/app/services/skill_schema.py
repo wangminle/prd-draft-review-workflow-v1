@@ -40,6 +40,7 @@ _CRITICAL_FIELD_HINTS = {
     "action_plan",
     "action_items",
     "recommendations",
+    "raw_text",
 }
 
 

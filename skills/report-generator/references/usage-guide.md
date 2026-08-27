@@ -125,3 +125,5 @@ The `--polish` flag uses an LLM to refine the report text. This:
 - Does NOT add new conclusions
 
 Requires `ANTHROPIC_API_KEY` environment variable and the `anthropic` package (`pip3 install anthropic`).
+
+In the **review pipeline** (not this CLI), polish / PRD-draft generation uses `plain_chat` so Markdown is kept as-is. The result is wrapped as `{"raw_text": ...}` and checked with `templates/output-schema.report-polish.json` (`raw_text` required + pattern `\\S`). Empty, whitespace-only, or JSON-extracted leftovers fail and retry. `templates/output-schema.json` remains the CLI file-list schema for `generate.py`.

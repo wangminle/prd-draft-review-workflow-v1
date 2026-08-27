@@ -132,7 +132,9 @@ Override the default scoring rubric by creating a JSON file matching the format 
 
 ## Output Structure
 
-The main output is a JSON file matching the schema in `templates/output-schema.json`.
+The main output is a JSON file matching the aggregate schema in `templates/output-schema.json`.
+
+Each of the 7 dimensions is also validated against its own per-prompt schema (`templates/output-schema.<dimension>.json`) so dimension-level JSON is not checked against the full-report structure.
 
 Additionally, Markdown reports are generated alongside the JSON:
 - `{stem}_full_report.md`

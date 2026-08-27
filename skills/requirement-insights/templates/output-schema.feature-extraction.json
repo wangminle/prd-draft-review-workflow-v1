@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Feature Extraction Output",
+  "description": "feature-extraction prompt 的扁平输出结构（BUG-171，与 #3 同源：不得用 skill 级聚合 schema 校验子步骤结果）。维度数量上限 15 来自 prompt 规则1；下限不锁 5（极小文档集为合法场景），由 prompt 约束。coverage_matrix/gaps/overlaps 由运行时从 feature_dimensions 确定性构建（_build_coverage_matrix），不在本 schema 声明。",
+  "type": "object",
+  "required": ["feature_dimensions", "baseline_warning"],
+  "properties": {
+    "feature_dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 15,
+      "items": {
+        "type": "object",
+        "required": ["feature_id", "name", "description", "status"],
+        "properties": {
+          "feature_id": {"type": "string"},
+          "name": {"type": "string"},
+          "description": {"type": "string"},
+          "source_doc_ids": {"type": "array", "items": {"type": "string"}},
+          "category": {"type": "string"},
+          "status": {"type": "string", "enum": ["covered", "gap", "overlap", "extracted", "supplementary"]}
+        }
+      }
+    },
+    "baseline_warning": {"type": "string"}
+  }
+}

@@ -366,10 +366,10 @@ Agent 管理涉及 `/api/agent/*` 与全局 MCP 配置。管理员负责配置 A
 | 查看/更新配置 | `GET/PUT /pi-agent/config` | 仅传入字段被更新 |
 | 配置 LLM Key | `PUT /pi-agent/config/llm-api-key` | 加密存储 |
 | 配置 Search/Vision Key | `PUT /pi-agent/config/search-api-key`、`/vision-api-key` | 传空值可清除 |
-| 测试连接 | `POST /pi-agent/config/test-connection` | 仅支持 OpenAI 兼容协议 provider |
-| 测速 | `POST /pi-agent/config/speed-test` | 同上限制 |
+| 测试连接 | `POST /pi-agent/config/test-connection` | 仅支持 OpenAI 兼容协议 provider;可选请求体 `api_key`/`llm_provider`/`llm_api_base`/`llm_model` 用于先测后存 |
+| 测速 | `POST /pi-agent/config/speed-test` | 同上限制与可选请求体 |
 
-> 注意:连接测试/测速**仅支持 OpenAI 兼容协议**的 provider(如 deepseek/openai/openai_compatible);其他 provider(如 Anthropic)会返回明确的「不支持」状态,而非误导性错误。
+> 注意:连接测试/测速**仅支持 OpenAI 兼容协议**的 provider(如 deepseek/openai/openai_compatible);其他 provider(如 Anthropic)会返回明确的「不支持」状态,而非误导性错误。表单里新填的 Key 可在**保存前**测试:临时值只在本次请求内存中使用,不落库、不更新 `last_test_status`、不写日志;响应含 `config_saved=false` 时,成功文案为「连接成功 ✓（当前配置尚未保存）」。未传字段回退数据库已保存配置。
 
 ---
 
@@ -774,10 +774,10 @@ Common actions:
 | View/update config | `GET/PUT /pi-agent/config` | Only supplied fields are updated |
 | Set LLM Key | `PUT /pi-agent/config/llm-api-key` | Encrypted at rest |
 | Set Search/Vision Key | `PUT /pi-agent/config/search-api-key`, `/vision-api-key` | Pass empty to clear |
-| Test connection | `POST /pi-agent/config/test-connection` | Only OpenAI-compatible providers supported |
-| Speed test | `POST /pi-agent/config/speed-test` | Same limitation |
+| Test connection | `POST /pi-agent/config/test-connection` | Only OpenAI-compatible providers supported; optional body `api_key`/`llm_provider`/`llm_api_base`/`llm_model` for test-before-save |
+| Speed test | `POST /pi-agent/config/speed-test` | Same limitation and optional body |
 
-> Note: connection/speed tests **only support OpenAI-compatible** providers (e.g., deepseek/openai/openai_compatible). Other providers (e.g., Anthropic) return a clear "unsupported" status instead of a misleading error.
+> Note: connection/speed tests **only support OpenAI-compatible** providers (e.g., deepseek/openai/openai_compatible). Other providers (e.g., Anthropic) return a clear "unsupported" status instead of a misleading error. Newly typed keys can be tested **before save**: temporary values stay in-memory for this request only — they are not persisted, do not update `last_test_status`, and are not logged. When the response has `config_saved=false`, success copy is "connected ✓ (current config not saved yet)". Omitted fields fall back to the saved database config.
 
 ---
 

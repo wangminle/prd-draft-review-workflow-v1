@@ -290,8 +290,10 @@ def convert_md_to_pdf_with_pandoc(input_file: str, output_file: str):
     cmd = ["pandoc", input_file, "-o", output_file]
     try:
         subprocess.run(cmd, check=True, capture_output=True, text=True)
+        return
     except subprocess.CalledProcessError as e:
         first_err = (e.stderr or "").strip()
+
     # 默认 pdflatex 引擎无法排版中文。若系统有 xelatex，
     # 依次尝试常见 CJK 字体重试（不存在的字体会失败并尝试下一个）。
     if shutil.which("xelatex"):
@@ -302,6 +304,7 @@ def convert_md_to_pdf_with_pandoc(input_file: str, output_file: str):
                 return
             except subprocess.CalledProcessError:
                 continue
+
     raise RuntimeError(f"pandoc 转换失败: {first_err or '未知错误'}")
 
 

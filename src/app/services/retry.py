@@ -293,6 +293,43 @@ async def structured_chat(
     return _parse_json_response(text)
 
 
+async def plain_chat(
+    messages: list[dict[str, str]],
+    *,
+    api_base: str,
+    api_key: str,
+    llm_model: str,
+    max_tokens: int = 4096,
+    temperature: float = 0.3,
+    extra_body: dict | None = None,
+    config: RetryConfig = RetryConfig(),
+    workspace_id: int | None = None,
+    user_id: int | None = None,
+    mode: str | None = None,
+) -> dict:
+    """纯文本调用：不做 JSON 解析，始终包装为 {"raw_text": text}（BUG-170）。
+
+    适用于产出为 Markdown 等自由文本的 prompt（如 report-polish 润色）。
+    这类正文里常包含 JSON / Mermaid 代码块示例，structured_chat 的
+    _parse_json_response 会把正文中的 JSON 对象误提取为结果并丢弃整篇
+    正文，因此文本型 prompt 必须走本路径。
+    """
+    text, _usage = await retryable_chat(
+        messages,
+        api_base=api_base,
+        api_key=api_key,
+        llm_model=llm_model,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        extra_body=extra_body,
+        config=config,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        mode=mode,
+    )
+    return {"raw_text": text}
+
+
 def _parse_json_response(text: str) -> dict:
     text = text.strip()
     if text.startswith("```"):

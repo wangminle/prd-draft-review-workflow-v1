@@ -130,7 +130,7 @@
 #### 2.7 运行评审
 
 1. 选好文档和模式后,点击"开始评审"。
-2. 页面会显示**流式进度**:当前在哪一步(预处理/分类/逐篇分析/体系 Review/...)、整体进度百分比。
+2. 页面会显示**流式进度**:当前在哪一步(预处理/分类/逐篇分析/体系 Review/...)、整体进度百分比。若模型瞬时失败,页面会弹出 toast 提示正在重试(不写入通知列表),无需刷新。
 3. 长任务支持**任务状态追踪**:你可以离开页面,稍后从历史记录里回到这个任务查看结果。
 4. 任务完成后,自动跳转到结果页。
 
@@ -163,7 +163,7 @@
 
 #### 3.4 报告与 PRD 草稿
 
-- **Markdown / PDF 报告**:结构化评审报告,可下载存档。
+- **Markdown / PDF 报告**:结构化评审报告,可下载存档。在线查看时支持 Mermaid 图、KaTeX 数学公式(含 `\ce{}` 化学式)以及隔离式 SVG 预览(可切换源码/图形;含脚本等危险内容的 SVG 会被拒绝)。
 - **PRD 草稿**:基于最高优先级缺口生成的 PRD 草稿(由 `draft` 模式产出),可作为新需求的起点。
 
 所有结果都支持查看、下载,并保留任务状态与运行历史,方便复盘和追溯。
@@ -233,6 +233,9 @@ A:不会。所有结果都会落库并保留任务状态与历史,你可以随�
 
 **Q:团队空间和个人空间的资料别人能看到吗?**
 A:团队空间按角色权限共享;个人空间仅你可见。
+
+**Q:对话或报告里的公式、化学式、SVG 会渲染吗?**
+A:会。`$$…$$`、`\[…\]`、`\(...\)` 用 KaTeX 渲染,`\ce{}` 化学式同样支持;单个 `$` 不会当公式,以免金额被误伤。SVG 代码块会隔离预览,可切换查看源码;恶意 SVG 会被拒绝。
 
 ---
 
@@ -360,7 +363,7 @@ The platform has a time-saving design: **the 6 modes are progressive**, and **re
 #### 2.7 Run a Review
 
 1. After selecting the document(s) and mode, click "Start Review."
-2. The page shows **streaming progress**: the current step (preprocess / classify / per-analysis / System Review / ...) and overall percentage.
+2. The page shows **streaming progress**: the current step (preprocess / classify / per-analysis / System Review / ...) and overall percentage. If the model fails transiently, an in-page toast says it is retrying (not stored in the notification inbox); no refresh needed.
 3. Long tasks support **task status tracking**: you can leave the page and come back to the task later from the history.
 4. When done, it auto-navigates to the results page.
 
@@ -393,7 +396,7 @@ After a review completes, results are presented in several sections, all of whic
 
 #### 3.4 Reports and PRD Drafts
 
-- **Markdown / PDF reports**: structured review reports, downloadable for archiving.
+- **Markdown / PDF reports**: structured review reports, downloadable for archiving. Online viewing renders Mermaid diagrams, KaTeX math (including `\ce{}` chemistry), and sandboxed SVG previews (source/graphic toggle; SVGs with scripts or other dangerous content are rejected).
 - **PRD draft**: generated from the highest-priority gap (produced by `draft` mode), usable as a starting point for a new requirement.
 
 All results support viewing and downloading, and retain task status and run history for easy review and traceability.
@@ -463,3 +466,6 @@ A: No. All results are persisted with task status and history; you can return to
 
 **Q: Can others see materials in the team space vs. personal space?**
 A: Team-space materials are shared by role permission; personal-space materials are visible only to you.
+
+**Q: Are formulas, chemistry, and SVG rendered in chat and reports?**
+A: Yes. `$$…$$`, `\[…\]`, and `\(...\)` are rendered with KaTeX, including `\ce{}` chemistry. A single `$` is not treated as math, so currency amounts are not mangled. SVG code blocks get a sandboxed preview with a source/graphic toggle; malicious SVGs are rejected.

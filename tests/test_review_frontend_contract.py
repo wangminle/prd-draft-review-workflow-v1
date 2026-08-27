@@ -283,6 +283,14 @@ def test_action_card_shows_completed_badge_for_existing_mode():
     assert "const reviewed = this._isDocModeReviewed(docId, mode);" in action_card_status_block
     assert "badge.textContent = reviewed.label;" in action_card_status_block
     assert "badge.classList.toggle('badge-cancelled', reviewed.status === 'cancelled');" in action_card_status_block
+    # 未完成（failed）用橘黄色 badge-failed 与已完成（绿色）区分
+    assert "badge.classList.toggle('badge-failed', reviewed.status === 'failed');" in action_card_status_block
+
+
+def test_action_card_badge_failed_has_orange_style():
+    css = (ROOT / "src" / "static" / "css" / "main.css").read_text(encoding="utf-8")
+    badge_block = css.split(".action-card-badge.badge-failed", 1)[1].split("}", 1)[0]
+    assert "--orange-6" in badge_block
 
 
 def test_draft_mode_pipeline_steps_include_system_review():

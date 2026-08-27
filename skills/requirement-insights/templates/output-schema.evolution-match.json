@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Evolution Match Output",
+  "description": "evolution-match prompt 的扁平输出结构（BUG-171，与 #3 同源：不得用 skill 级聚合 schema 校验子步骤结果）。matches 数量必须等于输入 current_issues 数量，由运行时守恒校验（_backfill_missing_issues）保证，schema 不锁条数。",
+  "type": "object",
+  "required": ["matches"],
+  "properties": {
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue_id", "issue", "status", "confidence"],
+        "properties": {
+          "issue_id": {"type": "string"},
+          "issue": {"type": "string"},
+          "resolved_in": {"type": ["string", "null"]},
+          "resolved_version": {"type": ["string", "null"]},
+          "status": {"type": "string", "enum": ["resolved", "partial", "unresolved"]},
+          "evidence": {"type": ["string", "null"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "note": {"type": "string"}
+        }
+      }
+    }
+  }
+}

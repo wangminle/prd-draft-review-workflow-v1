@@ -11,7 +11,7 @@ from typing import Callable
 from app.services.skill_prompts import SkillPromptLoader
 from app.services.skill_schema import SkillSchemaLoader
 from app.services.skill_prune import strip_base64_images, truncate_for_classify, truncate_for_analysis
-from app.services.retry import structured_chat, RetryConfig
+from app.services.retry import structured_chat, plain_chat, RetryConfig
 from app.services.review_helpers import extract_pm_assessment_payload, build_context_injection, json_from_raw_text
 
 logger = logging.getLogger(__name__)
@@ -224,6 +224,13 @@ _REVIEW_DIMENSIONS = [
     "action-plan",
 ]
 
+# requirement-insights sub-steps in execution order: (prompt_name, state_key)
+_INSIGHT_SUB_STEPS = [
+    ("evolution-match", "evolution"),
+    ("feature-extraction", "features"),
+    ("gap-assessment", "gap"),
+]
+
 # Dimension name → prior dimension result variable name
 _DIM_RESULT_VARS = {
     "business-value": None,
@@ -427,17 +434,33 @@ class SkillRunner:
         # Determine per-skill LLM parameters
         max_tokens, temperature = self._llm_params_for(skill_name)
 
-        raw_result = await structured_chat(
-            messages,
-            api_base=self.model_cfg["api_base"],
-            api_key=self.model_cfg["api_key"],
-            llm_model=self.model_cfg["llm_model"],
-            max_tokens=max_tokens,
-            temperature=temperature,
-            extra_body=self.model_cfg.get("extra_body"),
-            config=self.retry_config,
-            **self._llm_attribution(),
-        )
+        # 文本型 prompt（report-polish 润色 Markdown）必须走纯文本调用链：
+        # structured_chat 会把正文里的 JSON/Mermaid 代码块误解析为结果并
+        # 丢弃整篇报告（BUG-170）。
+        if skill_name == "report":
+            raw_result = await plain_chat(
+                messages,
+                api_base=self.model_cfg["api_base"],
+                api_key=self.model_cfg["api_key"],
+                llm_model=self.model_cfg["llm_model"],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                extra_body=self.model_cfg.get("extra_body"),
+                config=self.retry_config,
+                **self._llm_attribution(),
+            )
+        else:
+            raw_result = await structured_chat(
+                messages,
+                api_base=self.model_cfg["api_base"],
+                api_key=self.model_cfg["api_key"],
+                llm_model=self.model_cfg["llm_model"],
+                max_tokens=max_tokens,
+                temperature=temperature,
+                extra_body=self.model_cfg.get("extra_body"),
+                config=self.retry_config,
+                **self._llm_attribution(),
+            )
 
         # Validate and repair against output schema
         diagnostics = []
@@ -679,11 +702,7 @@ class SkillRunner:
             was provided (so callers must not claim absolute gap identification)
           - sub_step_status: per sub-step "success" | "error"
         """
-        sub_steps = [
-            ("evolution-match", "evolution"),
-            ("feature-extraction", "features"),
-            ("gap-assessment", "gap"),
-        ]
+        sub_steps = _INSIGHT_SUB_STEPS
         insight_results: dict[str, dict] = {}
         sub_step_status: dict[str, str] = {}
         sub_step_inputs: dict[str, dict] = {}

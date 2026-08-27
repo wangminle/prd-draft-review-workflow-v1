@@ -1,9 +1,11 @@
 ---
 name: docx-to-markdown
-description: "Convert DOCX to Markdown with embedded Excel table conversion and image extraction. Use when (1) converting .docx files to Markdown, especially those containing embedded Excel spreadsheets, (2) extracting images from Word documents to local files with relative paths, (3) batch processing multiple DOCX files, (4) optionally converting Markdown to PDF with Chinese font support."
+description: "Convert DOCX to Markdown with embedded Excel table conversion and image extraction. Use when (1) converting .docx files to Markdown, especially those containing embedded Excel spreadsheets, (2) extracting images from Word documents to local files with relative paths, (3) batch processing multiple DOCX files, (4) optionally converting Markdown to PDF with Chinese font support. 中文场景：Word 转 Markdown、提取图片、嵌入 Excel 表格转 Markdown、批量转换 docx、Markdown 转 PDF。"
 ---
 
 # DOCX to Markdown Converter
+
+![Version](https://img.shields.io/badge/version-0.1.6-blue)
 
 Convert Word documents to Markdown with full support for images, embedded Excel tables, and batch processing.
 
@@ -29,12 +31,12 @@ Convert Word documents to Markdown with full support for images, embedded Excel 
 ## Quick Start
 
 All commands below assume the working directory is the **skill root** (`skills/docx-to-markdown/`).
-Install dependencies first: `pip3 install -r requirements.txt`
+Install dependencies first: `pip install -r requirements.txt`
 
 ### Single File Conversion
 
 ```bash
-python3 scripts/convert_docx.py <input.docx> <output_directory>
+python scripts/convert_docx.py <input.docx> <output_directory>
 ```
 
 Output structure (auto-creates subfolder named after the document):
@@ -52,18 +54,28 @@ output_directory/
 When user mentions converting multiple DOCX files, use batch conversion:
 
 ```bash
-python3 scripts/batch_convert.py <source_dir> <output_dir>
+python scripts/batch_convert.py <source_dir> <output_dir>
+
+# Per-document timeout (default 300s; <=0 disables; skipped on Windows)
+python scripts/batch_convert.py <source_dir> <output_dir> --timeout 120
 
 # Force re-convert even if output already exists
-python3 scripts/batch_convert.py <source_dir> <output_dir> --force
+python scripts/batch_convert.py <source_dir> <output_dir> --force
 ```
 
-Each DOCX creates a separate folder with its MD file and assets. Batch mode supports `--timeout` (per-document timeout in seconds, default 300, POSIX only). The `.converted` completion marker is bound to the source file's SHA-256, so a changed source DOCX is automatically re-converted (no `--force` needed).
+Each DOCX creates a separate folder with its MD file and assets.
+
+**Skip semantics (SHA-256 sentinel)**: a document is skipped only when the output
+folder + MD + valid `.converted` sentinel are all present AND the sentinel's
+recorded source SHA-256 matches the current source file. Changed sources are
+re-converted automatically — no `--force` needed. Legacy plain-text sentinels are
+treated as invalid (re-converted). Failed conversions (including timeouts and
+security rejections) clean up the half-finished output folder.
 
 ### Markdown to PDF (Optional)
 
 ```bash
-python3 scripts/md_to_pdf.py <input.md> [output.pdf] [--engine auto|pandoc|python]
+python scripts/md_to_pdf.py <input.md> [output.pdf] [--engine auto|pandoc|python]
 ```
 
 If output path is omitted, PDF is saved in the same directory as the input file.
@@ -71,7 +83,7 @@ If output path is omitted, PDF is saved in the same directory as the input file.
 `md_to_pdf.py` is standalone and works independently from this skill:
 - `--engine auto` (default): prefer system `pandoc`; if pandoc fails (e.g. default pdflatex cannot render Chinese), automatically retries with `xelatex` + CJK fonts, then falls back to Python renderer
 - `--engine pandoc`: force pandoc (raises on failure, no fallback)
-- `--engine python`: force Python renderer (`pip3 install markdown reportlab`)
+- `--engine python`: force Python renderer (`pip install markdown reportlab`)
 
 > If pandoc is available, it often produces better results.
 > The Python renderer escapes all text before passing to reportlab, so content with `<`, `>`, `&` is safe.
@@ -111,7 +123,42 @@ Automatically detects Excel spreadsheets embedded in DOCX and converts them to M
 ### Output Naming Safety
 
 - Cleans invalid filename characters and quote variants
-- For very long document names, truncates safely and appends a short hash suffix to avoid directory collisions
+- When cleaning actually replaces/removes characters (e.g. `a:b` → `a_b`) or truncates over-long names, a short hash of the original name is appended so different source names never share one output folder
+- Pure NFKC normalization (full-width → half-width, common in Chinese documents) does not append a hash; its rare collisions are covered by the sentinel hash check
+
+### Security: Resource-Exhaustion Defense (Malicious DOCX)
+
+Before decompression, the ZIP structure is validated against
+`DOCX_SECURITY_LIMITS` (module-level dict, tunable):
+
+| Limit | Default |
+|-------|---------|
+| Total uncompressed size | 500 MB |
+| Single entry uncompressed | 100 MB |
+| Single entry compression ratio | 100x |
+| Total compression ratio (only judged when compressed total > 1 MB) | 100x |
+| Image count (`word/media/`) | 500 |
+| Single image file size | 20 MB |
+| Single image pixels (decompression-bomb check via header parsing, no decode) | 50,000,000 |
+| Embedded Excel size | 50 MB |
+
+Violations raise `DocxSecurityError(ValueError)`. It subclasses `ValueError`
+for compatibility, but callers can catch it precisely: a security rejection
+means the input is malicious/abnormal and must NOT be retried or degraded to
+a fallback path. Actual reads are additionally bounded at decompression time
+(`read_zip_entry_bounded`) to defend against lying ZIP metadata.
+
+XML parsing goes through `defusedxml` when installed (falls back to stdlib
+`xml.etree` otherwise); `defusedxml` is listed as an optional dependency.
+
+### Batch Reliability
+
+- **Per-document timeout**: `--timeout` (default 300s) via POSIX `signal.alarm`;
+  `<=0` disables. Windows (no SIGALRM) and non-main threads degrade to no timeout.
+  The previous signal handler is always restored.
+- **SHA-256 `.converted` sentinel** (atomic tmp+rename JSON) — see Batch Conversion above
+- **Half-finished cleanup**: failed conversions and untrusted pre-existing outputs
+  (missing/invalid/mismatched sentinel) are removed and re-converted
 
 ### Additional Enhancements
 
@@ -139,12 +186,14 @@ Automatically detects Excel spreadsheets embedded in DOCX and converts them to M
 ## Dependencies
 
 ```bash
-pip3 install -r requirements.txt
+pip install -r requirements.txt
 # Installs: mammoth, openpyxl (core) + markdown, reportlab (optional PDF engine)
+#           + defusedxml (optional hardened XML parsing)
 ```
 
 - **mammoth** + **openpyxl**: DOCX→Markdown 核心转换（必需）
 - **markdown** + **reportlab**: Python 内置 PDF 渲染引擎（仅 `md_to_pdf.py --engine python` 时使用；若系统有 pandoc 则可不装）
+- **defusedxml**: 增强解析 DOCX 内 XML 的安全性（防实体膨胀/外部实体；未安装自动回退标准库，功能不受影响）
 
 ## Scripts Reference
 

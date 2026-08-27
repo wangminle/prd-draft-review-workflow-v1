@@ -1,0 +1,141 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PRD Per-Document Analysis Output",
+  "type": "object",
+  "required": ["doc_id", "core_problem", "category", "boundary_in", "boundary_out", "boundary_issues", "key_points", "expert_review", "quality_score", "confidence"],
+  "properties": {
+    "doc_id": {
+      "type": "string",
+      "description": "Document identifier (from prd-overview-classify)"
+    },
+    "core_problem": {
+      "type": "string",
+      "description": "1-2 sentence summary of the core problem this requirement solves"
+    },
+    "category": {
+      "type": "string",
+      "description": "Confirmed or corrected category"
+    },
+    "boundary_in": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "What this requirement explicitly covers"
+    },
+    "boundary_out": {
+      "type": "array",
+      "items": {"type": "string"},
+      "description": "What this requirement explicitly excludes"
+    },
+    "boundary_issues": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue", "severity", "resolution"],
+        "properties": {
+          "issue": {"type": "string"},
+          "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+          "resolution": {
+            "type": "object",
+            "required": ["status"],
+            "properties": {
+              "status": {"type": "string", "enum": ["resolved", "partial", "unresolved"]},
+              "resolved_by": {"type": ["string", "null"]},
+              "evidence": {"type": ["string", "null"]},
+              "note": {"type": ["string", "null"]}
+            }
+          }
+        }
+      },
+      "description": "Related problems NOT covered by this requirement (1-5 items)"
+    },
+    "key_points": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"type": "string", "enum": ["technical", "survey", "competitive"]},
+        "solution_highlights": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "key_parameters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {"type": "string"},
+              "value": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "expert_review": {
+      "type": "object",
+      "required": ["summary", "checks"],
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Overall conclusion for the expert-opinion review dimension"
+        },
+        "checks": {
+          "type": "array",
+          "minItems": 6,
+          "items": {
+            "type": "object",
+            "required": ["rule_key", "rule_name", "status", "evidence", "suggestion"],
+            "properties": {
+              "rule_key": {
+                "type": "string",
+                "enum": [
+                  "scope_realism",
+                  "boundary_completeness",
+                  "structured_entitlements",
+                  "user_facing_naming",
+                  "copy_consistency",
+                  "phased_tech_plan"
+                ]
+              },
+              "rule_name": {"type": "string"},
+              "status": {
+                "type": "string",
+                "enum": ["pass", "risk", "missing"]
+              },
+              "evidence": {"type": "string"},
+              "suggestion": {"type": "string"}
+            }
+          }
+        }
+      },
+      "description": "Standalone expert-opinion review block based on six product-review rules"
+    },
+    "image_insights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["image_path", "image_type", "description"],
+        "properties": {
+          "image_path": {"type": "string"},
+          "image_type": {"type": "string", "enum": ["flowchart", "ui_screenshot", "data_chart", "photo", "other"]},
+          "description": {"type": "string"},
+          "relevant_dimensions": {
+            "type": "array",
+            "items": {"type": "string"}
+          }
+        }
+      },
+      "description": "Insights from images (only when vision is enabled)"
+    },
+    "quality_score": {
+      "type": "number",
+      "minimum": 1.0,
+      "maximum": 5.0,
+      "description": "Overall document quality score"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0.0,
+      "maximum": 1.0,
+      "description": "Confidence in the analysis"
+    }
+  }
+}

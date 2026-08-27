@@ -147,12 +147,14 @@ Agent 扩展回调优先使用 `AGENT_API_BASE`；未设置时拼 `http://127.0.
 
 | 字段 | 默认值 | 说明 |
 |------|--------|------|
-| `max_attempts` | `5` | 最大重试次数 |
+| `max_attempts` | `7` | 总尝试次数(1 次首发 + 6 次重试) |
 | `initial_delay_ms` | `2000` | 首次重试延迟(毫秒) |
-| `backoff_factor` | `2.0` | 退避因子(指数退避) |
-| `max_delay_ms` | `30000` | 单次最大延迟(毫秒) |
+| `backoff_factor` | `2.0` | 退避因子(指数退避,序列 2/4/8/16/32/64 秒) |
+| `max_delay_ms` | `64000` | 单次最大延迟(毫秒) |
 | `timeout_seconds` | `300` | 请求总超时(秒) |
 | `connect_timeout_seconds` | `10` | 连接超时(秒) |
+
+重试等待前会通过通知 SSE 推送 `llm_retry` toast(不落库、不计未读)。管理后台「测试模型」使用独立轻量重试(5 次 / 30s 上限),不随管线默认放大。
 
 **`review.pipeline`**(评审流水线):
 
@@ -392,12 +394,14 @@ Each model object has: `id`, `name`, `adapter` (`openai_compatible`), `base_url`
 
 | Field | Default | Description |
 |-------|---------|-------------|
-| `max_attempts` | `5` | Max retry attempts |
+| `max_attempts` | `7` | Total attempts (1 initial + 6 retries) |
 | `initial_delay_ms` | `2000` | First retry delay (ms) |
-| `backoff_factor` | `2.0` | Backoff factor (exponential) |
-| `max_delay_ms` | `30000` | Max single delay (ms) |
+| `backoff_factor` | `2.0` | Backoff factor (exponential: 2/4/8/16/32/64 s) |
+| `max_delay_ms` | `64000` | Max single delay (ms) |
 | `timeout_seconds` | `300` | Total request timeout (s) |
 | `connect_timeout_seconds` | `10` | Connect timeout (s) |
+
+A `llm_retry` toast is pushed over the notification SSE before each wait (not persisted, not counted as unread). The admin "test model" action uses a separate light retry (5 attempts / 30s cap) and does not inherit the pipeline defaults.
 
 **`review.pipeline`** (review pipeline):
 

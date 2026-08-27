@@ -10,7 +10,7 @@
 
 ## 中文
 
-> 适用版本：V0.3.12（2026-08-21）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
+> 适用版本：V0.3.14（2026-08-27）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
 
 ## 1. 目标与范围
 
@@ -69,7 +69,7 @@
 | 文档与协议 | `README.md` `CLAUDE.md` `LICENSE` `.env.example` |
 | 配置模板 | `runtime/config/ui-branding.example.yaml` |
 
-> 说明：`update.sh` 的更新流程同步 `src tools tests docs skills` 与若干根文件（含 `package.json` 和 `package-lock.json`）。若 `pi-coding-agent` 版本变化，更新后需在目标服务器执行 `npm install` 以安装新依赖。
+> 说明：`update.sh` 的更新流程同步 `src tools tests docs skills` 与若干根文件（含 `package.json` 和 `package-lock.json`）。若 `pi-coding-agent` 版本变化，更新后需在目标服务器执行 `npm install` 以安装新依赖。Python 应用依赖以 `requirements.txt` 为准，安装用 `pip`。`pyproject.toml` 只含 pytest/ruff 等工具配置，**不是**应用依赖清单。仓库不跟踪 `uv.lock`（空壳 lock 会误导部分平台走 `uv sync` 而装不到包）；分发包也不包含 `uv.lock`。
 
 ### 3.3 包内排除（自动）
 
@@ -102,8 +102,8 @@
 # 1) 传输并解压（部署目录可自定，下例为 /opt/ai-review）
 mkdir -p /opt/ai-review
 #    默认 zip 分发包：
-unzip prd-draft-review-workflow-v1-code-config-v0.3.12-build*.zip -d /opt/ai-review
-#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.12-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.14-build*.zip -d /opt/ai-review
+#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.14-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) 配置密钥（包内只有 .env.example，不含真实密钥）
@@ -129,7 +129,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # 查看运行状态并做健康检查
 ```
 
-健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.12"}`。
+健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.14"}`。
 
 > 生产环境建议用 Nginx 反向代理 + systemd 守护，详见 [部署加固指南](deployment-hardening.md)。systemd 的 `EnvironmentFile` 应指向 `.env`，避免 `JWT_SECRET` 落在命令行参数中。应用停机时会先取消审查后台任务与 Embedding Worker，再释放数据库引擎。
 
@@ -179,7 +179,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 # 把新包放到项目根目录，直接执行（脚本会自动在当前目录查找 *code-config*.tar.gz）
 ./update.sh
 # 或显式指定包路径
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.12-build*.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.14-build*.tar.gz
 ```
 
 常用选项：
@@ -258,7 +258,7 @@ tar -xzf runtime-backup-*.tar.gz -C /opt/ai-review/runtime
 
 ## English
 
-> Applies to V0.3.12 (2026-08-21). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
+> Applies to V0.3.14 (2026-08-27). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
 
 ## 1. Scope
 
@@ -317,7 +317,7 @@ Artifact naming: `prd-draft-review-workflow-v1-code-config-v{version}-build{buil
 | Docs & license | `README.md` `CLAUDE.md` `LICENSE` `.env.example` |
 | Config template | `runtime/config/ui-branding.example.yaml` |
 
-> Note: `update.sh` syncs `src tools tests docs skills` and several root files (including `package.json` and `package-lock.json`). If the `pi-coding-agent` version changes, run `npm install` on the target server after updating to install new dependencies.
+> Note: `update.sh` syncs `src tools tests docs skills` and several root files (including `package.json` and `package-lock.json`). If the `pi-coding-agent` version changes, run `npm install` on the target server after updating to install new dependencies. Application Python dependencies come from `requirements.txt` and are installed with `pip`. `pyproject.toml` only holds pytest/ruff tool config — **not** the app dependency list. The repo does not track `uv.lock` (an empty lockfile can mislead some platforms into `uv sync` and fail to install packages); packages also omit `uv.lock`.
 
 ### 3.3 Excluded (automatic)
 
@@ -350,8 +350,8 @@ The target server needs: Python 3.10+, Node.js 18+, npm (required for Pi Agent; 
 # 1) Transfer and extract (deploy dir is customizable; example uses /opt/ai-review)
 mkdir -p /opt/ai-review
 #    Default zip package:
-unzip prd-draft-review-workflow-v1-code-config-v0.3.12-build*.zip -d /opt/ai-review
-#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.12-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.14-build*.zip -d /opt/ai-review
+#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.14-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) Configure secrets (package only has .env.example, no real secrets)
@@ -377,7 +377,7 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # show status and run a health check
 ```
 
-Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.12"}`.
+Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.14"}`.
 
 > For production, prefer Nginx reverse proxy + systemd supervision — see [Deployment Hardening](deployment-hardening.md). systemd's `EnvironmentFile` should point to `.env` to keep `JWT_SECRET` out of command-line args. On shutdown the app cancels background review tasks and the Embedding Worker before disposing of the database engine.
 
@@ -427,7 +427,7 @@ By default the app assumes it owns the site root (`https://host/`). To mount it 
 # Put the new package in the project root and run (auto-discovers *code-config*.tar.gz in the current dir)
 ./update.sh
 # Or specify the package path explicitly
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.12-build*.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.14-build*.tar.gz
 ```
 
 Common options:
