@@ -71,7 +71,9 @@ def run_conversion(
         return {"status": "ok", "md_path": md_path, "engine": "mammoth"}
 
     kwargs = {"output_name": original_filename} if original_filename else {}
-    result = converter.convert_docx_to_markdown(file_path, output_dir, **kwargs)
+    # on_limit="skip"：含超限附件的正常文档降级继续转换（仅跳过超限资源并
+    # 在输出中留下可见说明）；ZIP bomb 等恶意特征在任何模式下仍整篇拒绝
+    result = converter.convert_docx_to_markdown(file_path, output_dir, on_limit="skip", **kwargs)
     if isinstance(result, dict):
         md_path = result.get("output_path") or result.get("md_path") or result.get("path") or ""
     elif isinstance(result, (str, os.PathLike)):

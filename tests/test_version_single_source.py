@@ -11,6 +11,7 @@ shell 脚本（package.sh / update.sh）直接读 VERSION 文件（带旧结构�
 本测试锁死这条链路，防止版本号重新散落成多处硬编码。
 """
 
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,7 +28,7 @@ def test_version_file_exists_and_pure():
 
 def test_version_file_value():
     content = VERSION_FILE.read_text(encoding="utf-8").strip()
-    assert content == "0.3.15", f"VERSION 当前应为 0.3.15，实际 {content!r}"
+    assert content == "0.3.16", f"VERSION 当前应为 0.3.16，实际 {content!r}"
 
 
 def test_version_py_reads_version_file():
@@ -75,3 +76,21 @@ def test_shell_scripts_read_version_file():
     update_sh = (ROOT / "update.sh").read_text(encoding="utf-8")
     assert '"VERSION"' in package_sh or "'VERSION'" in package_sh, "package.sh 应读取 VERSION 文件"
     assert '"VERSION"' in update_sh or "'VERSION'" in update_sh, "update.sh 应读取 VERSION 文件"
+
+
+def test_root_requirements_include_docx_core_dependency():
+    """按部署文档安装根依赖后，嵌入 Excel 转换必须可用。"""
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    package_names = {
+        line.strip().split("[", 1)[0].split("=", 1)[0].split(">", 1)[0].lower()
+        for line in requirements
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+    assert "openpyxl" in package_names
+
+
+def test_package_lock_root_node_engine_matches_package_json():
+    """锁文件根元数据不能保留旧 Node 版本要求。"""
+    package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+    package_lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    assert package_lock["packages"][""]["engines"]["node"] == package["engines"]["node"]

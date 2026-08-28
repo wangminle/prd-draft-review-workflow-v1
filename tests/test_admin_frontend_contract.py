@@ -1,4 +1,7 @@
+import json
 from pathlib import Path
+
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,6 +10,22 @@ AUTH_JS = (ROOT / "src/static/js/auth.js").read_text(encoding="utf-8")
 ADMIN_JS = (ROOT / "src/static/js/admin.js").read_text(encoding="utf-8")
 API_JS = (ROOT / "src/static/js/api.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "src/static/index.html").read_text(encoding="utf-8")
+CSS_MAIN = (ROOT / "src/static/css/main.css").read_text(encoding="utf-8")
+
+
+def _extract_css_block(css: str, marker: str) -> str:
+    """截取 marker 起始处的完整花括号配对块（含嵌套规则）。"""
+    start = css.find(marker)
+    assert start >= 0, f"CSS 缺少 {marker}"
+    depth = 0
+    for i in range(start, len(css)):
+        if css[i] == "{":
+            depth += 1
+        elif css[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return css[start:i + 1]
+    return css[start:]
 
 
 def test_admin_back_button_uses_chat_origin():
@@ -80,6 +99,74 @@ def test_admin_stats_tab_is_first_and_default():
     assert "localStorage.getItem('admin-active-tab') || 'stats'" in init_block
     assert "const activeTab =" in init_block
     assert "this._loadActiveTab(activeTab);" in init_block
+
+
+def test_admin_nav_groups_tab_items_by_scope():
+    """管理后台侧栏只保留系统级分组：运营概览 / 团队与内容 / AI 能力·全局。
+
+    个人 Agent 从侧栏移除，改由全页统一账号菜单进入。
+    """
+    nav_block = INDEX_HTML.split('<nav class="admin-nav">', 1)[1].split('</nav>', 1)[0]
+
+    groups = ["运营概览", "团队与内容", "AI 能力 · 全局"]
+    positions = [nav_block.find(f">{label}</div>") for label in groups]
+    assert all(pos >= 0 for pos in positions), "三个系统级分组头必须齐备"
+    assert positions == sorted(positions), "分组头按既定顺序排列"
+    assert "Agent · 个人" not in nav_block
+    assert 'data-tab="agent"' not in nav_block
+
+    # 每个分组头是纯视觉 div，不是可点击 tab（不带 data-tab，避免被点击委托捕获）；
+    # 不得用 aria-hidden 隐藏分组语义（BUG-178：读屏用户需要听到分组区分）
+    assert '<div class="admin-nav-group">' in nav_block
+    assert 'admin-nav-group" aria-hidden' not in nav_block
+
+    # 窄屏规则 `.admin-nav-item span { display: none }` 依赖标签文字包在 <span> 里，
+    # 否则 ≤1100px 图标栏下文字不会被隐藏（BUG-179）
+    nav_labels = ["系统统计", "治理与运营", "用户管理", "预置对话Prompt", "评审风格Prompt",
+                  "模型配置", "Skills 管理", "Pi Agent 配置"]
+    for label in nav_labels:
+        assert f"<span>{label}</span>" in nav_block, f"导航标签未包 <span>: {label}"
+
+    # 分组归属：组头必须紧邻其组内第一个 tab 之前
+    group_first_tabs = {
+        "运营概览": 'data-tab="stats"',
+        "团队与内容": 'data-tab="users"',
+        "AI 能力 · 全局": 'data-tab="models"',
+    }
+    for label, tab_key in group_first_tabs.items():
+        group_pos = nav_block.find(f">{label}</div>")
+        tab_pos = nav_block.find(tab_key)
+        assert group_pos < tab_pos, f"分组头「{label}」应位于 {tab_key} 之前"
+
+    # 系统级引擎配置留在「AI 能力 · 全局」；个人 Agent 不在侧栏
+    assert nav_block.find("AI 能力 · 全局") < nav_block.find('data-tab="pi-agent"')
+
+    # 收起态与窄屏态：分组标题退化为细分隔线，规则齐备
+    assert ".admin-sidebar.collapsed .admin-nav-group" in CSS_MAIN
+    media_block = _extract_css_block(CSS_MAIN, "@media (max-width: 1100px)")
+    assert ".admin-nav-group" in media_block
+
+
+def test_admin_nav_groups_do_not_interfere_with_tab_logic():
+    """分组头不得引入可点击行为，tab 切换仍走 .admin-nav-item 委托。"""
+    nav_block = INDEX_HTML.split('<nav class="admin-nav">', 1)[1].split('</nav>', 1)[0]
+
+    # 分组头不带 data-tab / button，天然被 closest('.admin-nav-item') 忽略
+    assert "admin-nav-group\" data-tab" not in nav_block
+    assert "<button" not in nav_block.split('class="admin-nav-group"', 1)[1].split("</div>", 1)[0]
+
+    # admin.js 的 tab 逻辑保持原样：委托选择器 + localStorage 记忆
+    click_block = ADMIN_JS.split("document.addEventListener('click'", 1)[1]
+    assert "closest('.admin-nav-item')" in click_block
+    assert "localStorage.setItem('admin-active-tab'" in ADMIN_JS
+
+
+def test_admin_nav_scrolls_in_short_viewports():
+    """分组标题抬高了导航总高：矮视口下导航必须内部滚动，不得被 .app-layout 的 overflow:hidden 裁剪。"""
+    block = _extract_css_block(CSS_MAIN, ".admin-nav {")
+    assert "overflow-y: auto" in block, "导航需纵向滚动"
+    assert "min-height: 0" in block, "flex 子项需 min-height:0 才能收缩出滚动空间"
+    assert "flex: 1 1 auto" in block, "导航占据剩余高度，底部折叠按钮保持固定"
 
 
 def test_admin_stats_renders_recent_7_day_visits():
@@ -304,3 +391,51 @@ def test_login_form_keeps_standard_password_manager_semantics():
     # 登录表单不得使用 new-password（会禁用已保存密码的自动填充）
     login_form_block = INDEX_HTML.split('id="login-form"', 1)[1].split("</form>", 1)[0]
     assert 'autocomplete="new-password"' not in login_form_block
+
+
+# ── 真实浏览器验证（Playwright/Chromium 可用时执行，独立子进程避免事件循环冲突） ──
+
+NAV_BROWSER_TOOL = ROOT / "tools/verify_admin_nav_groups_browser.py"
+
+
+def _playwright_available() -> bool:
+    try:
+        import playwright.sync_api  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+def _chromium_binary_available() -> bool:
+    """仅装了 playwright 包但没下载 Chromium 二进制时，浏览器用例应 skip 而非失败（BUG-180）。"""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            return Path(p.chromium.executable_path).exists()
+    except Exception:
+        return False
+
+
+@pytest.mark.skipif(not NAV_BROWSER_TOOL.exists(), reason="browser verify tool missing")
+@pytest.mark.skipif(not _playwright_available(), reason="Playwright not installed")
+def test_browser_admin_nav_groups_end_to_end():
+    """管理侧栏分组：展开态分组归属、点击委托不受分组头影响、收起/窄屏分隔线。"""
+    import subprocess
+    import sys
+
+    if not _chromium_binary_available():
+        pytest.skip("Playwright Chromium binary not installed")
+
+    proc = subprocess.run(
+        [sys.executable, str(NAV_BROWSER_TOOL), "--json"],
+        capture_output=True,
+        text=True,
+        timeout=180,
+        cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, f"browser verification failed:\n{proc.stdout}\n{proc.stderr}"
+    report = json.loads(proc.stdout.strip().splitlines()[-1])
+    assert report["ok"] is True, f"浏览器验证未全部通过: {report['checks']}"
+    assert report["passed"] >= 14, f"检查项数量异常: {report['passed']}"

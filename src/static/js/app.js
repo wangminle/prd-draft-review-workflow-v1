@@ -67,64 +67,203 @@ const App = {
         }, duration);
     },
 
-    /* P5.A.4: 个人 Agent 设置模态框 */
+    /* 个人 Agent：所有登录用户通过统一账号菜单管理自己的配置（不含管理后台侧栏） */
     async _showAgentSettingsModal() {
         const overlay = document.getElementById('modal-overlay');
         const content = document.getElementById('modal-content');
         if (!overlay || !content) return;
 
-        content.innerHTML = '<div style="padding:24px;text-align:center;color:var(--color-text-muted)">加载中…</div>';
+        const esc = (str) => {
+            if (str == null) return '';
+            const d = document.createElement('div');
+            d.textContent = String(str);
+            return d.innerHTML;
+        };
+        const escAttr = (str) => {
+            if (str == null) return '';
+            return String(str)
+                .replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        };
+
+        content.classList.add('agent-settings-modal');
+        content.innerHTML = '<p class="agent-settings-loading">加载中…</p>';
         overlay.style.display = 'flex';
 
+        const cleanup = () => {
+            overlay.style.display = 'none';
+            content.classList.remove('agent-settings-modal');
+            overlay.onclick = null;
+        };
+
         try {
-            const profile = await API.getAgentProfile();
+            const [profile, auths, workspaces, runsResult, approvalsResult] = await Promise.all([
+                API.getAgentProfile(),
+                // 授权与 workspace 决定可保存的默认范围，失败时必须进入错误态，
+                // 不能伪装成空列表后把 workspace 静默覆盖为 personal。
+                API.listAgentAuthorizations(),
+                API.getWorkspaces(),
+                API.listAgentRuns()
+                    .then(data => ({ data, error: null }))
+                    .catch(error => ({ data: [], error })),
+                API.listPendingApprovals()
+                    .then(data => ({ data, error: null }))
+                    .catch(error => ({ data: [], error })),
+            ]);
+            const runs = runsResult.data || [];
+            const approvals = approvalsResult.data || [];
             const name = profile?.name || 'My Agent';
             const status = profile?.status || 'active';
             const scopeType = profile?.default_scope_type || 'personal';
-            const allowedTools = profile?.allowed_tools || [];
+            const tools = profile?.allowed_tools || [];
+            const toolOptions = ['search', 'rag_search', 'skill_runner', 'artifact'];
+            const toolLabels = { search: '知识检索', rag_search: 'RAG 检索', skill_runner: 'Skill 运行', artifact: '产物生成' };
+
+            const allAuths = auths || [];
+            const wsAuths = allAuths.filter(a => a.scope_type === 'workspace' && a.scope_id != null);
+            const hasWsAuth = wsAuths.length > 0;
+            const effectiveScope = (scopeType === 'workspace' && hasWsAuth) ? 'workspace' : 'personal';
+            const authorizedIds = new Set(wsAuths.map(a => a.scope_id));
+            const addableWorkspaces = (workspaces || []).filter(w => !authorizedIds.has(w.id));
+
+            const wsAuthListHtml = hasWsAuth
+                ? `<ul class="agent-auth-list">${wsAuths.map(a => {
+                    const label = esc(a.workspace_name || `空间 #${a.scope_id}`);
+                    return `<li><span>${label}</span><button type="button" class="btn btn-ghost btn-xs" data-revoke-auth="${a.id}">撤销</button></li>`;
+                }).join('')}</ul>`
+                : '<p class="agent-settings-hint">暂无授权。选择「已授权的团队资料」前，请先在下方为具体团队空间添加授权；未授权时 Agent 无法检索该空间。</p>';
+
+            const otherAuths = allAuths.filter(a => a.scope_type !== 'workspace');
+            const otherAuthHtml = otherAuths.length
+                ? `<p class="agent-settings-hint">其他授权：${otherAuths.map(a => `${esc(a.scope_type)} #${a.scope_id ?? '-'}`).join('、')}</p>`
+                : '';
+
+            const addAuthHtml = addableWorkspaces.length
+                ? `<div class="agent-auth-add">
+                        <label>添加团队空间授权
+                            <select id="agent-auth-workspace">
+                                ${addableWorkspaces.map(w => `<option value="${w.id}">${esc(w.name || `空间 #${w.id}`)}</option>`).join('')}
+                            </select>
+                        </label>
+                        <button type="button" id="agent-auth-add" class="btn btn-primary btn-sm">添加授权</button>
+                    </div>`
+                : ((workspaces || []).length
+                    ? '<p class="agent-settings-hint">你加入的团队空间均已授权。</p>'
+                    : '<p class="agent-settings-hint">你还没有加入任何团队空间，无法添加团队资料授权。</p>');
+
+            const runsHtml = runsResult.error
+                ? `<p class="agent-settings-error">最近运行加载失败：${esc(runsResult.error.message || '未知错误')}</p>`
+                : (runs || []).length
+                ? `<table class="admin-table"><thead><tr><th>ID</th><th>目标</th><th>状态</th><th>步骤</th><th>工具</th></tr></thead><tbody>
+                    ${(runs || []).slice(0, 10).map(r => `<tr>
+                        <td>${r.id}</td>
+                        <td title="${escAttr(r.goal || '')}">${esc((r.goal || '').length > 36 ? r.goal.slice(0, 36) + '…' : (r.goal || ''))}</td>
+                        <td>${esc(r.status)}</td>
+                        <td>${r.total_steps ?? '-'}</td>
+                        <td>${r.total_tool_calls ?? '-'}</td>
+                    </tr>`).join('')}</tbody></table>`
+                : '<p class="agent-settings-hint">暂无运行记录。</p>';
+
+            const approvalsHtml = approvalsResult.error
+                ? `<p class="agent-settings-error">待审批请求加载失败：${esc(approvalsResult.error.message || '未知错误')}</p>`
+                : (approvals || []).length
+                ? `<table class="admin-table"><thead><tr><th>ID</th><th>运行</th><th>操作</th><th>状态</th><th></th></tr></thead><tbody>
+                    ${(approvals || []).map(a => `<tr>
+                        <td>${a.id}</td>
+                        <td>${a.run_id}</td>
+                        <td>${esc(a.action_type)}</td>
+                        <td>${esc(a.status)}</td>
+                        <td>
+                            <button type="button" class="btn btn-primary btn-xs" data-decide-approval="${a.id}" data-decision="approved">批准</button>
+                            <button type="button" class="btn btn-ghost btn-xs" data-decide-approval="${a.id}" data-decision="rejected">拒绝</button>
+                        </td>
+                    </tr>`).join('')}</tbody></table>`
+                : '<p class="agent-settings-hint">暂无待审批请求。</p>';
 
             content.innerHTML = `
-                <div style="padding:24px">
-                    <h3 style="margin:0 0 16px;font-size:var(--fs-16);font-weight:var(--fw-semibold)">个人 Agent 设置</h3>
-                    <div style="display:flex;flex-direction:column;gap:12px">
-                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
-                            Agent 名称
-                            <input id="agent-name-input" type="text" value="${DOMPurify.sanitize(name)}" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
-                        </label>
-                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
-                            默认访问范围
-                            <select id="agent-scope-select" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
-                                <option value="personal" ${scopeType === 'personal' ? 'selected' : ''}>仅个人授权资料</option>
-                                <option value="workspace" ${scopeType === 'workspace' ? 'selected' : ''}>团队资料</option>
-                            </select>
-                        </label>
-                        <label style="font-size:var(--fs-13);color:var(--color-text-muted)">
-                            状态
-                            <select id="agent-status-select" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid var(--color-border);border-radius:var(--radius-sm);font-size:var(--fs-14)">
-                                <option value="active" ${status === 'active' ? 'selected' : ''}>启用</option>
-                                <option value="disabled" ${status === 'disabled' ? 'selected' : ''}>禁用</option>
-                            </select>
-                        </label>
-                    </div>
-                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
-                        <button id="agent-settings-cancel" class="btn btn-ghost">关闭</button>
-                        <button id="agent-settings-save" class="btn btn-primary">保存</button>
-                    </div>
+                <button type="button" class="modal-close-btn" id="agent-settings-x" aria-label="关闭弹窗">&times;</button>
+                <h3>个人 Agent</h3>
+                <p class="agent-settings-lead">仅影响当前账号。系统级引擎请由管理员在「Pi Agent 配置」中管理。</p>
+                <div class="pi-agent-sections">
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head"><h4>基本配置</h4></div>
+                        <div class="pi-agent-fields">
+                            <div class="field">
+                                <label for="agent-name-input">Agent 名称</label>
+                                <input id="agent-name-input" type="text" value="${escAttr(name)}">
+                            </div>
+                            <div class="field">
+                                <label for="agent-scope-select">默认访问范围</label>
+                                <select id="agent-scope-select">
+                                    <option value="personal" ${effectiveScope === 'personal' ? 'selected' : ''}>我的资料</option>
+                                    <option value="workspace" ${!hasWsAuth ? 'disabled' : ''} ${effectiveScope === 'workspace' ? 'selected' : ''}>已授权的团队资料${hasWsAuth ? '' : '（暂无授权）'}</option>
+                                </select>
+                                <p class="agent-settings-hint">选择「已授权的团队资料」不等于自动获得全部团队资料；Agent 只能访问下方已显式授权的空间。</p>
+                            </div>
+                            <div id="agent-authorized-workspaces" class="agent-authorized-box">
+                                <div class="agent-authorized-title">当前已授权团队空间${hasWsAuth ? `（${wsAuths.length} 个）` : ''}</div>
+                                ${wsAuthListHtml}
+                                ${otherAuthHtml}
+                                ${addAuthHtml}
+                            </div>
+                            <div class="field">
+                                <label for="agent-system-policy">System Policy（行为策略）</label>
+                                <textarea id="agent-system-policy" rows="3">${esc(profile?.system_policy || '')}</textarea>
+                            </div>
+                            <div class="field">
+                                <span>允许使用的工具</span>
+                                <div class="agent-tool-row">
+                                    ${toolOptions.map(t => `
+                                        <label class="agent-tool-item">
+                                            <input type="checkbox" id="agent-tool-${t}" ${tools.includes(t) ? 'checked' : ''}>
+                                            <span>${toolLabels[t] || t}</span>
+                                        </label>`).join('')}
+                                </div>
+                            </div>
+                            <div class="field">
+                                <label for="agent-status-select">状态</label>
+                                <select id="agent-status-select">
+                                    <option value="active" ${status === 'active' ? 'selected' : ''}>启用</option>
+                                    <option value="disabled" ${status === 'disabled' ? 'selected' : ''}>禁用</option>
+                                </select>
+                            </div>
+                        </div>
+                    </section>
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head"><h4>最近运行</h4><span>${(runs || []).length} 条</span></div>
+                        ${runsHtml}
+                    </section>
+                    <section class="pi-agent-section">
+                        <div class="pi-agent-section-head"><h4>待审批请求</h4><span>${(approvals || []).length} 条</span></div>
+                        ${approvalsHtml}
+                    </section>
+                </div>
+                <div class="btn-row">
+                    <button type="button" id="agent-settings-cancel" class="btn btn-ghost">关闭</button>
+                    <button type="button" id="agent-settings-save" class="btn btn-primary">保存</button>
                 </div>`;
 
-            const cleanup = () => { overlay.style.display = 'none'; };
             document.getElementById('agent-settings-cancel').onclick = cleanup;
+            document.getElementById('agent-settings-x').onclick = cleanup;
             overlay.onclick = (e) => { if (e.target === overlay) cleanup(); };
 
             document.getElementById('agent-settings-save').onclick = async () => {
                 const newName = document.getElementById('agent-name-input').value.trim();
                 const newScope = document.getElementById('agent-scope-select').value;
                 const newStatus = document.getElementById('agent-status-select').value;
+                const preservedTools = tools.filter(t => !toolOptions.includes(t));
+                const selectedTools = toolOptions.filter(
+                    t => document.getElementById(`agent-tool-${t}`)?.checked
+                );
+                const allowedTools = [...preservedTools, ...selectedTools];
                 try {
                     await API.updateAgentProfile({
                         name: newName,
                         default_scope_type: newScope,
                         status: newStatus,
+                        // 空字符串表示用户明确清空策略；null/缺省才表示不更新。
+                        system_policy: document.getElementById('agent-system-policy')?.value ?? '',
+                        allowed_tools: allowedTools,
                     });
                     this._showToast('Agent 设置已保存');
                     cleanup();
@@ -132,9 +271,54 @@ const App = {
                     this._showToast('保存失败: ' + (err.message || '未知错误'));
                 }
             };
+
+            document.getElementById('agent-auth-add')?.addEventListener('click', async () => {
+                const wsId = document.getElementById('agent-auth-workspace')?.value;
+                if (!wsId) return;
+                try {
+                    await API.createAgentAuthorization({
+                        scope_type: 'workspace',
+                        scope_id: parseInt(wsId, 10),
+                        permissions: ['read', 'write', 'search', 'execute'],
+                    });
+                    this._showToast('已添加团队空间授权');
+                    await this._showAgentSettingsModal();
+                } catch (err) {
+                    this._showToast('添加失败: ' + (err.message || '未知错误'));
+                }
+            });
+
+            content.querySelectorAll('[data-revoke-auth]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    if (!confirm('确认撤销此授权？')) return;
+                    try {
+                        await API.revokeAgentAuthorization(btn.dataset.revokeAuth);
+                        this._showToast('已撤销授权');
+                        await this._showAgentSettingsModal();
+                    } catch (err) {
+                        this._showToast('撤销失败: ' + (err.message || '未知错误'));
+                    }
+                });
+            });
+
+            content.querySelectorAll('[data-decide-approval]').forEach((btn) => {
+                btn.addEventListener('click', async () => {
+                    const decision = btn.dataset.decision;
+                    const comment = decision === 'rejected' ? prompt('拒绝原因（可选）:') : null;
+                    try {
+                        await API.decideApproval(btn.dataset.decideApproval, { decision, comment });
+                        this._showToast(decision === 'approved' ? '已批准' : '已拒绝');
+                        await this._showAgentSettingsModal();
+                    } catch (err) {
+                        this._showToast('操作失败: ' + (err.message || '未知错误'));
+                    }
+                });
+            });
         } catch (err) {
-            content.innerHTML = `<div style="padding:24px;color:var(--red-6)">加载 Agent 设置失败: ${err.message}</div>
-                <div style="padding:0 24px 24px;text-align:right"><button class="btn btn-ghost" onclick="document.getElementById('modal-overlay').style.display='none'">关闭</button></div>`;
+            content.innerHTML = `<p class="agent-settings-error">加载 Agent 设置失败: ${esc(err.message)}</p>
+                <div class="btn-row"><button type="button" class="btn btn-ghost" id="agent-settings-fail-close">关闭</button></div>`;
+            document.getElementById('agent-settings-fail-close')?.addEventListener('click', cleanup);
+            overlay.onclick = (e) => { if (e.target === overlay) cleanup(); };
         }
     },
 
@@ -230,7 +414,12 @@ const App = {
                     const secondDivider = dividers[1];
                     const x = secondDivider.getBoundingClientRect().right;
                     const sidebar = page.querySelector('.sidebar, .review-sidebar, .admin-sidebar, .workspace-sidebar');
-                    if (sidebar && !sidebar.classList.contains('collapsed')) {
+                    const isNarrowAdmin = sidebar?.classList.contains('admin-sidebar')
+                        && window.matchMedia('(max-width: 1100px)').matches;
+                    if (isNarrowAdmin) {
+                        // 窄屏宽度由媒体查询控制，避免内联宽度覆盖图标栏样式。
+                        sidebar.style.width = '';
+                    } else if (sidebar && !sidebar.classList.contains('collapsed')) {
                         sidebar.style.width = x + 'px';
                     }
                 }
@@ -335,78 +524,60 @@ const App = {
 
     /* ── 导航 ── */
 
+    /* 统一账号菜单：四个页面（聊天/评审/团队空间/管理后台）右上角同一结构
+       个人 Agent / 修改密码 / 退出登录 */
     _bindUserMenu(triggerId, dropdownId) {
         const trigger = document.getElementById(triggerId);
-        if (!trigger) return;
+        const dd = document.getElementById(dropdownId);
+        if (!trigger || !dd) return;
+        const setOpen = (open) => {
+            dd.style.display = open ? '' : 'none';
+            trigger.setAttribute('aria-expanded', open ? 'true' : 'false');
+        };
         trigger.addEventListener('click', (e) => {
             e.stopPropagation();
-            if (dropdownId) {
-                const dd = document.getElementById(dropdownId);
-                dd.style.display = dd.style.display === 'none' ? '' : 'none';
-            } else {
+            const willOpen = dd.style.display === 'none';
+            document.querySelectorAll('.user-menu-dropdown').forEach((other) => {
+                if (other !== dd) {
+                    other.style.display = 'none';
+                    other.parentElement?.querySelector('.topbar-user')?.setAttribute('aria-expanded', 'false');
+                }
+            });
+            setOpen(willOpen);
+        });
+        trigger.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') setOpen(false);
+        });
+        dd.addEventListener('click', async (e) => {
+            const item = e.target.closest('[data-user-menu-action]');
+            if (!item) return;
+            setOpen(false);
+            const action = item.dataset.userMenuAction;
+            if (action === 'agent-settings') {
+                this._showAgentSettingsModal();
+            } else if (action === 'change-password') {
                 Auth.showChangePassword();
+            } else if (action === 'logout') {
+                this._logout(item.dataset.logoutSource || 'chat');
             }
         });
     },
 
+    _logout(source) {
+        API.log('info', 'auth.logout', { source }, `用户退出(${source})`);
+        this._resetSessionState();
+        Notification.destroy();
+        Auth.logout();
+        sessionStorage.removeItem('lastPage');
+        this._showLoginPage();
+    },
+
     _bindNavigation() {
-        // Logout
-        document.getElementById('logout-btn').addEventListener('click', (e) => {
-            e.preventDefault();
-            API.log('info', 'auth.logout', { source: 'chat' }, '用户退出');
-            this._resetSessionState();
-            Notification.destroy();
-            Auth.logout();
-            sessionStorage.removeItem('lastPage');
-            this._showLoginPage();
-        });
-
-        document.getElementById('admin-logout-btn').addEventListener('click', (e) => {
-            e.preventDefault();
-            API.log('info', 'auth.logout', { source: 'admin' }, '用户退出(admin)');
-            this._resetSessionState();
-            Notification.destroy();
-            Auth.logout();
-            sessionStorage.removeItem('lastPage');
-            this._showLoginPage();
-        });
-
-        document.getElementById('review-logout-btn').addEventListener('click', (e) => {
-            e.preventDefault();
-            API.log('info', 'auth.logout', { source: 'review' }, '用户退出(review)');
-            this._resetSessionState();
-            Notification.destroy();
-            Auth.logout();
-            sessionStorage.removeItem('lastPage');
-            this._showLoginPage();
-        });
-
-        document.getElementById('workspace-logout-btn').addEventListener('click', (e) => {
-            e.preventDefault();
-            API.log('info', 'auth.logout', { source: 'workspace' }, '用户退出(workspace)');
-            this._resetSessionState();
-            Notification.destroy();
-            Auth.logout();
-            sessionStorage.removeItem('lastPage');
-            this._showLoginPage();
-        });
-
-        // User dropdown menu
+        // 统一用户菜单：聊天 / 评审 / 团队空间 / 管理后台
         this._bindUserMenu('user-display', 'user-menu-dropdown');
-        this._bindUserMenu('review-user-display', null);
-        this._bindUserMenu('admin-user-display', null);
-
-        // Change password
-        document.getElementById('change-password-btn').addEventListener('click', () => {
-            document.getElementById('user-menu-dropdown').style.display = 'none';
-            Auth.showChangePassword();
-        });
-
-        // P5.A.4: Agent settings
-        document.getElementById('agent-settings-btn')?.addEventListener('click', () => {
-            document.getElementById('user-menu-dropdown').style.display = 'none';
-            this._showAgentSettingsModal();
-        });
+        this._bindUserMenu('review-user-display', 'review-user-menu-dropdown');
+        this._bindUserMenu('workspace-user-display', 'workspace-user-menu-dropdown');
+        this._bindUserMenu('admin-user-display', 'admin-user-menu-dropdown');
 
         // Go to admin (from chat page topbar)
         document.getElementById('go-admin').addEventListener('click', (e) => {
@@ -547,12 +718,15 @@ const App = {
 // Boot
 document.addEventListener('DOMContentLoaded', () => App.init());
 
-// Global: close user dropdown on outside click
+// Global: close user dropdowns on outside click
 document.addEventListener('click', (e) => {
-    const dd = document.getElementById('user-menu-dropdown');
-    if (dd && !dd.contains(e.target) && e.target.id !== 'user-display') {
-        dd.style.display = 'none';
-    }
+    document.querySelectorAll('.user-menu-dropdown').forEach((dd) => {
+        const trigger = dd.parentElement?.querySelector('.topbar-user');
+        if (!dd.contains(e.target) && e.target !== trigger && !trigger?.contains(e.target)) {
+            dd.style.display = 'none';
+            trigger?.setAttribute('aria-expanded', 'false');
+        }
+    });
 });
 
 // Global: re-align sidebar widths on window resize

@@ -8,7 +8,6 @@ Covers 4 issues identified in the sub-agent re-review:
 """
 
 import json
-import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,48 +42,21 @@ class TestDocxSecurityError:
         finally:
             sys.path.pop(0)
 
-    def test_validate_zip_safety_raises_security_error(self):
-        """validate_zip_safety should raise DocxSecurityError, not plain ValueError."""
-        import tempfile
-        import zipfile
-
+    def test_security_checks_raise_docx_security_error(self):
+        """validate_docx_zip_security should raise DocxSecurityError, not plain ValueError."""
         sys.path.insert(0, str(SKILLS_DIR / "docx-to-markdown" / "scripts"))
         try:
             from convert_docx import DocxSecurityError
 
-            # Create a zip with a fake huge entry to trigger the size check
-            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-                tmp_path = tmp.name
+            assert issubclass(DocxSecurityError, ValueError)
 
-            try:
-                with zipfile.ZipFile(tmp_path, "w", zipfile.ZIP_DEFLATED) as zf:
-                    # Write enough data to exceed MAX_SINGLE_ENTRY_UNCOMPRESSED
-                    # by faking the header info
-                    zf.writestr("word/document.xml", "<xml/>")
-                    # We need to manipulate the info to trigger the check.
-                    # Instead, create a real large file entry:
-                    # Use a small file but we'll test with a crafted zip.
-                    # Actually, let's just test the function raises the right type
-                    # by using a zip with compression ratio > 100
-                    # A 1-byte file compressed to 1 byte has ratio 1, not > 100.
-                    # We need actual data that compresses very well.
-                    # Instead, let's directly test the exception type.
-                    pass
-
-                # Test that DocxSecurityError is the right type
-                assert issubclass(DocxSecurityError, ValueError)
-
-                # We can verify the source code uses DocxSecurityError
-                src = (SKILLS_DIR / "docx-to-markdown" / "scripts" / "convert_docx.py").read_text()
-                # All three security checks should raise DocxSecurityError
-                assert src.count("raise DocxSecurityError(") >= 3, (
-                    "validate_zip_safety should raise DocxSecurityError for all 3 security checks"
-                )
-                # The original ValueError calls for security should be gone
-                # (format ValueError at lines 1012/1014 are not security, they stay)
-                assert "raise DocxSecurityError(" in src
-            finally:
-                os.unlink(tmp_path)
+            src = (SKILLS_DIR / "docx-to-markdown" / "scripts" / "convert_docx.py").read_text()
+            # The zip security checks (entry size / compression ratio / total
+            # uncompressed size) must raise DocxSecurityError, never a plain
+            # ValueError. ResourceLimitExceeded raises are also DocxSecurityError.
+            assert src.count("raise DocxSecurityError(") >= 3, (
+                "validate_docx_zip_security should raise DocxSecurityError for all security checks"
+            )
         finally:
             sys.path.pop(0)
 

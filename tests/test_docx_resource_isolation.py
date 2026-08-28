@@ -33,19 +33,26 @@ def test_mammoth_callback_never_rewrites_oversized_image(tmp_path):
     image_path = tmp_path / "oversized.png"
     Image.new("RGB", (1, 1), "white").save(image_path)
     with image_path.open("ab") as image_file:
-        image_file.write(os.urandom(convert_docx.MAX_SINGLE_IMAGE_SIZE + 1024))
+        image_file.write(os.urandom(convert_docx.DOCX_SECURITY_LIMITS["image_file_size"] + 1024))
 
     document = Document()
     document.add_picture(str(image_path))
     docx_path = tmp_path / "oversized-image.docx"
     document.save(docx_path)
 
+    # on_limit="skip"：Web 上传链路的降级策略（reject 模式下超限图片整篇拒绝）
     md_path = Path(
-        convert_docx.convert_docx_to_markdown(str(docx_path), str(tmp_path / "output"))
+        convert_docx.convert_docx_to_markdown(
+            str(docx_path), str(tmp_path / "output"), on_limit="skip"
+        )
     )
     assets = [path for path in (md_path.parent / "assets").iterdir() if path.is_file()]
 
-    assert all(path.stat().st_size <= convert_docx.MAX_SINGLE_IMAGE_SIZE for path in assets)
+    # 超限图片不落盘：assets 内不应出现超过上限的文件
+    image_file_size = convert_docx.DOCX_SECURITY_LIMITS["image_file_size"]
+    assert all(path.stat().st_size <= image_file_size for path in assets)
+    # 超限图片在 markdown 中留下可见跳过说明
+    assert convert_docx.SKIPPED_IMAGE_NOTE["size"] in md_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

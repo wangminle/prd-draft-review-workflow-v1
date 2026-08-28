@@ -6,6 +6,8 @@
 import contextlib
 import os
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -60,6 +62,21 @@ async def _auth_header(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _register_header(client, username: str):
+    password = "pass12345"
+    resp = await client.post(
+        "/api/auth/register",
+        json={"username": username, "password": password},
+    )
+    assert resp.status_code in (200, 201), resp.text
+    login = await client.post(
+        "/api/auth/login",
+        json={"username": username, "password": password},
+    )
+    assert login.status_code == 200, login.text
+    return {"Authorization": f"Bearer {login.json()['access_token']}"}
+
+
 # ─── P3.A: AgentProfile CRUD ─────────────────────────────────
 
 class TestAgentProfile:
@@ -90,11 +107,11 @@ class TestAgentProfile:
         headers = await _auth_header(client)
         resp = await client.put(
             "/api/agent/profile",
-            json={"allowed_tools": ["search", "rag"]},
+            json={"allowed_tools": ["search", "rag_search"]},
             headers=headers,
         )
         assert resp.status_code == 200
-        assert resp.json()["allowed_tools"] == ["search", "rag"]
+        assert resp.json()["allowed_tools"] == ["search", "rag_search"]
 
     async def test_update_profile_system_policy(self, client):
         """更新 Agent System Policy"""
@@ -167,6 +184,265 @@ class TestAgentAuthorization:
         )
         assert resp.status_code == 200
         assert resp.json()["status"] == "revoked"
+
+    async def test_non_member_cannot_authorize_workspace(self, client):
+        """用户不能仅凭猜测的 workspace ID 给自己的 Agent 越权授权。"""
+        from app.models.user import AgentProfile, User
+        from app.models.workspace import Workspace
+        from sqlalchemy import select
+
+        headers = await _register_header(client, "agent_outsider")
+        async with _override_db(client) as db:
+            secret = Workspace(
+                name="机密空间",
+                status="active",
+                is_default=False,
+                created_by=1,
+            )
+            db.add(secret)
+            await db.commit()
+            await db.refresh(secret)
+            secret_id = secret.id
+
+        resp = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": secret_id,
+                "permissions": ["read", "search"],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 403, resp.text
+
+        async with _override_db(client) as db:
+            user = (
+                await db.execute(select(User).where(User.username == "agent_outsider"))
+            ).scalar_one()
+            profile = (
+                await db.execute(
+                    select(AgentProfile).where(
+                        AgentProfile.owner_type == "user",
+                        AgentProfile.owner_id == user.id,
+                    )
+                )
+            ).scalar_one_or_none()
+            assert profile is None, "越权授权请求不得留下空 Agent 配置"
+
+    async def test_archived_workspace_cannot_be_authorized(self, client):
+        """即使是成员，也不能为已归档空间创建新授权。"""
+        from app.models.user import User
+        from app.models.workspace import Workspace, WorkspaceMember
+        from sqlalchemy import select
+
+        headers = await _register_header(client, "agent_archived_member")
+        async with _override_db(client) as db:
+            user = (
+                await db.execute(select(User).where(User.username == "agent_archived_member"))
+            ).scalar_one()
+            archived = Workspace(
+                name="已归档空间",
+                status="archived",
+                is_default=False,
+                created_by=1,
+            )
+            db.add(archived)
+            await db.flush()
+            db.add(WorkspaceMember(
+                workspace_id=archived.id,
+                user_id=user.id,
+                role="member",
+                status="active",
+            ))
+            await db.commit()
+            archived_id = archived.id
+
+        resp = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": archived_id,
+                "permissions": ["read", "search"],
+            },
+            headers=headers,
+        )
+        assert resp.status_code == 404, resp.text
+
+    async def test_authorization_validates_permissions_and_persists_expiry(self, client):
+        """授权权限必须是受支持枚举，ISO 过期时间必须实际保存。"""
+        headers = await _register_header(client, "agent_auth_contract")
+        default_ws = (await client.get("/api/workspace/default", headers=headers)).json()
+
+        invalid = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": default_ws["id"],
+                "permissions": ["read", "download_everything"],
+            },
+            headers=headers,
+        )
+        assert invalid.status_code == 400, invalid.text
+
+        created = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": default_ws["id"],
+                "permissions": ["read", "search"],
+                "expires_at": "2030-01-01T00:00:00Z",
+            },
+            headers=headers,
+        )
+        assert created.status_code == 200, created.text
+        assert created.json()["expires_at"] == "2030-01-01T08:00:00"
+
+    @pytest.mark.parametrize(
+        ("permissions", "expire_after_creation", "username"),
+        [
+            ([], False, "agent_empty_permissions"),
+            (["write"], False, "agent_write_only"),
+            (["read", "search"], True, "agent_expired_auth"),
+        ],
+    )
+    async def test_rag_rejects_insufficient_or_expired_authorization(
+        self,
+        client,
+        permissions,
+        expire_after_creation,
+        username,
+    ):
+        """检索必须同时具有 read/search 权限，且授权仍在有效期内。"""
+        from datetime import timedelta
+
+        from app.models.user import AgentAuthorization
+        from app.utils import now_cn
+        from sqlalchemy import select
+
+        headers = await _register_header(client, username)
+        default_ws = (await client.get("/api/workspace/default", headers=headers)).json()
+        auth_resp = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": default_ws["id"],
+                "permissions": permissions,
+            },
+            headers=headers,
+        )
+        assert auth_resp.status_code == 200, auth_resp.text
+        run_resp = await client.post(
+            "/api/agent/runs",
+            json={"goal": "验证授权约束"},
+            headers=headers,
+        )
+        assert run_resp.status_code == 200, run_resp.text
+
+        if expire_after_creation:
+            async with _override_db(client) as db:
+                auth = (
+                    await db.execute(
+                        select(AgentAuthorization).where(
+                            AgentAuthorization.id == auth_resp.json()["id"]
+                        )
+                    )
+                ).scalar_one()
+                auth.expires_at = now_cn() - timedelta(seconds=1)
+                await db.commit()
+
+        fake_response = SimpleNamespace(
+            query="test",
+            results=[],
+            total=0,
+            fallback_reason=None,
+        )
+        with (
+            patch("app.services.pi_agent_bridge.get_run_token", return_value="run-token"),
+            patch(
+                "app.services.retrieval_service.RetrievalService.retrieve",
+                new=AsyncMock(return_value=fake_response),
+            ) as retrieve,
+        ):
+            resp = await client.post(
+                f"/api/agent/runs/{run_resp.json()['id']}/rag",
+                json={
+                    "query": "机密资料",
+                    "workspace_id": default_ws["id"],
+                    "scope": "workspace",
+                },
+                headers={"X-Agent-Run-Token": "run-token"},
+            )
+
+        assert resp.status_code == 403, resp.text
+        retrieve.assert_not_awaited()
+
+    async def test_removed_member_old_authorization_cannot_rag(self, client):
+        """成员被移出 workspace 后，旧 Agent 授权必须立即失效。"""
+        from app.models.user import User
+        from app.models.workspace import WorkspaceMember
+        from sqlalchemy import select
+
+        headers = await _register_header(client, "agent_removed_member")
+        default_ws = (await client.get("/api/workspace/default", headers=headers)).json()
+
+        auth_resp = await client.post(
+            "/api/agent/profile/authorizations",
+            json={
+                "scope_type": "workspace",
+                "scope_id": default_ws["id"],
+                "permissions": ["read", "search"],
+            },
+            headers=headers,
+        )
+        assert auth_resp.status_code == 200, auth_resp.text
+        run_resp = await client.post(
+            "/api/agent/runs",
+            json={"goal": "验证失效授权"},
+            headers=headers,
+        )
+        assert run_resp.status_code == 200, run_resp.text
+        run_id = run_resp.json()["id"]
+
+        async with _override_db(client) as db:
+            user = (
+                await db.execute(select(User).where(User.username == "agent_removed_member"))
+            ).scalar_one()
+            member = (
+                await db.execute(
+                    select(WorkspaceMember).where(
+                        WorkspaceMember.workspace_id == default_ws["id"],
+                        WorkspaceMember.user_id == user.id,
+                    )
+                )
+            ).scalar_one()
+            member.status = "removed"
+            await db.commit()
+
+        fake_response = SimpleNamespace(
+            query="test",
+            results=[],
+            total=0,
+            fallback_reason=None,
+        )
+        with (
+            patch("app.services.pi_agent_bridge.get_run_token", return_value="run-token"),
+            patch(
+                "app.services.retrieval_service.RetrievalService.retrieve",
+                new=AsyncMock(return_value=fake_response),
+            ) as retrieve,
+        ):
+            resp = await client.post(
+                f"/api/agent/runs/{run_id}/rag",
+                json={
+                    "query": "机密资料",
+                    "workspace_id": default_ws["id"],
+                    "scope": "workspace",
+                },
+                headers={"X-Agent-Run-Token": "run-token"},
+            )
+
+        assert resp.status_code == 403, resp.text
+        retrieve.assert_not_awaited()
 
 
 # ─── P3.B: AgentRun 状态流转 ─────────────────────────────────

@@ -99,7 +99,18 @@ def test_workspace_page_exists():
 
 def test_workspace_topbar_exists():
     assert 'id="workspace-user-display"' in HTML, "workspace 顶栏用户名不存在"
-    assert 'id="workspace-logout-btn"' in HTML, "workspace 退出按钮不存在"
+    # 统一账号菜单：团队空间页右上角同样提供 个人 Agent / 修改密码 / 退出登录
+    assert 'id="workspace-user-menu-dropdown"' in HTML, "workspace 统一用户菜单不存在"
+    assert 'data-logout-source="workspace"' in HTML, "workspace 退出来源标记缺失"
+
+
+def test_workspace_user_menu_has_three_actions():
+    """DEV-079：团队空间页用户菜单三件套（个人 Agent / 修改密码 / 退出登录）。"""
+    ws_block = HTML.split('id="workspace-user-menu-dropdown"', 1)[1].split('</div>', 1)[0]
+    assert 'data-user-menu-action="agent-settings"' in ws_block
+    assert 'data-user-menu-action="change-password"' in ws_block
+    assert 'data-user-menu-action="logout"' in ws_block
+    assert '个人 Agent' in ws_block and '修改密码' in ws_block and '退出登录' in ws_block
 
 
 def test_workspace_navigation_links_exist():

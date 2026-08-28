@@ -885,10 +885,9 @@ def migrate(
     force: bool = False,
 ) -> dict:
     """scan → plan → apply 一步完成。"""
-    scan_result = scan(legacy_code_dir, legacy_runtime_dir)
-    plan_result = plan(legacy_code_dir, legacy_runtime_dir, target_runtime_dir)
-    apply_result = apply(legacy_code_dir, legacy_runtime_dir, target_runtime_dir, force)
-    return apply_result
+    scan(legacy_code_dir, legacy_runtime_dir)
+    plan(legacy_code_dir, legacy_runtime_dir, target_runtime_dir)
+    return apply(legacy_code_dir, legacy_runtime_dir, target_runtime_dir, force)
 
 
 def main():

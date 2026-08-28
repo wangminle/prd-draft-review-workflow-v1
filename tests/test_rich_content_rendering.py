@@ -237,9 +237,9 @@ def test_svg_gradient_fallback_and_quoted_ref_preserved():
 
 
 def test_cache_version_bumped_for_url_sanitizer_fix():
-    """缓存版本必须升级到 20260828-2，确保部署实例拿到新的 rich-content.js/main.css。"""
-    assert "?v=20260828-2" in INDEX_HTML
-    assert "?v=20260828-1" not in INDEX_HTML
+    """缓存版本必须升级到 20260828-4，确保部署实例拿到新的 rich-content.js/main.css。"""
+    assert "?v=20260828-4" in INDEX_HTML
+    assert "?v=20260828-3" not in INDEX_HTML
 
 
 # ── 真实浏览器功能验证（Playwright/Chromium 可用时执行，独立子进程避免事件循环冲突） ──
@@ -256,6 +256,17 @@ def _playwright_available() -> bool:
         return False
 
 
+def _chromium_binary_available() -> bool:
+    """仅装了 playwright 包但没下载 Chromium 二进制时，浏览器用例应 skip 而非失败。"""
+    try:
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as p:
+            return Path(p.chromium.executable_path).exists()
+    except Exception:
+        return False
+
+
 @pytest.mark.skipif(not BROWSER_TOOL.exists(), reason="browser verify tool missing")
 @pytest.mark.skipif(not _playwright_available(), reason="Playwright not installed")
 def test_browser_rich_content_end_to_end():
@@ -263,6 +274,9 @@ def test_browser_rich_content_end_to_end():
     import json
     import subprocess
     import sys
+
+    if not _chromium_binary_available():
+        pytest.skip("Playwright Chromium binary not installed")
 
     proc = subprocess.run(
         [sys.executable, str(BROWSER_TOOL), "--json"],

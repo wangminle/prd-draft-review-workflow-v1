@@ -136,7 +136,8 @@ class TestPython3Docstrings:
         "skills/prd-per-analysis/scripts/analyze.py",
         "skills/requirement-insights/scripts/insights.py",
         "skills/report-generator/scripts/generate.py",
-        "skills/docx-to-markdown/scripts/md_to_pdf.py",
+        # 注：skills/docx-to-markdown/* 已与上游 V0.1.7 对齐（上游文档使用
+        # "python"），该目录不纳入本项目的 python3 docstring 检查范围。
     ]
 
     @pytest.mark.parametrize("script_rel", SCRIPT_FILES)
@@ -188,46 +189,47 @@ class TestTargetBaselineCLI:
 # ── 4.6: DOCX pixel/size limits ───────────────────────────────────
 
 class TestDocxPixelLimits:
-    """Verify that DOCX conversion has pixel and size limits for images."""
+    """Verify that DOCX conversion has pixel and size limits for images.
 
-    def test_max_image_pixels_constant(self):
-        convert_path = ROOT / "skills" / "docx-to-markdown" / "scripts" / "convert_docx.py"
-        with open(convert_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "MAX_IMAGE_PIXELS" in content, (
-            "convert_docx.py should define MAX_IMAGE_PIXELS constant"
+    适配 skill 上游 V0.1.7：资源上限集中为 DOCX_SECURITY_LIMITS dict，
+    像素解析函数为 image_pixel_count（原 _get_image_pixel_count 已移除）。
+    """
+
+    DOCX_SCRIPTS_DIR = ROOT / "skills" / "docx-to-markdown" / "scripts"
+
+    def _load_convert_docx(self):
+        sys.path.insert(0, str(self.DOCX_SCRIPTS_DIR))
+        try:
+            import convert_docx
+            return convert_docx
+        finally:
+            sys.path.pop(0)
+
+    def test_pixel_and_size_limits_defined(self):
+        convert_docx = self._load_convert_docx()
+        limits = convert_docx.DOCX_SECURITY_LIMITS
+        assert limits["image_pixels"] == 50_000_000, (
+            "convert_docx.py should cap single-image pixels at 50M"
         )
-
-    def test_max_single_image_size_constant(self):
-        convert_path = ROOT / "skills" / "docx-to-markdown" / "scripts" / "convert_docx.py"
-        with open(convert_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "MAX_SINGLE_IMAGE_SIZE" in content, (
-            "convert_docx.py should define MAX_SINGLE_IMAGE_SIZE constant"
+        assert limits["image_file_size"] == 20 * 1024 * 1024, (
+            "convert_docx.py should cap single-image file size at 20MB"
         )
 
     def test_pixel_count_check_in_extraction(self):
-        convert_path = ROOT / "skills" / "docx-to-markdown" / "scripts" / "convert_docx.py"
-        with open(convert_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "_get_image_pixel_count" in content, (
-            "convert_docx.py should call _get_image_pixel_count during image extraction"
+        """读取媒体条目的真实解压路径应包含像素防线。"""
+        convert_docx = self._load_convert_docx()
+        assert hasattr(convert_docx, "image_pixel_count"), (
+            "convert_docx.py should define image_pixel_count helper"
         )
-        assert "MAX_IMAGE_PIXELS" in content
-
-    def test_get_image_pixel_count_function_exists(self):
-        convert_path = ROOT / "skills" / "docx-to-markdown" / "scripts" / "convert_docx.py"
-        with open(convert_path, "r", encoding="utf-8") as f:
-            content = f.read()
-        assert "def _get_image_pixel_count" in content, (
-            "convert_docx.py should define _get_image_pixel_count helper function"
-        )
+        source = (self.DOCX_SCRIPTS_DIR / "convert_docx.py").read_text(encoding="utf-8")
+        assert "image_pixel_count" in source
+        assert "image_pixels" in source
 
     def test_png_pixel_count(self):
-        """Test that _get_image_pixel_count correctly reads PNG dimensions."""
-        # Create a minimal PNG header (10x20 pixels)
-        # PNG: 8-byte signature + 4-byte IHDR length + 4-byte 'IHDR' + width(4) + height(4)
+        """Test that image_pixel_count correctly reads PNG dimensions."""
         import struct
+        convert_docx = self._load_convert_docx()
+        # PNG: 8-byte signature + 4-byte IHDR length + 4-byte 'IHDR' + width(4) + height(4)
         png_header = (
             b'\x89PNG\r\n\x1a\n'  # PNG signature (bytes 0-7)
             + b'\x00\x00\x00\x0d'  # IHDR chunk length (bytes 8-11)
@@ -235,57 +237,39 @@ class TestDocxPixelLimits:
             + struct.pack('>II', 10, 20)  # width=10, height=20 (bytes 16-23)
             + b'\x00' * 20  # padding
         )
-        # Import the function
-        sys.path.insert(0, str(ROOT / "skills" / "docx-to-markdown" / "scripts"))
-        try:
-            from convert_docx import _get_image_pixel_count
-            result = _get_image_pixel_count(png_header)
-            assert result == 200, f"Expected 200 pixels, got {result}"
-        finally:
-            sys.path.pop(0)
+        result = convert_docx.image_pixel_count(png_header)
+        assert result == 200, f"Expected 200 pixels, got {result}"
 
     def test_gif_pixel_count(self):
-        """Test that _get_image_pixel_count correctly reads GIF dimensions."""
+        """Test that image_pixel_count correctly reads GIF dimensions."""
         import struct
+        convert_docx = self._load_convert_docx()
         gif_header = (
             b'GIF89a'  # GIF signature
             + struct.pack('<HH', 100, 200)  # width=100, height=200
             + b'\x00' * 10
         )
-        sys.path.insert(0, str(ROOT / "skills" / "docx-to-markdown" / "scripts"))
-        try:
-            from convert_docx import _get_image_pixel_count
-            result = _get_image_pixel_count(gif_header)
-            assert result == 20000, f"Expected 20000 pixels, got {result}"
-        finally:
-            sys.path.pop(0)
+        result = convert_docx.image_pixel_count(gif_header)
+        assert result == 20000, f"Expected 20000 pixels, got {result}"
 
     def test_bmp_pixel_count(self):
-        """Test that _get_image_pixel_count correctly reads BMP dimensions."""
+        """Test that image_pixel_count correctly reads BMP dimensions."""
         import struct
+        convert_docx = self._load_convert_docx()
         bmp_header = (
             b'BM'  # BMP signature
             + b'\x00' * 16  # padding to offset 18
             + struct.pack('<ii', 300, 400)  # width=300, height=400
             + b'\x00' * 10
         )
-        sys.path.insert(0, str(ROOT / "skills" / "docx-to-markdown" / "scripts"))
-        try:
-            from convert_docx import _get_image_pixel_count
-            result = _get_image_pixel_count(bmp_header)
-            assert result == 120000, f"Expected 120000 pixels, got {result}"
-        finally:
-            sys.path.pop(0)
+        result = convert_docx.image_pixel_count(bmp_header)
+        assert result == 120000, f"Expected 120000 pixels, got {result}"
 
     def test_unknown_format_returns_none(self):
         """Unknown image format should return None (not blocked)."""
-        sys.path.insert(0, str(ROOT / "skills" / "docx-to-markdown" / "scripts"))
-        try:
-            from convert_docx import _get_image_pixel_count
-            result = _get_image_pixel_count(b'UNKNOWN FORMAT')
-            assert result is None, f"Expected None for unknown format, got {result}"
-        finally:
-            sys.path.pop(0)
+        convert_docx = self._load_convert_docx()
+        result = convert_docx.image_pixel_count(b'UNKNOWN FORMAT')
+        assert result is None, f"Expected None for unknown format, got {result}"
 
 
 # ── 5.7: Ruff clean ───────────────────────────────────────────────

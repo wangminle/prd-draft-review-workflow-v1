@@ -200,7 +200,7 @@ class AgentProfile(Base):
     owner_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)  # user.id or workspace.id
     name: Mapped[str] = mapped_column(String(100), nullable=False, default="My Agent")
     system_policy: Mapped[str | None] = mapped_column(Text)  # system prompt for this agent
-    allowed_tools_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["search", "rag", "skill_runner", "artifact"]
+    allowed_tools_json: Mapped[str | None] = mapped_column(Text)  # JSON: ["search", "rag_search", "skill_runner", "artifact"]
     default_scope_type: Mapped[str] = mapped_column(String(20), nullable=False, default="personal")  # P5.A.2: personal/workspace — 只访问个人授权资料 + 已授权项目资料
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="active")  # active/disabled
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)

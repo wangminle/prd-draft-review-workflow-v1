@@ -526,8 +526,12 @@ def test_notification_lifecycle_follows_fresh_auth_session():
     assert "Notification.init();" in login_success
     assert "Notification.init();" in register_success
 
-    logout_handlers = APP_JS.split("// Logout", 1)[1].split("// User dropdown menu", 1)[0]
-    assert logout_handlers.count("Notification.destroy();") == 4
+    # 统一账号菜单：退出登录收敛到单一 _logout(source)，四个页面共用
+    logout_method = APP_JS.split("_logout(source) {", 1)[1].split("_bindNavigation()", 1)[0]
+    assert "Notification.destroy();" in logout_method
+    for source in ("chat", "review", "workspace", "admin"):
+        assert "_bindUserMenu(" in APP_JS
+    assert APP_JS.count("_bindUserMenu(") == 5  # 定义 1 次 + 绑定 4 次
 
 
 def test_app_shows_loading_before_auth_resolution():
@@ -802,9 +806,11 @@ def test_review_collab_requires_approver_and_decide_ui():
 
 
 def test_admin_has_show_agent_approvals():
-    """BUG-091: 通知 deep link 可跳转 Agent 审批"""
-    admin_js = (ROOT / "src/static/js/admin.js").read_text(encoding="utf-8")
-    assert "_showAgentApprovals" in admin_js
+    """BUG-091: 通知 deep link 打开全员可用的个人 Agent 面板（含待审批）。"""
+    app_js = (ROOT / "src/static/js/app.js").read_text(encoding="utf-8")
+    notif_js = (ROOT / "src/static/js/notification.js").read_text(encoding="utf-8")
+    assert "_showAgentSettingsModal" in app_js
+    assert "App._showAgentSettingsModal" in notif_js
 
 
 def test_api_notifications_uses_limit_offset():

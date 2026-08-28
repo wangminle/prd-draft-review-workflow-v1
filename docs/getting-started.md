@@ -17,7 +17,7 @@
 ### 环境要求
 
 - **Python 3.10+**(必需)
-- 若要使用 **Pi Agent**(自主工具调用对话)功能:还需 **Node.js 18+ 和 npm**。不用 Agent 可不装 Node,主应用照常运行。
+- 若要使用 **Pi Agent**(自主工具调用对话)功能:还需 **Node.js 22.19+ 和 npm**。不用 Agent 可不装 Node,主应用照常运行。
 - Python 依赖见 [`requirements.txt`](../requirements.txt)。
 
 ### 1. 克隆项目
@@ -84,7 +84,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.15"}
+# 预期返回: {"status":"ok","version":"0.3.16"}
 ```
 
 ### 常用启停命令
@@ -100,7 +100,7 @@ curl http://localhost:17957/api/health
 
 - **启动即退出**:大概率是 `JWT_SECRET` 使用了示例占位值或过短。留空时 `./start.sh` 会写入根目录 `.env`；请勿填 `change-me-in-production` 等占位值。
 - **健康检查失败**:确认 17957 端口未被占用,查看 `runtime/logs/app.log`。
-- **Agent 功能不可用**:日志出现 `pi CLI not found` 时,运行 `npm install` 安装 Pi Agent,并确保 Node.js 18+ 已安装。
+- **Agent 功能不可用**:日志出现 `pi CLI not found` 时,运行 `npm install` 安装 Pi Agent,并确保 Node.js 22.19+ 已安装。
 
 ## 下一步
 
@@ -123,7 +123,7 @@ The platform replaces the traditional offline flow (PM writes a PRD → mass-ema
 ### Prerequisites
 
 - **Python 3.10+** (required)
-- To use the **Pi Agent** (autonomous tool-calling conversation) feature you also need **Node.js 18+ and npm**. If you don't use the Agent, Node is not required; the main app runs fine without it.
+- To use the **Pi Agent** (autonomous tool-calling conversation) feature you also need **Node.js 22.19+ and npm**. If you don't use the Agent, Node is not required; the main app runs fine without it.
 - Python dependencies are listed in [`requirements.txt`](../requirements.txt).
 
 ### 1. Clone the project
@@ -190,7 +190,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.15"}
+# Expected: {"status":"ok","version":"0.3.16"}
 ```
 
 ### Common start / stop commands
@@ -206,7 +206,7 @@ curl http://localhost:17957/api/health
 
 - **Service exits immediately**: most likely `JWT_SECRET` is an example placeholder or too short. Leaving it empty is fine with `./start.sh` (it writes the project-root `.env`); do not use values like `change-me-in-production`.
 - **Health check failed**: make sure port 17957 is free, and inspect `runtime/logs/app.log`.
-- **Agent features unavailable**: if logs show `pi CLI not found`, run `npm install` to install Pi Agent and ensure Node.js 18+ is installed.
+- **Agent features unavailable**: if logs show `pi CLI not found`, run `npm install` to install Pi Agent and ensure Node.js 22.19+ is installed.
 
 ## Next steps
 

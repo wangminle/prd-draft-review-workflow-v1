@@ -6,7 +6,7 @@
 1. docx-to-markdown：清洗后同名/近同名文件不互相覆盖（sanitize_stem 附加哈希）。
    （“源文件变化后缓存失效”已由 tests/test_skill_docx_audit.py::TestSentinelSourceHash
    的 test_hash_mismatch_reconverts 覆盖，此处不重复。）
-2. docx-to-markdown：单 entry 解压大小超 100MB 的 DOCX 被 validate_zip_safety 拒绝。
+2. docx-to-markdown：单 entry 解压大小超 100MB 的 DOCX 被 validate_docx_zip_security 拒绝。
 3. report-generator：markdown_to_pdf 生成含中文的 PDF，pdfminer 可提取出中文文本。
    （项目依赖中无 pypdf，环境中有 pdfminer.six，故用 pdfminer 做提取验证。）
 4. prd-per-analysis 线上校验路径：专家检查项缺失 / 重复 rule_key / 非法状态时失败。
@@ -93,30 +93,35 @@ class TestOversizedZipEntry:
     def test_single_entry_over_100mb_rejected(self, tmp_path):
         """单 entry 解压大小超过 100MB 的 DOCX 应被拒绝。
 
-        validate_zip_safety 只读 ZIP 元数据（infolist），不解压，
+        validate_docx_zip_security 只读 ZIP 元数据（infolist），不解压，
         因此用高度可压缩的零字节填充即可低成本构造超限 entry。
         """
         docx_path = tmp_path / "huge.docx"
         with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("word/document.xml", b"<doc/>")
             # 100MB+1 解压大小（压缩后极小，写入快）
-            zf.writestr("word/media/pad.bin", b"\x00" * (convert_docx.MAX_SINGLE_ENTRY_UNCOMPRESSED + 1))
+            entry_limit = convert_docx.DOCX_SECURITY_LIMITS["entry_uncompressed"]
+            zf.writestr("word/media/pad.bin", b"\x00" * (entry_limit + 1))
 
-        with pytest.raises(convert_docx.DocxSecurityError, match="entry 过大"):
-            convert_docx.validate_zip_safety(str(docx_path))
+        with zipfile.ZipFile(docx_path, "r") as zf:
+            with pytest.raises(convert_docx.DocxSecurityError, match="单文件上限"):
+                convert_docx.validate_docx_zip_security(zf)
 
     def test_entry_just_under_limit_accepted(self, tmp_path):
         """单 entry 略低于 100MB 阈值时不应被该检查拦截。"""
         docx_path = tmp_path / "ok.docx"
         with zipfile.ZipFile(docx_path, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("word/document.xml", b"<doc/>")
-            zf.writestr("word/media/pad.bin", b"\x00" * (convert_docx.MAX_SINGLE_ENTRY_UNCOMPRESSED - 1024))
+            entry_limit = convert_docx.DOCX_SECURITY_LIMITS["entry_uncompressed"]
+            # 非 word/media 路径：避免触发第二层的单图大小限制，隔离 entry 大小检查
+            zf.writestr("word/embeddings/pad.bin", b"\x00" * (entry_limit - 1024))
 
         # 不抛异常（零字节压缩比极高，但压缩后体积 < 1MB，不触发总压缩比检查；
         # 单 entry 压缩比检查可能触发，因此这里调高超限以隔离单 entry 大小路径）
         from unittest import mock
-        with mock.patch.object(convert_docx, "MAX_COMPRESSION_RATIO", 10**12):
-            convert_docx.validate_zip_safety(str(docx_path))
+        with mock.patch.dict(convert_docx.DOCX_SECURITY_LIMITS, {"entry_ratio": 10**12}):
+            with zipfile.ZipFile(docx_path, "r") as zf:
+                convert_docx.validate_docx_zip_security(zf)
 
 
 # ───────────────────── 3. 中文 PDF 可提取文本 ─────────────────────

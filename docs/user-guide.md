@@ -35,7 +35,7 @@
 - **需求评审**:上传文档、运行 AI 评审、查看报告的主战场。
 - **知识库**:管理团队共享资料和个人私有资料。
 - **Agent 对话**:与 AI Agent 自主对话,处理灵活任务。
-- **账号设置**:修改个人密码。
+- **账号菜单**:任意页面右上角用户名均可进入个人 Agent、修改密码、退出登录。
 
 整个平台围绕"**项目**"组织工作:每次评审都以一个项目为单位,管理你上传的文档、评审上下文、任务记录和生成的报告。
 
@@ -200,15 +200,32 @@
 - **@文档定向注入**:在对话中可以使用 **@文档** 引用特定文档,把它的内容作为上下文注入,让回答更有针对性。
 - **运行历史**:每次 Agent 对话都会记录运行历史(目标、步骤、工具调用、状态),便于回看和复盘。
 
-> 说明:Agent 的可用工具受管理员配置的授权范围限制,高风险操作可能需要人工审批,这是平台的安全设计,正常使用不受影响。
+> 说明:Agent 的可用工具受你在「个人 Agent」中配置的白名单限制,高风险操作可能需要人工审批。这是平台的安全设计,正常使用不受影响。
 
 ---
 
 ### 6. 账号管理
 
+四个主页面(需求评审、智能对话、团队空间、管理后台)的**右上角使用同一个用户菜单**,包含:
+
+- **个人 Agent**
+- **修改密码**
+- **退出登录**
+
+普通用户和管理员都通过这个菜单管理**自己的** Agent,不会进入管理后台。
+
+#### 个人 Agent
+
+1. 点击右上角用户名,选择「个人 Agent」。该面板**仅影响当前账号**。
+2. **默认访问范围**:
+   - **我的资料**:只检索个人空间。
+   - **已授权的团队资料**:仅当你已为某个团队空间添加授权后才能选择。选择该项**不等于**自动获得全部团队资料权限。
+3. 面板会列出**当前已授权团队空间**。若暂无授权,「已授权的团队资料」会被禁用,并提示你先添加授权。
+4. 添加授权:从你已加入的团队空间中选择并保存。之后 Agent 才能检索该空间资料;未授权的空间在运行时仍会返回 403。
+
 #### 修改密码
 
-1. 进入"账号设置"或个人中心。
+1. 点击右上角用户名,选择「修改密码」。
 2. 输入当前密码和新密码。
 3. 提交后密码立即生效(对应接口 `PUT /api/auth/password`)。
 
@@ -268,7 +285,7 @@ After logging in, you will see several main areas:
 - **Requirement Review**: The main workspace for uploading documents, running AI reviews, and viewing reports.
 - **Knowledge Base**: Manage team-shared and personal materials.
 - **Agent Chat**: Have autonomous conversations with an AI Agent for flexible tasks.
-- **Account Settings**: Change your personal password.
+- **Account menu**: The top-right username on any page opens Personal Agent, Change Password, and Sign out.
 
 The whole platform is organized around "**projects**": each review is managed as a project that holds your uploaded documents, review context, task records, and generated reports.
 
@@ -433,15 +450,32 @@ When review modes can't meet a flexible need, use Agent chat.
 - **@document targeted injection**: in a conversation, you can use **@document** to reference a specific document and inject its content as context, making answers more targeted.
 - **Run history**: every Agent conversation is recorded (goal, steps, tool calls, status) for easy review.
 
-> Note: the Agent's available tools are limited by the administrator-configured authorization scope, and high-risk operations may require manual approval. This is a platform security design and does not affect normal use.
+> Note: the Agent's available tools are limited by the allowlist in **Personal Agent**; high-risk operations may require manual approval. This is a platform security design and does not affect normal use.
 
 ---
 
 ### 6. Account Management
 
+The four main pages (Requirement Review, Chat, Team Space, Admin) share the **same top-right account menu**:
+
+- **Personal Agent**
+- **Change Password**
+- **Sign out**
+
+Both regular users and admins manage **their own** Agent from this menu; it is not an admin-console page.
+
+#### Personal Agent
+
+1. Click your username in the top right and choose **Personal Agent**. This panel **only affects the current account**.
+2. **Default access scope**:
+   - **My files**: search only your personal space.
+   - **Authorized team files**: available only after you grant the Agent access to a specific team space. Choosing this option does **not** grant access to every team space.
+3. The panel lists **currently authorized team spaces**. If none exist, **Authorized team files** is disabled and you are prompted to add an authorization first.
+4. Add an authorization by picking a team space you already belong to. Until then, accessing that space at runtime returns 403.
+
 #### Change Password
 
-1. Go to "Account Settings" or your profile.
+1. Click your username in the top right and choose **Change Password**.
 2. Enter your current password and a new password.
 3. Submit, and the new password takes effect immediately (endpoint: `PUT /api/auth/password`).
 

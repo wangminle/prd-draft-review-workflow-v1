@@ -224,7 +224,7 @@ async def test_revoke_authorization_requires_owner(client):
 
     create_resp = await c.post(
         "/api/agent/profile/authorizations",
-        json={"scope_type": "workspace", "permissions": ["read"]},
+        json={"scope_type": "personal", "permissions": ["read"]},
         headers=owner_h,
     )
     assert create_resp.status_code == 200

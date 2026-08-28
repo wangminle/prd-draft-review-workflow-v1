@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """P1-4.6 测试：docx-to-markdown 资源限制、原子写入与批处理跳过逻辑。
 
+适配 skill 上游 V0.1.7（93afbb1）API：资源上限集中为 DOCX_SECURITY_LIMITS
+dict、ZIP 安全校验为 validate_docx_zip_security(zip_ref)（接收已打开的
+ZipFile）、sentinel 读写为 write/read_conversion_sentinel、文件哈希为
+sha256_file。上游自有测试套件（tests/test_docx_*.py）覆盖 V0.1.7 全量
+行为；本文件保留本项目历史回归关注点。
+
 覆盖：
-- MAX_IMAGE_COUNT / MAX_XLSX_SIZE 限制
+- DOCX_SECURITY_LIMITS 各项阈值
 - 原子写入：转换失败时不残留半成品 .md
-- .converted sentinel 原子写入（JSON，绑定源文件 SHA-256）
+- .converted sentinel 原子写入（JSON，绑定源文件 SHA-256 与 on_limit）
 - batch_convert 跳过完整目录、重试半成品目录
 - BUG-160：源哈希不匹配/旧格式 sentinel 重转、ZIP 总压缩比检查、图片像素上限
 """
@@ -44,10 +50,11 @@ def _make_minimal_docx(path: Path, text: bytes = b"hello") -> None:
 
 
 def _write_valid_sentinel(target: Path, folder: str, docx_path: Path) -> None:
-    """写入新格式（JSON + 源哈希）的合法 sentinel。"""
+    """写入新格式（JSON + 源哈希 + on_limit）的合法 sentinel。"""
     payload = json.dumps({
         "folder_name": folder,
-        "source_sha256": convert_docx.compute_file_sha256(str(docx_path)),
+        "source_sha256": convert_docx.sha256_file(str(docx_path)),
+        "on_limit": "reject",
     }, ensure_ascii=False)
     (target / ".converted").write_text(payload, encoding="utf-8")
 
@@ -83,36 +90,39 @@ def _make_docx_with_xlsx(path: Path, xlsx_size: int) -> None:
 # ───────────────────────── 资源限制 ─────────────────────────
 
 class TestResourceLimits:
-    def test_max_image_count_constant(self):
-        assert convert_docx.MAX_IMAGE_COUNT == 500
-
-    def test_max_xlsx_size_constant(self):
-        assert convert_docx.MAX_XLSX_SIZE == 50 * 1024 * 1024
+    def test_security_limits_dict(self):
+        limits = convert_docx.DOCX_SECURITY_LIMITS
+        assert limits["image_count"] == 500
+        assert limits["embedded_excel_size"] == 50 * 1024 * 1024
+        assert limits["image_file_size"] == 20 * 1024 * 1024
+        assert limits["image_pixels"] == 50_000_000
+        assert limits["entry_uncompressed"] == 100 * 1024 * 1024
+        assert limits["total_uncompressed"] == 500 * 1024 * 1024
 
     def test_extract_content_skips_oversized_xlsx(self, tmp_path):
         """超大 xlsx 应被跳过，不抛异常。"""
         docx_path = tmp_path / "big.xlsx.docx"
-        # xlsx 大小超过 MAX_XLSX_SIZE
-        _make_docx_with_xlsx(docx_path, convert_docx.MAX_XLSX_SIZE + 1024)
+        # xlsx 大小超过 embedded_excel_size
+        _make_docx_with_xlsx(docx_path, convert_docx.DOCX_SECURITY_LIMITS["embedded_excel_size"] + 1024)
         assets_dir = tmp_path / "assets"
         assets_dir.mkdir()
         # 应正常返回（不抛异常），且 excel_md 为空
         img_by_hash, tbl_queue, tbl_repeat = convert_docx.extract_content_from_docx(
-            str(docx_path), str(assets_dir)
+            str(docx_path), str(assets_dir), on_limit="skip"
         )
         assert len(tbl_queue) == 0
         assert len(tbl_repeat) == 0
 
     def test_extract_content_image_count_limit(self, tmp_path):
-        """图片数量超过 MAX_IMAGE_COUNT 时应停止提取。"""
+        """图片数量超过 image_count 时应停止提取。"""
         # 用 mock 把上限调低以便测试
-        with mock.patch.object(convert_docx, "MAX_IMAGE_COUNT", 3):
+        with mock.patch.dict(convert_docx.DOCX_SECURITY_LIMITS, {"image_count": 3}):
             docx_path = tmp_path / "many.docx"
             _make_docx_with_media(docx_path, image_count=10)
             assets_dir = tmp_path / "assets"
             assets_dir.mkdir()
             img_by_hash, _, _ = convert_docx.extract_content_from_docx(
-                str(docx_path), str(assets_dir)
+                str(docx_path), str(assets_dir), on_limit="skip"
             )
             # 只能提取前 3 张
             assert len(img_by_hash) <= 3
@@ -255,6 +265,34 @@ class TestBatchConvertSkip:
         # 失败后目录应被清理
         assert not target.exists() or not (target / ".converted").exists()
 
+    def test_on_limit_mismatch_reconverts(self, tmp_path):
+        """sentinel 记录的 on_limit 与本次请求不一致时应重转。"""
+        src = tmp_path / "src"
+        src.mkdir()
+        docx_path = src / "policy.docx"
+        _make_minimal_docx(docx_path)
+
+        out = tmp_path / "out"
+        folder = convert_docx.sanitize_stem("policy")
+        target = out / folder
+        target.mkdir(parents=True)
+        (target / f"{folder}.md").write_text("# reject-mode marker")
+        # sentinel 哈希一致但 on_limit 为 reject，本次以 skip 运行
+        payload = json.dumps({
+            "folder_name": folder,
+            "source_sha256": convert_docx.sha256_file(str(docx_path)),
+            "on_limit": "reject",
+        }, ensure_ascii=False)
+        (target / ".converted").write_text(payload, encoding="utf-8")
+
+        batch_convert.batch_convert(str(src), str(out), force=False, on_limit="skip")
+
+        # 策略不一致 → 不跳过，重新转换
+        md_content = (target / f"{folder}.md").read_text()
+        assert md_content != "# reject-mode marker"
+        new_sentinel = json.loads((target / ".converted").read_text(encoding="utf-8"))
+        assert new_sentinel["on_limit"] == "skip"
+
 
 # ───────────────────────── BUG-160：sentinel 绑定源哈希 ─────────────────────────
 
@@ -270,21 +308,43 @@ class TestSentinelSourceHash:
         sentinel = Path(out_dir) / "h" / ".converted"
         payload = json.loads(sentinel.read_text(encoding="utf-8"))
         assert payload["folder_name"] == "h"
-        assert payload["source_sha256"] == convert_docx.compute_file_sha256(str(docx_path))
+        assert payload["source_sha256"] == convert_docx.sha256_file(str(docx_path))
+        assert payload["on_limit"] == "reject"
 
     def test_read_sentinel_legacy_returns_none(self, tmp_path):
         """旧格式 sentinel（纯文本 folder_name）应被判定为无效。"""
-        sentinel = tmp_path / ".converted"
-        sentinel.write_text("legacy-folder", encoding="utf-8")
-        assert convert_docx.read_sentinel_source_sha256(str(sentinel)) is None
+        sentinel_dir = tmp_path
+        (sentinel_dir / ".converted").write_text("legacy-folder", encoding="utf-8")
+        assert convert_docx.read_conversion_sentinel(str(sentinel_dir)) is None
 
     def test_read_sentinel_corrupt_returns_none(self, tmp_path):
         """损坏 JSON 或缺少哈希字段的 sentinel 应被判定为无效。"""
-        sentinel = tmp_path / ".converted"
-        sentinel.write_text("{not json", encoding="utf-8")
-        assert convert_docx.read_sentinel_source_sha256(str(sentinel)) is None
-        sentinel.write_text(json.dumps({"folder_name": "x"}), encoding="utf-8")
-        assert convert_docx.read_sentinel_source_sha256(str(sentinel)) is None
+        sentinel_dir = tmp_path
+        (sentinel_dir / ".converted").write_text("{not json", encoding="utf-8")
+        assert convert_docx.read_conversion_sentinel(str(sentinel_dir)) is None
+        (sentinel_dir / ".converted").write_text(json.dumps({"folder_name": "x"}), encoding="utf-8")
+        assert convert_docx.read_conversion_sentinel(str(sentinel_dir)) is None
+
+    def test_read_sentinel_invalid_on_limit_returns_none(self, tmp_path):
+        """on_limit 非法（不在 reject/skip 枚举内）的 sentinel 应判定无效。"""
+        payload = json.dumps({
+            "folder_name": "x",
+            "source_sha256": "0" * 64,
+            "on_limit": "ignore",
+        })
+        (tmp_path / ".converted").write_text(payload, encoding="utf-8")
+        assert convert_docx.read_conversion_sentinel(str(tmp_path)) is None
+
+    def test_read_sentinel_valid_returns_dict(self, tmp_path):
+        """合法 sentinel 应返回含三项字段的 dict。"""
+        payload = json.dumps({
+            "folder_name": "x",
+            "source_sha256": "0" * 64,
+            "on_limit": "skip",
+        })
+        (tmp_path / ".converted").write_text(payload, encoding="utf-8")
+        result = convert_docx.read_conversion_sentinel(str(tmp_path))
+        assert result == {"folder_name": "x", "source_sha256": "0" * 64, "on_limit": "skip"}
 
     def test_hash_mismatch_reconverts(self, tmp_path):
         """源文件变更导致 sentinel 哈希不匹配时，应清理重转而非跳过。"""
@@ -311,7 +371,7 @@ class TestSentinelSourceHash:
         assert new_md != first_md
         assert "changed content" in new_md
         payload = json.loads((target / ".converted").read_text(encoding="utf-8"))
-        assert payload["source_sha256"] == convert_docx.compute_file_sha256(str(docx_path))
+        assert payload["source_sha256"] == convert_docx.sha256_file(str(docx_path))
 
     def test_unchanged_source_skips_after_real_conversion(self, tmp_path):
         """真实转换后重跑，源未变更应跳过（md 不被重写）。"""
@@ -350,7 +410,7 @@ class TestSentinelSourceHash:
         md = (target / f"{folder}.md").read_text()
         assert md != "# old-format marker"
         payload = json.loads((target / ".converted").read_text(encoding="utf-8"))
-        assert payload["source_sha256"] == convert_docx.compute_file_sha256(str(docx_path))
+        assert payload["source_sha256"] == convert_docx.sha256_file(str(docx_path))
 
     def test_timeout_parameter_accepted(self, tmp_path):
         """timeout 参数应可用且不干扰正常转换（非 POSIX 平台自动跳过）。"""
@@ -381,11 +441,14 @@ class TestTotalCompressionRatio:
             zf.writestr("word/media/pad.bin", b"\x00" * 100_000)
 
         # 调高单 entry 阈值以隔离总压缩比检查路径
-        with mock.patch.object(convert_docx, "MAX_COMPRESSION_RATIO", 10**9), \
-             mock.patch.object(convert_docx, "MIN_COMPRESSED_FOR_TOTAL_RATIO_CHECK", 1), \
-             mock.patch.object(convert_docx, "MAX_TOTAL_COMPRESSION_RATIO", 10):
-            with pytest.raises(convert_docx.DocxSecurityError, match="总压缩比"):
-                convert_docx.validate_zip_safety(str(docx_path))
+        with mock.patch.dict(convert_docx.DOCX_SECURITY_LIMITS, {
+            "entry_ratio": 10**9,
+            "total_ratio_min_compressed": 1,
+            "total_ratio": 10,
+        }):
+            with zipfile.ZipFile(docx_path, "r") as zf:
+                with pytest.raises(convert_docx.DocxSecurityError, match="总压缩比"):
+                    convert_docx.validate_docx_zip_security(zf)
 
     def test_total_ratio_check_skips_small_archives(self, tmp_path):
         """总压缩体积低于 1MB 时不触发总压缩比检查（避免小文件误伤）。"""
@@ -401,9 +464,10 @@ class TestTotalCompressionRatio:
             # 高压缩比但体积小的 entry（压缩后远小于 1MB）
             zf.writestr("word/media/pad.bin", b"\x00" * 50_000)
 
-        with mock.patch.object(convert_docx, "MAX_COMPRESSION_RATIO", 10**9):
+        with mock.patch.dict(convert_docx.DOCX_SECURITY_LIMITS, {"entry_ratio": 10**9}):
             # 不抛异常：总压缩体积未达 1MB 阈值
-            convert_docx.validate_zip_safety(str(docx_path))
+            with zipfile.ZipFile(docx_path, "r") as zf:
+                convert_docx.validate_docx_zip_security(zf)
 
 
 # ───────────────────────── BUG-160：图片像素上限（decompression bomb）─────────────────────────
@@ -411,18 +475,31 @@ class TestTotalCompressionRatio:
 class TestImagePixelLimit:
     @staticmethod
     def _png_with_dimensions(width: int, height: int) -> bytes:
-        """构造仅含伪造 IHDR 尺寸的 PNG 头（不解压像素数据）。"""
-        return b"\x89PNG\r\n\x1a\n" + b"\x00" * 8 + struct.pack(">II", width, height)
+        """构造含合法 IHDR 的 PNG 头（不解压像素数据）。"""
+        return (
+            b"\x89PNG\r\n\x1a\n"        # PNG 签名（bytes 0-7）
+            + b"\x00\x00\x00\x0d"       # IHDR chunk 长度（bytes 8-11）
+            + b"IHDR"                    # IHDR 类型（bytes 12-15）
+            + struct.pack(">II", width, height)  # 宽高（bytes 16-23）
+            + b"\x00" * 8
+        )
 
     def test_oversized_pixel_image_rejected(self):
-        """声明超大尺寸的图片（解压炸弹型）应被拒绝。"""
-        # 20000x20000 = 4 亿像素 > MAX_IMAGE_PIXELS
+        """声明超大尺寸的图片（解压炸弹型）像素数应超上限。"""
+        # 20000x20000 = 4 亿像素 > image_pixels
         png = self._png_with_dimensions(20000, 20000)
-        reason = convert_docx._image_resource_rejection_reason(png)
-        assert reason is not None
-        assert "像素" in reason
+        pixels = convert_docx.image_pixel_count(png)
+        assert pixels == 20000 * 20000
+        assert pixels > convert_docx.DOCX_SECURITY_LIMITS["image_pixels"]
 
     def test_normal_pixel_image_accepted(self):
-        """正常尺寸图片不应被像素检查拦截。"""
+        """正常尺寸图片像素数不应超上限。"""
         png = self._png_with_dimensions(100, 100)
-        assert convert_docx._image_resource_rejection_reason(png) is None
+        pixels = convert_docx.image_pixel_count(png)
+        assert pixels == 100 * 100
+        assert pixels <= convert_docx.DOCX_SECURITY_LIMITS["image_pixels"]
+
+    def test_malformed_header_returns_none(self):
+        """无法解析头部的图片返回 None（不拦截，交由大小限制兜底）。"""
+        assert convert_docx.image_pixel_count(b"\x89PNG\r\n\x1a\n" + b"\x00" * 8) is None
+        assert convert_docx.image_pixel_count(b"UNKNOWN FORMAT") is None

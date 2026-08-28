@@ -117,11 +117,16 @@ def test_a11y_005_no_href_hash_links():
 def test_a11y_005_topbar_links_are_buttons():
     html = _read(HTML)
     assert '<button id="go-review"' in html
-    assert '<button id="logout-btn"' in html
     assert '<button id="back-to-chat-from-review"' in html
-    assert '<button id="review-logout-btn"' in html
     assert '<button id="back-to-chat"' in html
-    assert '<button id="admin-logout-btn"' in html
+    # 统一账号菜单（聊天/评审/团队空间/管理后台）替代了独立退出按钮；
+    # 菜单项全部为 button（个人 Agent / 修改密码 / 退出登录 ×4 页）
+    assert html.count('class="user-menu-item"') + html.count('class="user-menu-item user-menu-logout"') == 12
+    assert html.count('data-user-menu-action="logout"') == 4
+    assert 'id="logout-btn"' not in html
+    assert 'id="review-logout-btn"' not in html
+    assert 'id="admin-logout-btn"' not in html
+    assert 'id="workspace-logout-btn"' not in html
 
 
 def test_a11y_005_auth_switch_are_buttons():

@@ -289,7 +289,12 @@ Agent Profile 有状态流转,治理页负责**归档与退役**:
 
 ### 8. Agent 管理
 
-Agent 管理涉及 `/api/agent/*` 与全局 MCP 配置。管理员负责配置 Agent 身份、系统策略、授权范围、可用工具,并处理高风险工具的审批。
+Agent 配置分两层，不要混用：
+
+- **系统级 Agent 配置（Pi Agent）**：仅管理员。在管理后台侧栏「AI 能力 · 全局 → Pi Agent 配置」中管理全局 LLM / 搜索 / 视觉引擎。见 [第 9 节](#9-pi-agent-能力模块)。
+- **个人 Agent 配置**：所有登录用户（含管理员）通过任意页面**右上角用户菜单 → 个人 Agent** 管理**自己的**配置。该面板**仅影响当前账号**。管理后台侧栏不再提供个人 Agent 入口。
+
+接口前缀 `/api/agent/*`。个人面板可配置身份、默认访问范围、工具白名单、团队空间授权，并处理当前用户作为审批人的待审批请求。
 
 #### 8.1 Agent Profile 与授权范围
 
@@ -297,7 +302,9 @@ Agent 管理涉及 `/api/agent/*` 与全局 MCP 配置。管理员负责配置 A
 | --- | --- |
 | Agent Profile | 定义身份(name)、系统策略(system_policy)、可用工具白名单、默认授权范围 |
 | 授权(Authorization) | 授予 Agent 在某个 scope(workspace/project/personal)的权限(read/write/search/execute) |
-| `default_scope_type` | `personal`(仅个人资料)或 `workspace`(团队空间) |
+| `default_scope_type` | `personal`（我的资料）或 `workspace`（已授权的团队资料） |
+
+选择「已授权的团队资料」**不等于**自动访问全部团队空间；必须先为具体工作区添加显式授权，否则运行时会 403。未授权时界面会禁用该选项并列出当前已授权团队空间。
 
 **工具白名单(deny-by-default):** `allowed_tools` 为空列表时,**仅保留 `rag_search`**,默认最小权限。
 
@@ -697,7 +704,12 @@ Returns:
 
 ### 8. Agent Management
 
-Agent management spans `/api/agent/*` and global MCP config. Admins configure Agent identity, system policy, authorization scope, and available tools, and handle high-risk tool approvals.
+Agent configuration has two layers; do not mix them:
+
+- **System-level Agent (Pi Agent)**: admins only. Configure the global LLM / search / vision engine under **AI capabilities · Global → Pi Agent** in the admin sidebar. See [Section 9](#9-pi-agent-capability-module).
+- **Personal Agent**: every signed-in user (including admins) manages **their own** config from the **top-right account menu → Personal Agent**. This panel **only affects the current account**. The admin sidebar no longer has a personal Agent entry.
+
+Prefix `/api/agent/*`. The personal panel covers identity, default access scope, tool allowlist, team-space authorizations, and pending approvals where the current user is the approver.
 
 #### 8.1 Agent Profile & Authorization Scope
 
@@ -705,7 +717,9 @@ Agent management spans `/api/agent/*` and global MCP config. Admins configure Ag
 | --- | --- |
 | Agent Profile | Defines identity (name), system policy (system_policy), tool allowlist, default authorization scope |
 | Authorization | Grants an Agent permissions (read/write/search/execute) on a scope (workspace/project/personal) |
-| `default_scope_type` | `personal` (own files only) or `workspace` (team space) |
+| `default_scope_type` | `personal` (my files) or `workspace` (authorized team files) |
+
+Choosing **authorized team files** does **not** grant access to every team space; each workspace still needs an explicit authorization, otherwise runtime access returns 403. When none exist, the option is disabled and the panel lists currently authorized team spaces.
 
 **Tool allowlist (deny-by-default):** when `allowed_tools` is an empty list, **only `rag_search` is retained** — least privilege by default.
 

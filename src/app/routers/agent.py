@@ -1,5 +1,6 @@
 """Agent Profile / Run / Approval API endpoints (P3)"""
 
+from datetime import datetime, timedelta, timezone
 import json
 import logging
 from typing import Optional
@@ -17,12 +18,16 @@ from app.repositories.agent_repository import (
     AgentProfileRepository,
     AgentRunRepository,
 )
+from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 # 普通用户不可自行启用的高风险工具（需管理员配置 + 独立审批人）
 _HIGH_RISK_TOOLS = frozenset({"bash", "write", "edit", "read"})
+_AUTH_PERMISSIONS = frozenset({"read", "write", "search", "execute"})
+_RAG_PERMISSIONS = frozenset({"read", "search"})
+_CN_TZ = timezone(timedelta(hours=8))
 
 
 # ─── Schemas ──────────────────────────────────────────────────
@@ -39,7 +44,7 @@ class AuthorizationCreate(BaseModel):
     scope_type: str  # workspace/project/personal
     scope_id: Optional[int] = None
     permissions: Optional[list[str]] = None  # ["read", "write", "search", "execute"]
-    expires_at: Optional[str] = None  # ISO datetime
+    expires_at: Optional[datetime] = None
 
 
 class AgentRunCreate(BaseModel):
@@ -98,19 +103,21 @@ def _serialize_profile(profile) -> dict:
     }
 
 
-def _serialize_authorization(auth) -> dict:
+def _serialize_authorization(auth, workspace_names: Optional[dict] = None) -> dict:
     perms = []
     if auth.permissions_json:
         try:
             perms = json.loads(auth.permissions_json)
         except (json.JSONDecodeError, TypeError):
             pass
+    names = workspace_names or {}
     return {
         "id": auth.id,
         "agent_id": auth.agent_id,
         "granted_by": auth.granted_by,
         "scope_type": auth.scope_type,
         "scope_id": auth.scope_id,
+        "workspace_name": names.get(auth.scope_id) if auth.scope_type == "workspace" else None,
         "permissions": perms,
         "expires_at": auth.expires_at.isoformat() if auth.expires_at else None,
         "created_at": auth.created_at.isoformat() if auth.created_at else None,
@@ -240,6 +247,58 @@ async def update_agent_profile(
 
 # ─── Agent Authorization (P3.A.2) ────────────────────────────
 
+async def _workspace_names_by_ids(db: AsyncSession, auths, user_id: int) -> dict:
+    """仅回填当前用户仍可访问的 active workspace 名称。"""
+    ids = {a.scope_id for a in auths if a.scope_type == "workspace" and a.scope_id is not None}
+    if not ids:
+        return {}
+    from app.repositories.workspace_repository import WorkspaceRepository
+
+    ws_repo = WorkspaceRepository(db)
+    workspaces = await ws_repo.get_user_workspaces(user_id)
+    return {ws.id: ws.name for ws in workspaces if ws.id in ids}
+
+
+async def _require_active_workspace_member(
+    db: AsyncSession,
+    workspace_id: Optional[int],
+    user_id: int,
+):
+    """纵深校验 workspace 存在、active，且用户仍是 active 成员。"""
+    if workspace_id is None:
+        raise HTTPException(400, "workspace scope requires scope_id")
+
+    from app.repositories.workspace_repository import WorkspaceRepository
+
+    ws_repo = WorkspaceRepository(db)
+    workspace = await ws_repo.get_by_id(workspace_id)
+    if workspace is None or workspace.status != "active":
+        raise HTTPException(404, "Workspace not found")
+    member = await ws_repo.get_member(workspace_id, user_id)
+    if member is None:
+        raise HTTPException(403, "Not an active workspace member")
+    return workspace
+
+
+def _normalize_authorization_expiry(value: Optional[datetime]) -> Optional[datetime]:
+    """把带时区的 ISO 时间转为项目统一使用的北京时间 naive datetime。"""
+    if value is None or value.tzinfo is None:
+        return value
+    return value.astimezone(_CN_TZ).replace(tzinfo=None)
+
+
+def _authorization_allows_rag(auth) -> bool:
+    """授权必须未过期，且同时包含读取与检索权限。"""
+    expires_at = _normalize_authorization_expiry(auth.expires_at)
+    if expires_at is not None and expires_at <= now_cn():
+        return False
+    try:
+        permissions = json.loads(auth.permissions_json or "[]")
+    except (json.JSONDecodeError, TypeError):
+        return False
+    return isinstance(permissions, list) and _RAG_PERMISSIONS.issubset(set(permissions))
+
+
 @router.get("/profile/authorizations")
 async def list_authorizations(
     user: User = Depends(get_current_user),
@@ -251,7 +310,8 @@ async def list_authorizations(
         return []
     auth_repo = AgentAuthorizationRepository(db)
     auths = await auth_repo.list_by_agent(profile.id)
-    return [_serialize_authorization(a) for a in auths]
+    names = await _workspace_names_by_ids(db, auths, user.id)
+    return [_serialize_authorization(a, names) for a in auths]
 
 
 @router.post("/profile/authorizations")
@@ -260,13 +320,19 @@ async def create_authorization(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    if req.scope_type not in ("workspace", "project", "personal"):
+        raise HTTPException(400, "scope_type must be workspace/project/personal")
+    permissions = list(req.permissions or [])
+    invalid_permissions = sorted(set(permissions) - _AUTH_PERMISSIONS)
+    if invalid_permissions:
+        raise HTTPException(400, f"unsupported permissions: {', '.join(invalid_permissions)}")
+    if req.scope_type == "workspace":
+        await _require_active_workspace_member(db, req.scope_id, user.id)
+
     profile_repo = AgentProfileRepository(db)
     profile = await profile_repo.get_by_owner("user", user.id)
     if not profile:
         profile = await profile_repo.create("user", user.id)
-
-    if req.scope_type not in ("workspace", "project", "personal"):
-        raise HTTPException(400, "scope_type must be workspace/project/personal")
 
     auth_repo = AgentAuthorizationRepository(db)
     auth = await auth_repo.create(
@@ -274,9 +340,11 @@ async def create_authorization(
         granted_by=user.id,
         scope_type=req.scope_type,
         scope_id=req.scope_id,
-        permissions_json=json.dumps(req.permissions or [], ensure_ascii=False),
+        permissions_json=json.dumps(permissions, ensure_ascii=False),
+        expires_at=_normalize_authorization_expiry(req.expires_at),
     )
-    return _serialize_authorization(auth)
+    names = await _workspace_names_by_ids(db, [auth], user.id)
+    return _serialize_authorization(auth, names)
 
 
 @router.delete("/profile/authorizations/{auth_id}")
@@ -550,7 +618,9 @@ async def agent_rag_search(
     auths = await auth_repo.list_by_agent(profile.id)
     authorized_workspace_ids = {
         a.scope_id for a in auths
-        if a.scope_type == "workspace" and a.scope_id is not None
+        if a.scope_type == "workspace"
+        and a.scope_id is not None
+        and _authorization_allows_rag(a)
     }
     default_scope = getattr(profile, "default_scope_type", None) or "personal"
 
@@ -565,6 +635,8 @@ async def agent_rag_search(
         if workspace_id not in authorized_workspace_ids:
             # 默认 personal 时禁止未授权 workspace；即便 default=workspace 也必须有显式授权条目
             raise HTTPException(403, f"workspace_id={workspace_id} 不在 Agent 授权范围内")
+        # 授权创建后的成员移除/空间归档必须即时生效，不能只信任历史授权记录。
+        await _require_active_workspace_member(db, workspace_id, run.user_id)
     elif scope == "personal":
         # personal 仅检索当前 run 用户私有资料；忽略客户端伪造的 workspace_id
         workspace_id = None

@@ -266,10 +266,8 @@ const Notification = {
                 Review._showCollabRequest(objectId);
             }
         } else if (objectType === 'agent_approval') {
-            App._showAdminPage();
-            // 通知 Admin 模块跳到审批页
-            if (typeof Admin._showAgentApprovals === 'function') {
-                Admin._showAgentApprovals();
+            if (typeof App._showAgentSettingsModal === 'function') {
+                App._showAgentSettingsModal();
             }
         } else if (objectType === 'agent_conversation') {
             // P5.A.3: 跳转到智能对话页
