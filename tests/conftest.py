@@ -17,8 +17,26 @@ os.environ.setdefault("JWT_SECRET", "test-jwt-secret-for-tests-32chars!!")
 import asyncio
 
 import pytest_asyncio
+import sqlalchemy.ext.asyncio as _sa_asyncio
 from sqlalchemy import select, text as sa_text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
+# PLN-001: 跟踪测试进程创建的所有 async engine（含 app.database 全局 engine），
+# 由下方 autouse fixture 在每个用例的 event loop 关闭前统一 dispose，
+# 避免 aiosqlite 工作线程在 loop 关闭后回写 Future（"Event loop is closed"）。
+# 必须在 import app.database 之前 patch，确保模块级全局 engine 也被登记。
+_test_engines: list = []
+
+_orig_create_async_engine = _sa_asyncio.create_async_engine
+
+
+def _tracked_create_async_engine(*args, **kwargs):
+    engine = _orig_create_async_engine(*args, **kwargs)
+    _test_engines.append(engine)
+    return engine
+
+
+_sa_asyncio.create_async_engine = _tracked_create_async_engine
 
 from app.database import get_db as original_get_db
 from app.models.user import Base, User
@@ -46,6 +64,14 @@ async def clear_review_progress_queues():
     yield
     await drain_review_pipeline_tasks(timeout=2.0)
     await asyncio.sleep(0)
+    # PLN-001: dispose 所有已登记的 engine（幂等，含跨用例存活的全局 engine），
+    # 让 aiosqlite 工作线程在本用例 loop 关闭前收完所有结果
+    for eng in list(dict.fromkeys(_test_engines)):
+        try:
+            await eng.dispose()
+        except Exception:
+            pass
+    await asyncio.sleep(0)
     review.progress_queues.clear()
     if hasattr(review, "_review_start_locks"):
         review._review_start_locks.clear()
@@ -57,7 +83,7 @@ def make_test_app(db_path: str):
 
     from app.routers import admin, agent, auth, chat, history, review, upload, workspace, review_request, notification, artifact, governance
 
-    engine = create_async_engine(
+    engine = _tracked_create_async_engine(
         f"sqlite+aiosqlite:///{db_path}",
         connect_args={"check_same_thread": False},
     )

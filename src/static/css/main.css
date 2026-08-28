@@ -1588,11 +1588,19 @@ input::placeholder, textarea::placeholder {
 .svg-body {
     display: block;
     text-align: center;
+    /* 白色衬底：图形视图下 SVG 下方恒有一层白底，
+       SVG 自身背景缺失/透明时也不会露出容器灰底或变黑 */
+    background: #fff;
+    padding: var(--sp-2);
+    border-radius: var(--radius-small);
 }
 
 .svg-preview-img {
     display: block;
     max-width: 100%;
+    /* 布局型 DoS 兜底：SVG 极端 viewBox/尺寸（如 0 0 1 100000000）会把页面
+       撑到数千万像素；预留尺寸超限时 JS 不写 width/height，由这里约束展示高度 */
+    max-height: 60vh;
     height: auto;
     margin: 0 auto;
     background: #fff;

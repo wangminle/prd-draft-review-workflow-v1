@@ -1,0 +1,132 @@
+<svg viewBox="0 0 900 600" width="900" height="600" xmlns="http://www.w3.org/2000/svg" font-family="-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Noto Sans CJK SC', sans-serif">
+  <defs>
+    <linearGradient id="chemcmp-light-bg-v2" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fafafa" stop-opacity="1"/>
+      <stop offset="100%" stop-color="#f0f2f5" stop-opacity="1"/>
+    </linearGradient>
+    <linearGradient id="chemcmp-light-mn-v2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#fff5f5"/>
+      <stop offset="100%" stop-color="#fdeaea"/>
+    </linearGradient>
+    <linearGradient id="chemcmp-light-tc-v2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5f5ff"/>
+      <stop offset="100%" stop-color="#eaeafd"/>
+    </linearGradient>
+    <linearGradient id="chemcmp-light-re-v2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f5fdf5"/>
+      <stop offset="100%" stop-color="#eafaea"/>
+    </linearGradient>
+    <marker id="chemcmp-light-arrow-v2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#98a2b3"/>
+    </marker>
+  </defs>
+
+  <!-- 背景：url() 后带回退纯色，defs 不可用时也不会变黑 -->
+  <rect width="900" height="600" rx="12" fill="url(#chemcmp-light-bg-v2) #f5f6f8"/>
+
+  <!-- 标题 -->
+  <text x="450" y="38" text-anchor="middle" font-size="22" font-weight="bold" fill="#1d2939">为什么同族高X酸钾氧化性差异巨大？</text>
+  <text x="450" y="60" text-anchor="middle" font-size="13" fill="#667085">核心：中心原子半径与d轨道能级 → 决定+7价态稳定性 → 决定得电子能力</text>
+
+  <!-- 卡片1：高锰酸钾 -->
+  <g>
+    <rect x="30" y="85" width="260" height="440" rx="12" fill="url(#chemcmp-light-mn-v2) #fceeee" stroke="#d9a0a0" stroke-width="1.5"/>
+    <text x="160" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#b35a5a">KMnO₄ 高锰酸钾</text>
+    <text x="160" y="140" text-anchor="middle" font-size="13" fill="#b35a5a">强氧化剂（适用最广）</text>
+
+    <!-- 原子结构示意 -->
+    <text x="160" y="156" text-anchor="middle" font-size="12" fill="#667085">离子半径 ~0.46 Å</text>
+    <circle cx="160" cy="207" r="45" fill="#ffffff" fill-opacity="0.95" stroke="#d9a0a0" stroke-width="1.5"/>
+    <text x="160" y="204" text-anchor="middle" font-size="16" font-weight="bold" fill="#b35a5a">Mn⁷⁺</text>
+    <text x="160" y="222" text-anchor="middle" font-size="12" fill="#b35a5a">3d⁰ 4s⁰</text>
+    <circle cx="160" cy="207" r="28" fill="none" stroke="#d9a0a0" stroke-width="1" stroke-dasharray="4,3"/>
+
+    <!-- 关键特性 -->
+    <text x="50" y="274" font-size="13" fill="#344054">◆ 半径小，电荷密度高</text>
+    <text x="50" y="294" font-size="13" fill="#344054">◆ d轨道空，易接受电子</text>
+    <text x="50" y="314" font-size="13" fill="#344054">◆ 酸性条件 E° = +1.51 V</text>
+    <text x="50" y="334" font-size="13" fill="#344054">◆ 还原产物 Mn²⁺ (3d⁵) 半满稳定</text>
+    <text x="50" y="354" font-size="13" fill="#344054">◆ 氧化速率快，颜色变化明显</text>
+
+    <!-- 重点标注 -->
+    <rect x="45" y="360" width="230" height="66" rx="8" fill="#fff8e1" stroke="#e8d5a0" stroke-width="1"/>
+    <text x="160" y="380" text-anchor="middle" font-size="13" font-weight="bold" fill="#b35a5a">为什么最强？</text>
+    <text x="160" y="400" text-anchor="middle" font-size="12" fill="#475467">锰的+7价既稳定又“不安分”：</text>
+    <text x="160" y="417" text-anchor="middle" font-size="12" fill="#475467">轨道能级适中，得失电子平衡</text>
+
+    <!-- 适用场景 -->
+    <text x="50" y="452" font-size="12" fill="#667085">▸ 实验室常用氧化剂</text>
+    <text x="50" y="472" font-size="12" fill="#667085">▸ 有机合成、消毒、分析化学</text>
+    <text x="50" y="492" font-size="12" fill="#667085">▸ 酸性滴定（KMnO₄法）</text>
+  </g>
+
+  <!-- 卡片2：高锝酸钾 -->
+  <g>
+    <rect x="320" y="85" width="260" height="440" rx="12" fill="url(#chemcmp-light-tc-v2) #efeffc" stroke="#a0a0d9" stroke-width="1.5"/>
+    <text x="450" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#5a5ab3">KTcO₄ 高锝酸钾</text>
+    <text x="450" y="140" text-anchor="middle" font-size="13" fill="#5a5ab3">存在但具放射性，极少应用</text>
+
+    <!-- 原子结构示意 -->
+    <text x="450" y="156" text-anchor="middle" font-size="12" fill="#667085">离子半径 ~0.56 Å</text>
+    <circle cx="450" cy="207" r="45" fill="#ffffff" fill-opacity="0.95" stroke="#a0a0d9" stroke-width="1.5"/>
+    <text x="450" y="204" text-anchor="middle" font-size="16" font-weight="bold" fill="#5a5ab3">Tc⁷⁺</text>
+    <text x="450" y="222" text-anchor="middle" font-size="12" fill="#5a5ab3">4d⁰ 5s⁰</text>
+    <circle cx="450" cy="207" r="32" fill="none" stroke="#a0a0d9" stroke-width="1" stroke-dasharray="4,3"/>
+
+    <!-- 关键特性 -->
+    <text x="340" y="274" font-size="13" fill="#344054">◆ 半径比Mn大，电荷密度降低</text>
+    <text x="340" y="294" font-size="13" fill="#344054">◆ 4d轨道能级较高</text>
+    <text x="340" y="314" font-size="13" fill="#344054">◆ 氧化性理论值低于Mn</text>
+    <text x="340" y="334" font-size="13" fill="#344054">◆ 还原产物Tc⁴⁺/TcO₂较稳定</text>
+    <text x="340" y="354" font-size="13" fill="#344054">◆ 但实际几乎不用于氧化反应</text>
+
+    <!-- 重点标注：区分 ⁹⁹Tc 与医用 ⁹⁹ᵐTc -->
+    <rect x="335" y="360" width="230" height="66" rx="8" fill="#eef5ff" stroke="#a0c0e0" stroke-width="1"/>
+    <text x="450" y="380" text-anchor="middle" font-size="13" font-weight="bold" fill="#5a5ab3">放射性限制实际应用</text>
+    <text x="450" y="400" text-anchor="middle" font-size="12" fill="#475467">⁹⁹Tc 半衰期约 2.14×10⁵ 年</text>
+    <text x="450" y="417" text-anchor="middle" font-size="12" fill="#475467">核医学主要用 ⁹⁹ᵐTc（约 6 h）</text>
+
+    <!-- 适用场景 -->
+    <text x="340" y="452" font-size="12" fill="#667085">▸ 核医学显像（⁹⁹ᵐTc 标记）</text>
+    <text x="340" y="472" font-size="12" fill="#667085">▸ 基础化学研究</text>
+    <text x="340" y="492" font-size="12" fill="#667085">▸ 实际氧化应用几乎为零</text>
+  </g>
+
+  <!-- 卡片3：高铼酸钾 -->
+  <g>
+    <rect x="610" y="85" width="260" height="440" rx="12" fill="url(#chemcmp-light-re-v2) #eefaec" stroke="#a0d9a0" stroke-width="1.5"/>
+    <text x="740" y="115" text-anchor="middle" font-size="18" font-weight="bold" fill="#5ab35a">KReO₄ 高铼酸钾</text>
+    <text x="740" y="140" text-anchor="middle" font-size="13" fill="#5ab35a">氧化性很弱，非强氧化剂</text>
+
+    <!-- 原子结构示意 -->
+    <text x="740" y="156" text-anchor="middle" font-size="12" fill="#667085">离子半径 ~0.67 Å</text>
+    <circle cx="740" cy="207" r="45" fill="#ffffff" fill-opacity="0.95" stroke="#a0d9a0" stroke-width="1.5"/>
+    <text x="740" y="204" text-anchor="middle" font-size="16" font-weight="bold" fill="#5ab35a">Re⁷⁺</text>
+    <text x="740" y="222" text-anchor="middle" font-size="12" fill="#5ab35a">5d⁰ 6s⁰</text>
+    <circle cx="740" cy="207" r="38" fill="none" stroke="#a0d9a0" stroke-width="1" stroke-dasharray="4,3"/>
+
+    <!-- 关键特性 -->
+    <text x="630" y="274" font-size="13" fill="#344054">◆ 半径最大，电荷密度最低</text>
+    <text x="630" y="294" font-size="13" fill="#344054">◆ 5d轨道能级更高，更稳定</text>
+    <text x="630" y="314" font-size="13" fill="#344054">◆ +7价是铼的稳定价态</text>
+    <text x="630" y="334" font-size="13" fill="#344054">◆ 还原需要很高能量，不易发生</text>
+    <text x="630" y="354" font-size="13" fill="#344054">◆ 氧化性极弱，几乎不显氧化性</text>
+
+    <!-- 重点标注：改用热力学/动力学稳定性表述 -->
+    <rect x="625" y="360" width="230" height="66" rx="8" fill="#f0fff0" stroke="#c0e0c0" stroke-width="1"/>
+    <text x="740" y="380" text-anchor="middle" font-size="13" font-weight="bold" fill="#5ab35a">为什么几乎不氧化？</text>
+    <text x="740" y="400" text-anchor="middle" font-size="12" fill="#475467">Re–O 键强，+7价热力学稳定</text>
+    <text x="740" y="417" text-anchor="middle" font-size="12" fill="#475467">还原活化能高，动力学惰性</text>
+
+    <!-- 适用场景 -->
+    <text x="630" y="452" font-size="12" fill="#667085">▸ 铼催化剂前驱体</text>
+    <text x="630" y="472" font-size="12" fill="#667085">▸ 分析化学中的沉淀剂</text>
+    <text x="630" y="492" font-size="12" fill="#667085">▸ 很少涉及氧化还原反应</text>
+  </g>
+
+  <!-- 底部趋势箭头（预留 30 单位底部安全边距） -->
+  <line x1="80" y1="545" x2="820" y2="545" stroke="#98a2b3" stroke-width="2" marker-end="url(#chemcmp-light-arrow-v2)"/>
+  <text x="450" y="570" text-anchor="middle" font-size="13" fill="#475467" font-weight="bold">
+    氧化性：KMnO₄ ≫ KTcO₄ ＞ KReO₄（实际KTcO₄因放射性不用，趋势为Mn > Tc > Re）
+  </text>
+</svg>

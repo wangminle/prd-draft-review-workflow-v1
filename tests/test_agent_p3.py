@@ -3,6 +3,7 @@
 使用 ASGI Transport 测试，无需启动服务器。
 """
 
+import contextlib
 import os
 import tempfile
 
@@ -15,6 +16,23 @@ from tests.conftest import init_test_db, make_test_app
 pytestmark = pytest.mark.asyncio(loop_scope="session")
 
 ADMIN_CREDS = {"username": "admin", "password": "admin@2026"}
+
+
+@contextlib.asynccontextmanager
+async def _override_db(client):
+    """从 dependency_overrides 取一个测试 DB session，并确保生成器被关闭。
+
+    PLN-001：`async for ... break` 不会在退出时 await aclose()，session 持有的
+    aiosqlite 连接一直 checked-out，engine.dispose() 无法回收，loop 关闭后
+    工作线程回写 Future 报 "Event loop is closed"。
+    """
+    from app.database import get_db as original_get_db
+    app = client._transport.app  # type: ignore
+    gen = app.dependency_overrides[original_get_db]()
+    try:
+        yield await gen.__anext__()
+    finally:
+        await gen.aclose()
 
 
 @pytest_asyncio.fixture
@@ -275,9 +293,7 @@ class TestApproval:
         profile_id = profile_resp.json()["id"]
 
         # 通过 dependency_overrides 获取测试数据库 session
-        from app.database import get_db as original_get_db
-        app = client._transport.app  # type: ignore
-        async for db in app.dependency_overrides[original_get_db]():
+        async with _override_db(client) as db:
             run = AgentRun(agent_id=profile_id, user_id=1, goal="test")
             db.add(run)
             await db.commit()
@@ -293,7 +309,6 @@ class TestApproval:
             )
             assert approval.approver_id == 1
             assert approval.status == "pending"
-            break
 
     async def test_list_pending_filters_by_approver(self, client):
         """P4.Pre.4: 待审批列表按 approver_id 过滤，不同审批人只看自己的"""
@@ -305,9 +320,7 @@ class TestApproval:
         profile_resp = await client.get("/api/agent/profile", headers=headers)
         profile_id = profile_resp.json()["id"]
 
-        from app.database import get_db as original_get_db
-        app = client._transport.app  # type: ignore
-        async for db in app.dependency_overrides[original_get_db]():
+        async with _override_db(client) as db:
             # 第二审批人必须真实存在（外键约束）
             approver2 = User(username="approver2", password_hash=hash_password("test123456"), role="user")
             db.add(approver2)
@@ -339,7 +352,6 @@ class TestApproval:
             pending_2 = await approval_repo.list_pending(approver_id=approver2.id)
             assert len(pending_2) == 1
             assert pending_2[0].approver_id == approver2.id
-            break
 
     async def test_api_approvals_returns_only_mine(self, client):
         """P4.Pre.4: GET /api/agent/approvals 只返回当前用户作为审批人的请求"""

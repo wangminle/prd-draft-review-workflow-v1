@@ -84,7 +84,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.14"}
+# 预期返回: {"status":"ok","version":"0.3.15"}
 ```
 
 ### 常用启停命令
@@ -190,7 +190,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.14"}
+# Expected: {"status":"ok","version":"0.3.15"}
 ```
 
 ### Common start / stop commands

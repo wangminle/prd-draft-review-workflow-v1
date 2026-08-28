@@ -23,7 +23,8 @@ def test_index_html_has_no_root_absolute_static_asset_refs():
 
 def test_index_html_uses_relative_static_asset_refs():
     assert 'href="./favicon.svg"' in HTML
-    assert 'href="./css/main.css"' in HTML
+    # main.css 带 cache-busting 版本参数（BUG-175），相对引用语义不变
+    assert 'href="./css/main.css?v=' in HTML
     for name in (
         "purify.min.js",
         "marked.min.js",
