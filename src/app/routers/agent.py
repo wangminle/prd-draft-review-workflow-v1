@@ -17,6 +17,7 @@ from app.repositories.agent_repository import (
     AgentAuthorizationRepository,
     AgentProfileRepository,
     AgentRunRepository,
+    DuplicateAgentAuthorizationError,
 )
 from app.utils import now_cn
 
@@ -335,14 +336,17 @@ async def create_authorization(
         profile = await profile_repo.create("user", user.id)
 
     auth_repo = AgentAuthorizationRepository(db)
-    auth = await auth_repo.create(
-        agent_id=profile.id,
-        granted_by=user.id,
-        scope_type=req.scope_type,
-        scope_id=req.scope_id,
-        permissions_json=json.dumps(permissions, ensure_ascii=False),
-        expires_at=_normalize_authorization_expiry(req.expires_at),
-    )
+    try:
+        auth = await auth_repo.create(
+            agent_id=profile.id,
+            granted_by=user.id,
+            scope_type=req.scope_type,
+            scope_id=req.scope_id,
+            permissions_json=json.dumps(permissions, ensure_ascii=False),
+            expires_at=_normalize_authorization_expiry(req.expires_at),
+        )
+    except DuplicateAgentAuthorizationError:
+        raise HTTPException(409, "Authorization already exists")
     names = await _workspace_names_by_ids(db, [auth], user.id)
     return _serialize_authorization(auth, names)
 
@@ -445,10 +449,6 @@ async def execute_agent_run(
     run = await run_repo.get_by_id(run_id)
     if not run:
         raise HTTPException(404, "Agent run not found")
-    if run.user_id != user.id:
-        raise HTTPException(403, "Not your agent run")
-    if run.status not in ("planning", "failed"):
-        raise HTTPException(400, f"Run status is '{run.status}', cannot execute")
 
     profile_repo = AgentProfileRepository(db)
     profile = await profile_repo.get_by_id(run.agent_id)
@@ -456,6 +456,7 @@ async def execute_agent_run(
         raise HTTPException(404, "Agent profile not found")
 
     svc = AgentApplicationService(db)
+    run = await svc.prepare_and_claim_run(run, profile, user)
     result = await svc.execute_via_pi_sync(run, profile, db)
     return result
 
@@ -474,23 +475,14 @@ async def stream_agent_run(
     run = await run_repo.get_by_id(run_id)
     if not run:
         raise HTTPException(404, "Agent run not found")
-    if run.user_id != user.id:
-        raise HTTPException(403, "Not your agent run")
-    if run.status not in ("planning", "failed"):
-        raise HTTPException(400, f"Run status is '{run.status}', cannot execute")
 
     profile_repo = AgentProfileRepository(db)
     profile = await profile_repo.get_by_id(run.agent_id)
     if not profile:
         raise HTTPException(404, "Agent profile not found")
 
-    from app.repositories.workspace_repository import WorkspaceRepository
-    from app.services.budget_guard import ensure_workspace_llm_allowed
-    ws_repo = WorkspaceRepository(db)
-    default_ws = await ws_repo.get_default()
-    await ensure_workspace_llm_allowed(db, default_ws.id if default_ws else None)
-
     svc = AgentApplicationService(db)
+    run = await svc.prepare_and_claim_run(run, profile, user)
 
     async def event_generator():
         async for event in svc.execute_via_pi(run, profile, db):
@@ -626,10 +618,12 @@ async def agent_rag_search(
 
     if scope == "workspace":
         if workspace_id is None:
-            from app.repositories.workspace_repository import WorkspaceRepository
-            ws_repo = WorkspaceRepository(db)
-            default_ws = await ws_repo.get_default()
-            workspace_id = default_ws.id if default_ws else None
+            if len(authorized_workspace_ids) == 1:
+                workspace_id = next(iter(authorized_workspace_ids))
+            elif len(authorized_workspace_ids) == 0:
+                raise HTTPException(403, "workspace 检索需要有效的 workspace_id 且须在授权范围内")
+            else:
+                raise HTTPException(400, "授权了多个 workspace，请显式传入 workspace_id")
         if workspace_id is None:
             raise HTTPException(400, "workspace 检索需要有效的 workspace_id")
         if workspace_id not in authorized_workspace_ids:

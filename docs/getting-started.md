@@ -55,7 +55,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 # JWT_SECRET 可留空，首次 ./start.sh 会写入项目根目录 .env
 ```
 
-可选:`ADMIN_INITIAL_PASSWORD` 覆盖首个 admin 账号的初始密码;不设则使用代码内置默认口令 `admin@2026`(启动日志会打印 `[SECURITY]` 警告,要求尽快修改)。
+可选:`ADMIN_INITIAL_PASSWORD` 覆盖首个 admin 账号的初始密码（内置口令默认拒绝）;不设则**随机生成**并写入一次性保密文件 `runtime/secrets/admin_initial_password.txt`（0600 权限,改密后自动删除,不进任何日志,请立即保存并改密）。若存量 `admin` 仍使用历史内置口令 `admin@2026`/`admin123`，默认**拒绝启动**；应急排障或内部部署快速体验可设 `ALLOW_DEFAULT_ADMIN_PASSWORD=1`——该开关同时允许 `ADMIN_INITIAL_PASSWORD=admin@2026` 首次建号（每次启动记录 `[SECURITY]` 警告,对外部署前须移除并改密）。
 
 ### 4. 启动服务
 
@@ -69,7 +69,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 
 ### 5. 首次登录
 
-服务启动时会自动确保 `admin` 账号存在。默认口令 `admin@2026`;若设置了 `ADMIN_INITIAL_PASSWORD` 则用该值登录。**强烈建议登录后立即修改密码**(默认口令会在日志持续输出 `[SECURITY]` 警告)。
+服务启动时会自动确保 `admin` 账号存在。优先使用 `ADMIN_INITIAL_PASSWORD`；未设置时随机生成初始密码并写入一次性保密文件 `runtime/secrets/admin_initial_password.txt`（0600,改密后自动删除）。**登录后立即修改密码**。存量默认口令会阻断启动（可用 `ALLOW_DEFAULT_ADMIN_PASSWORD=1` 临时放行）。
 
 ### 6. 验证跑通
 
@@ -84,7 +84,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.16"}
+# 预期返回: {"status":"ok","version":"0.3.17"}
 ```
 
 ### 常用启停命令
@@ -161,7 +161,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 # JWT_SECRET may be empty; first ./start.sh writes it to the project-root .env
 ```
 
-Optional: `ADMIN_INITIAL_PASSWORD` overrides the initial password of the first admin account; if unset, the built-in default `admin@2026` is used (startup logs print a `[SECURITY]` warning urging an immediate change).
+Optional: `ADMIN_INITIAL_PASSWORD` overrides the initial password of the first admin account (built-in passwords are rejected by default); if unset, a **random** password is generated and written to the one-time secret file `runtime/secrets/admin_initial_password.txt` (0600, auto-deleted after a password change, never logged; save it and change it immediately). Existing `admin` accounts still using the historical built-in password `admin@2026`/`admin123` **fail to start** by default; set `ALLOW_DEFAULT_ADMIN_PASSWORD=1` as an emergency escape hatch or for internal-deployment convenience — it also allows `ADMIN_INITIAL_PASSWORD=admin@2026` on first creation (a `[SECURITY]` warning is logged on every boot; remove the switch and change the password before external deployment).
 
 ### 4. Start the service
 
@@ -175,7 +175,7 @@ Once started, open: **http://localhost:17957**
 
 ### 5. First login
 
-On startup the service ensures an `admin` account exists. The default password is `admin@2026`; use the value of `ADMIN_INITIAL_PASSWORD` if you set it. **It is strongly recommended to change the password immediately after logging in** (the default password triggers a persistent `[SECURITY]` warning in logs).
+On startup the service ensures an `admin` account exists. It prefers `ADMIN_INITIAL_PASSWORD`; if unset, a random initial password is generated and written to the one-time secret file `runtime/secrets/admin_initial_password.txt` (0600, auto-deleted after a password change). **Change the password immediately after logging in**. A leftover default password blocks startup (set `ALLOW_DEFAULT_ADMIN_PASSWORD=1` to temporarily allow it).
 
 ### 6. Verify it works
 
@@ -190,7 +190,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.16"}
+# Expected: {"status":"ok","version":"0.3.17"}
 ```
 
 ### Common start / stop commands

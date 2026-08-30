@@ -27,6 +27,17 @@ const Workspace = {
         this._canManage = false;
     },
 
+    _esc(str) {
+        if (str == null) return '';
+        const d = document.createElement('div');
+        d.textContent = String(str);
+        return d.innerHTML;
+    },
+    _escAttr(str) {
+        if (str == null) return '';
+        return String(str).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    },
+
     async load() {
         await this._loadMembers();
         this._loadSources();
@@ -180,8 +191,8 @@ const Workspace = {
                     <path d="M22 32h20M32 22v20" stroke="#5A9DD5" stroke-width="3" stroke-linecap="round"/>
                 </svg>
             </div>
-            <h2 class="ws-empty-title">${DOMPurify.sanitize(title)}</h2>
-            <p class="ws-empty-desc">${DOMPurify.sanitize(desc)}</p>
+            <h2 class="ws-empty-title">${this._esc(title)}</h2>
+            <p class="ws-empty-desc">${this._esc(desc)}</p>
         </div>`;
     },
 
@@ -192,19 +203,19 @@ const Workspace = {
                 : s.status === 'failed' ? ' <span class="ws-status-chip ws-status-failed">失败</span>'
                 : s.status === 'archived' ? ' <span class="ws-status-chip ws-status-archived">已归档</span>'
                 : '';
-            const tags = (s.tags || []).map(t => `<span class="ws-tag-chip">${DOMPurify.sanitize(t)}</span>`).join('');
+            const tags = (s.tags || []).map(t => `<span class="ws-tag-chip">${this._esc(t)}</span>`).join('');
             const canManage = this._canManage;
             const canDelete = this._sourceScope === 'personal' || canManage;
             return `<tr data-source-id="${s.id}">
                 <td>${typeIcons[s.source_type] || '📄'}</td>
-                <td class="ws-source-title-cell" data-action="view-source" data-source-id="${s.id}" style="cursor:pointer;color:var(--color-brand)">${DOMPurify.sanitize(s.title)}</td>
-                <td>${s.filename ? DOMPurify.sanitize(s.filename) : '-'}</td>
+                <td class="ws-source-title-cell" data-action="view-source" data-source-id="${s.id}" style="cursor:pointer;color:var(--color-brand)">${this._esc(s.title)}</td>
+                <td>${s.filename ? this._esc(s.filename) : '-'}</td>
                 <td>v${s.version}</td>
                 <td>${tags}</td>
                 <td>${statusHtml}</td>
                 <td>
                     <button class="btn btn-ghost btn-sm ws-action-btn" data-action="view-source" data-source-id="${s.id}" title="查看详情">详情</button>
-                    ${canDelete && s.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${s.id}" data-source-title="${DOMPurify.sanitize(s.title)}" title="删除资料">删除</button>` : ''}
+                    ${canDelete && s.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${s.id}" data-source-title="${this._escAttr(s.title)}" title="删除资料">删除</button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -246,14 +257,14 @@ const Workspace = {
             let actionCell = '';
             if (this._canManage && !isSelf) {
                 if (m.status === 'active') {
-                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="deactivate-member" data-user-id="${m.user_id}" data-username="${DOMPurify.sanitize(m.username)}">停用</button>`;
+                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="deactivate-member" data-user-id="${m.user_id}" data-username="${this._escAttr(m.username)}">停用</button>`;
                 } else {
-                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="reactivate-member" data-user-id="${m.user_id}" data-username="${DOMPurify.sanitize(m.username)}">恢复</button>`;
+                    actionCell = `<button class="btn btn-ghost btn-sm ws-action-btn" data-action="reactivate-member" data-user-id="${m.user_id}" data-username="${this._escAttr(m.username)}">恢复</button>`;
                 }
             }
 
             return `<tr>
-                <td>${DOMPurify.sanitize(m.username || '')}</td>
+                <td>${this._esc(m.username || '')}</td>
                 <td>${roleCell}</td>
                 <td><span class="ws-status-chip ${statusClass}">${statusLabel}</span></td>
                 <td>${actionCell}</td>
@@ -359,7 +370,7 @@ const Workspace = {
             content.innerHTML = `
                 <div style="padding:24px">
                     <h3 style="margin:0 0 12px;font-size:var(--fs-16);font-weight:var(--fw-semibold)">确认${action}</h3>
-                    <p style="margin:0 0 20px;color:var(--color-text-muted)">确定要${action}用户「${DOMPurify.sanitize(username)}」吗？${action === '停用' ? '停用后该用户将无法访问团队空间和创建项目。' : '恢复后该用户将重新获得团队空间访问权限。'}</p>
+                    <p style="margin:0 0 20px;color:var(--color-text-muted)">确定要${this._esc(action)}用户「${this._esc(username)}」吗？${action === '停用' ? '停用后该用户将无法访问团队空间和创建项目。' : '恢复后该用户将重新获得团队空间访问权限。'}</p>
                     <div style="display:flex;gap:8px;justify-content:flex-end">
                         <button id="ws-member-cancel" class="btn btn-ghost">取消</button>
                         <button id="ws-member-confirm" class="btn btn-primary">${action}</button>
@@ -462,7 +473,7 @@ const Workspace = {
             content.innerHTML = `
                 <div style="padding:24px">
                     <h3 style="margin:0 0 12px;font-size:var(--fs-16);font-weight:var(--fw-semibold)">确认删除</h3>
-                    <p style="margin:0 0 20px;color:var(--color-text-muted)">确定要删除资料「${DOMPurify.sanitize(title)}」吗？删除后历史引用不受影响，但列表中不再显示。</p>
+                    <p style="margin:0 0 20px;color:var(--color-text-muted)">确定要删除资料「${this._esc(title)}」吗？删除后历史引用不受影响，但列表中不再显示。</p>
                     <div style="display:flex;gap:8px;justify-content:flex-end">
                         <button id="ws-delete-cancel" class="btn btn-ghost">取消</button>
                         <button id="ws-delete-confirm" class="btn btn-primary" style="background:var(--red-6)">删除</button>
@@ -505,7 +516,7 @@ const Workspace = {
             return;
         }
 
-        const tags = (source.tags || []).join(', ') || '无';
+        const tags = (source.tags || []).map(t => this._esc(t)).join(', ') || '无';
         const typeLabels = { upload: '文件上传', lark_url: '飞书链接', api: 'API 导入' };
         const canManage = this._canManage;
 
@@ -517,24 +528,24 @@ const Workspace = {
         let textHtml = '';
         if (source.extracted_text) {
             const preview = source.extracted_text.length > 500 ? source.extracted_text.slice(0, 500) + '…' : source.extracted_text;
-            textHtml = `<div style="margin-top:16px"><h4 style="font-size:var(--fs-14);font-weight:var(--fw-medium);margin-bottom:8px">正文预览</h4><pre style="background:var(--gray-1);padding:12px;border-radius:var(--radius-sm);font-size:var(--fs-13);max-height:200px;overflow-y:auto;white-space:pre-wrap">${DOMPurify.sanitize(preview)}</pre></div>`;
+            textHtml = `<div style="margin-top:16px"><h4 style="font-size:var(--fs-14);font-weight:var(--fw-medium);margin-bottom:8px">正文预览</h4><pre style="background:var(--gray-1);padding:12px;border-radius:var(--radius-sm);font-size:var(--fs-13);max-height:200px;overflow-y:auto;white-space:pre-wrap">${this._esc(preview)}</pre></div>`;
         }
 
         detailEl.innerHTML = `
             <div class="panel-head" style="flex-wrap:wrap;gap:8px">
                 <div>
-                    <h3 class="panel-title">${DOMPurify.sanitize(source.title)}</h3>
+                    <h3 class="panel-title">${this._esc(source.title)}</h3>
                     <p style="margin:4px 0 0;font-size:var(--fs-12);color:var(--color-text-muted)">v${source.version} · ${typeLabels[source.source_type] || source.source_type} · ${source.created_at ? new Date(source.created_at).toLocaleDateString('zh-CN') : ''}</p>
                 </div>
                 <div style="display:flex;gap:8px">
                     ${source.file_id ? `<button class="btn btn-outline btn-sm" data-action="download-source" data-source-id="${source.id}" data-source-scope="${this._sourceScope}">下载原文件</button>` : ''}
-                    ${(this._sourceScope === 'personal' || canManage) && source.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${source.id}" data-source-title="${DOMPurify.sanitize(source.title)}">删除</button>` : ''}
+                    ${(this._sourceScope === 'personal' || canManage) && source.status === 'active' ? `<button class="btn btn-ghost btn-sm ws-action-btn ws-delete-btn" data-action="delete-source" data-source-id="${source.id}" data-source-title="${this._escAttr(source.title)}">删除</button>` : ''}
                     <button class="btn btn-ghost btn-sm" id="ws-detail-close">返回列表</button>
                 </div>
             </div>
             <div style="margin-top:12px">
                 <div style="display:grid;grid-template-columns:120px 1fr;gap:8px 16px;font-size:var(--fs-14)">
-                    <span style="color:var(--color-text-muted)">文件名</span><span>${source.filename ? DOMPurify.sanitize(source.filename) : '-'}</span>
+                    <span style="color:var(--color-text-muted)">文件名</span><span>${source.filename ? this._esc(source.filename) : '-'}</span>
                     <span style="color:var(--color-text-muted)">内容哈希</span><span style="font-family:monospace;font-size:var(--fs-12)">${source.content_hash || '-'}</span>
                     <span style="color:var(--color-text-muted)">标签</span><span>${tags}</span>
                     <span style="color:var(--color-text-muted)">状态</span><span>${source.status}</span>

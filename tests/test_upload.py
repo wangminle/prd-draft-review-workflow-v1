@@ -4,6 +4,7 @@ import json
 import os
 import sys
 import tempfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
@@ -128,10 +129,10 @@ async def test_submit_url_empty(auth_client):
 async def test_submit_url_rejects_loopback_targets_before_request(auth_client, monkeypatch):
     """回环地址应在发起请求前被 SSRF 防护拒绝。"""
 
-    async def fail_get(self, *args, **kwargs):
+    async def fail_stream(self, *args, **kwargs):
         raise AssertionError("network request should not be attempted for loopback targets")
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", fail_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fail_stream)
 
     resp = await auth_client.post("/api/upload/url", json={"url": "http://127.0.0.1:8000/admin"})
 
@@ -143,10 +144,10 @@ async def test_submit_url_rejects_loopback_targets_before_request(auth_client, m
 async def test_submit_url_rejects_private_network_targets_before_request(auth_client, monkeypatch):
     """私网地址应在发起请求前被 SSRF 防护拒绝。"""
 
-    async def fail_get(self, *args, **kwargs):
+    async def fail_stream(self, *args, **kwargs):
         raise AssertionError("network request should not be attempted for private targets")
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", fail_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fail_stream)
 
     resp = await auth_client.post("/api/upload/url", json={"url": "http://10.0.0.8/spec"})
 
@@ -160,14 +161,20 @@ async def test_submit_url_follows_relative_redirect_locations(auth_client, monke
 
     called_urls = []
 
-    async def fake_get(self, url, *args, **kwargs):
+    @asynccontextmanager
+    async def fake_stream(self, method, url, *args, **kwargs):
         called_urls.append(url)
-        request = httpx.Request("GET", url)
+        request = httpx.Request(method, url)
         if len(called_urls) == 1:
-            return httpx.Response(302, headers={"location": "/docs"}, request=request)
-        return httpx.Response(200, text="<html><body>redirect ok</body></html>", request=request)
+            yield httpx.Response(302, headers={"location": "/docs"}, request=request)
+        else:
+            yield httpx.Response(
+                200,
+                text="<html><body>redirect ok</body></html>",
+                request=request,
+            )
 
-    monkeypatch.setattr(httpx.AsyncClient, "get", fake_get)
+    monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
 
     resp = await auth_client.post("/api/upload/url", json={"url": "https://example.com/start"})
 

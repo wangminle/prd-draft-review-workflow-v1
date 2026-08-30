@@ -63,8 +63,8 @@ def test_no_cache_middleware_strips_root_path():
 
 
 def test_index_html_scripts_cache_busted_for_prefix_fix():
-    assert "?v=20260828-4" in INDEX_HTML
-    assert "?v=20260828-3" not in INDEX_HTML
+    assert "?v=20260830-3" in INDEX_HTML
+    assert "?v=20260830-2" not in INDEX_HTML
     assert "?v=20260828-1" not in INDEX_HTML
     assert "?v=20260827-1" not in INDEX_HTML
     assert "?v=20260731-1" not in INDEX_HTML

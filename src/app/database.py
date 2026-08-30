@@ -3,6 +3,7 @@
 import json
 import logging
 import os
+import secrets
 from pathlib import Path
 
 from sqlalchemy import event, select, text
@@ -23,9 +24,10 @@ from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
 
-# 首次启动创建的默认管理员口令（部署后应立即修改）
+# 历史内置默认口令（仅用于识别存量弱口令并阻断启动，新建账号不再使用）
 DEFAULT_ADMIN_PASSWORD = "admin@2026"
 LEGACY_WEAK_ADMIN_PASSWORD = "admin123"
+_WELL_KNOWN_ADMIN_PASSWORDS = frozenset({DEFAULT_ADMIN_PASSWORD, LEGACY_WEAK_ADMIN_PASSWORD})
 
 from app.models.review import (  # noqa: F401 — ensure review tables are registered
     ReviewProject,
@@ -94,6 +96,7 @@ async def init_db():
         await _migrate_source_owner_type_visibility(conn)
         await _migrate_agent_profile_default_scope(conn)
         await _migrate_comment_resolve_fields(conn)
+        await _migrate_agent_authorization_unique(conn)
 
     # FTS5 虚拟表
     await _ensure_fts5()
@@ -340,8 +343,56 @@ async def _ensure_fts5():
         """))
 
 
+def _allow_default_admin_password() -> bool:
+    return os.environ.get("ALLOW_DEFAULT_ADMIN_PASSWORD", "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _admin_initial_secret_path() -> Path:
+    """管理员初始密码一次性文件路径（BUG-194）。"""
+    from app.runtime_paths import runtime_path
+
+    return runtime_path("secrets", "admin_initial_password.txt")
+
+
+def _write_admin_initial_secret(password: str) -> Path:
+    """把随机生成的管理员初始密码写入严格权限的一次性文件（目录 0700 / 文件 0600）。
+
+    BUG-194：初始密码是长期有效的管理员凭据，不得写入普通日志
+    （runtime/logs/app.log 权限 0644，本机任意可读账号即可获得）。
+    写入失败时抛出异常阻断启动——密码既不能入日志也不能无声丢失，
+    否则管理员将被永久锁定且无凭据可查。
+    """
+    path = _admin_initial_secret_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(path.parent, 0o700)
+    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(password)
+    except Exception:
+        os.unlink(path)
+        raise
+    os.chmod(path, 0o600)
+    return path
+
+
+def consume_admin_initial_secret() -> bool:
+    """管理员改密成功后删除初始密码一次性文件（BUG-194）。"""
+    path = _admin_initial_secret_path()
+    try:
+        if path.exists():
+            path.unlink()
+            logger.info("[SECURITY] 管理员初始密码一次性文件已删除: %s", path)
+            return True
+    except OSError:
+        logger.warning("[SECURITY] 管理员初始密码文件删除失败，请手工移除: %s", path)
+    return False
+
+
 async def _ensure_default_admin():
-    """确保默认管理员用户存在；若仍使用预设/历史弱口令则打印警告"""
+    """确保默认管理员用户存在；内置口令默认禁用（ALLOW_DEFAULT_ADMIN_PASSWORD=1 可显式放行）。"""
     from app.models.user import User
     from app.services.auth import hash_password, verify_password
 
@@ -350,7 +401,20 @@ async def _ensure_default_admin():
         result = await session.execute(select(User).where(User.username == "admin"))
         admin = result.scalar_one_or_none()
         if admin is None:
-            initial = os.environ.get("ADMIN_INITIAL_PASSWORD") or DEFAULT_ADMIN_PASSWORD
+            initial = os.environ.get("ADMIN_INITIAL_PASSWORD")
+            generated = False
+            if initial:
+                if (
+                    initial in _WELL_KNOWN_ADMIN_PASSWORDS
+                    and not _allow_default_admin_password()
+                ):
+                    raise RuntimeError(
+                        "ADMIN_INITIAL_PASSWORD 不得使用内置默认/弱口令"
+                        "（内部部署可设 ALLOW_DEFAULT_ADMIN_PASSWORD=1 显式放行）"
+                    )
+            else:
+                initial = secrets.token_urlsafe(24)
+                generated = True
             admin = User(
                 username="admin",
                 password_hash=hash_password(initial),
@@ -358,15 +422,43 @@ async def _ensure_default_admin():
             )
             session.add(admin)
             await session.commit()
-            if os.environ.get("ADMIN_INITIAL_PASSWORD"):
-                logger.info("[INIT] 管理员账号已创建：用户名 admin（使用 ADMIN_INITIAL_PASSWORD）")
+            if generated:
+                # BUG-194：初始密码只写入 0600 一次性文件，不进普通日志
+                try:
+                    secret_path = _write_admin_initial_secret(initial)
+                except OSError:
+                    raise RuntimeError(
+                        "管理员初始密码已随机生成但无法写入保密文件"
+                        "（且不允许记入普通日志）。请检查 runtime/ 目录权限，"
+                        "或改用 ADMIN_INITIAL_PASSWORD 环境变量指定初始密码后重启。"
+                    )
+                logger.warning(
+                    "[INIT] 管理员账号已创建：用户名 admin，初始密码已随机生成并写入 %s"
+                    "（权限 0600，改密后自动删除）。请立即读取并修改密码；"
+                    "该密码不会出现在任何日志中",
+                    secret_path,
+                )
             else:
-                logger.info("[INIT] 管理员账号已创建：用户名 admin，密码为预设默认口令")
-                logger.warning("[SECURITY] 请尽快修改默认管理员密码，或设置 ADMIN_INITIAL_PASSWORD 后重建")
-        elif verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash):
-            logger.warning("[SECURITY] 检测到默认预设口令 admin，强烈建议立即修改密码")
-        elif verify_password(LEGACY_WEAK_ADMIN_PASSWORD, admin.password_hash):
-            logger.warning("[SECURITY] 检测到默认弱口令 admin/admin123，强烈建议立即修改密码")
+                if initial == DEFAULT_ADMIN_PASSWORD:
+                    logger.warning(
+                        "[SECURITY] 内部部署放行：admin 初始密码使用内置默认口令，"
+                        "对外/生产部署前必须改密"
+                    )
+                logger.info("[INIT] 管理员账号已创建：用户名 admin（使用 ADMIN_INITIAL_PASSWORD）")
+        elif (
+            verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash)
+            or verify_password(LEGACY_WEAK_ADMIN_PASSWORD, admin.password_hash)
+        ):
+            if _allow_default_admin_password():
+                if verify_password(DEFAULT_ADMIN_PASSWORD, admin.password_hash):
+                    logger.warning("[SECURITY] 检测到默认预设口令 admin，强烈建议立即修改密码")
+                else:
+                    logger.warning("[SECURITY] 检测到默认弱口令 admin/admin123，强烈建议立即修改密码")
+            else:
+                raise RuntimeError(
+                    "检测到管理员仍使用内置默认口令。请立即修改密码，"
+                    "或临时设置 ALLOW_DEFAULT_ADMIN_PASSWORD=1 后启动并改密。"
+                )
 
 
 async def _ensure_builtin_prompts():
@@ -894,3 +986,74 @@ async def _migrate_comment_resolve_fields(conn):
         if col_name not in existing_cols:
             await conn.execute(text(f"ALTER TABLE comments ADD COLUMN {col_name} {col_type}"))
             logger.info(f"[MIGRATE] comments 新增列: {col_name}")
+
+
+async def _migrate_agent_authorization_unique(conn):
+    """为 agent_authorizations 补唯一索引；SQLite 对 NULL scope_id 用 IFNULL 防重。
+
+    BUG-193：去重保留策略不能用 MIN(id)（最早记录）——旧记录可能已过期而新
+    记录仍有效（会误留过期授权），或旧记录权限更宽而新记录已收窄（会误留过
+    宽权限）。改为按组保留「最新有效」记录：组内存在未过期记录时保留其中
+    id 最大者（最新授权为准）；组内全部过期时保留 id 最大者（已过期不授予
+    任何访问，仅作历史记录）。
+    """
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_authorizations'"
+    ))
+    if not result.fetchone():
+        return
+
+    col_result = await conn.execute(text("PRAGMA table_info(agent_authorizations)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+
+    if "expires_at" in existing_cols:
+        await conn.execute(text("""
+            DELETE FROM agent_authorizations
+            WHERE id NOT IN (
+                SELECT keep_id FROM (
+                    SELECT CASE
+                        WHEN EXISTS (
+                            SELECT 1 FROM agent_authorizations v
+                            WHERE v.agent_id = g.agent_id
+                              AND v.scope_type = g.scope_type
+                              AND IFNULL(v.scope_id, 0) = g.sid
+                              AND (v.expires_at IS NULL OR v.expires_at > :now)
+                        )
+                        THEN (
+                            SELECT v.id FROM agent_authorizations v
+                            WHERE v.agent_id = g.agent_id
+                              AND v.scope_type = g.scope_type
+                              AND IFNULL(v.scope_id, 0) = g.sid
+                              AND (v.expires_at IS NULL OR v.expires_at > :now)
+                            ORDER BY v.id DESC LIMIT 1
+                        )
+                        ELSE (
+                            SELECT MAX(v.id) FROM agent_authorizations v
+                            WHERE v.agent_id = g.agent_id
+                              AND v.scope_type = g.scope_type
+                              AND IFNULL(v.scope_id, 0) = g.sid
+                        )
+                    END AS keep_id
+                    FROM (
+                        SELECT DISTINCT agent_id, scope_type, IFNULL(scope_id, 0) AS sid
+                        FROM agent_authorizations
+                    ) g
+                )
+            )
+        """), {"now": now_cn()})
+    else:
+        # 极旧库无 expires_at 列：无过期概念，退化为保留最新记录（MAX(id)）
+        await conn.execute(text("""
+            DELETE FROM agent_authorizations
+            WHERE id NOT IN (
+                SELECT max_id FROM (
+                    SELECT MAX(id) AS max_id FROM agent_authorizations
+                    GROUP BY agent_id, scope_type, IFNULL(scope_id, 0)
+                )
+            )
+        """))
+
+    await conn.execute(text("""
+        CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_auth_scope
+        ON agent_authorizations (agent_id, scope_type, IFNULL(scope_id, 0))
+    """))

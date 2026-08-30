@@ -312,7 +312,9 @@ def test_login_page_contains_deployment_notice_banner():
     assert 'auth-login-notice' in inner_block, "notice should be inside auth-card-inner (shared by both states)"
     assert '部署提示' in html
     assert '首次启动时系统自动创建管理员账号 admin' in html
-    assert 'admin@2026' in html
+    assert 'ADMIN_INITIAL_PASSWORD' in html
+    assert '随机初始密码' in html
+    assert 'admin@2026' not in html
     assert '.env' in html
     assert '.auth-login-notice {' in css
     assert 'position: absolute;' in css

@@ -42,7 +42,8 @@
 | `EMBEDDING_MODEL` | 否 | — | 知识库向量模型,默认 `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | 否 | — | 向量维度,默认 `1536` |
 | `JWT_SECRET` | 否（可留空） | 🔐 [敏感] | 可留空：`./start.sh` 首次生成 `token_hex(32)`（64 个十六进制字符）并写入根目录 `.env`。生产也可预填至少 32 字符随机串。 |
-| `ADMIN_INITIAL_PASSWORD` | 否 | 🔐 [敏感] | 覆盖首个 admin 账号初始密码;不填则用内置预设并告警 |
+| `ADMIN_INITIAL_PASSWORD` | 否 | 🔐 [敏感] | 覆盖首个 admin 账号初始密码（内置口令默认拒绝,见下方开关）;不填则随机生成并写入一次性保密文件 `runtime/secrets/admin_initial_password.txt`（0600,改密后自动删除） |
+| `ALLOW_DEFAULT_ADMIN_PASSWORD` | 否 | — | 应急/内部部署：放行存量 admin 历史内置口令启动,并豁免 `ADMIN_INITIAL_PASSWORD` 内置口令黑名单（如 `admin@2026` 首次建号）;每次启动记录 `[SECURITY]` 警告（`1`/`true`/`yes`） |
 | `SERVER_PORT` | 否 | — | 服务端口,默认 `17957` |
 | `SERVER_HOST` | 否 | — | 监听地址,默认 `127.0.0.1`(仅回环,经反代对外);直连部署设 `0.0.0.0` |
 | `ROOT_PATH` | 否 | — | 子路径反代部署前缀,如 `/prd-review`;根路径部署留空 |
@@ -251,8 +252,12 @@ SERVER_HOST=127.0.0.1      # 经反向代理对外暴露(推荐);直连改为 0.
 SERVER_PORT=17957
 ROOT_PATH=                 # 根路径部署留空;子路径如 /prd-review
 
-# 4) 可选:覆盖首个 admin 初始密码
+# 4) 可选:覆盖首个 admin 初始密码（不设则随机生成并写入
+#    runtime/secrets/ 一次性保密文件,0600,改密后自动删除）
 # ADMIN_INITIAL_PASSWORD=<强密码>
+# 应急/内部部署:放行存量内置口令,并允许 ADMIN_INITIAL_PASSWORD=admin@2026 首次建号
+# （每次启动记录 [SECURITY] 警告;生产勿开启）
+# ALLOW_DEFAULT_ADMIN_PASSWORD=1
 ```
 
 > 生产环境建议同时在 `src/config.yaml` 中将 `auth.allow_public_registration` 改为 `false`。
@@ -289,7 +294,8 @@ Copy `.env.example` to `.env` and fill in real values. At least one `*`-marked L
 | `EMBEDDING_MODEL` | No | — | Knowledge-base embedding model, default `text-embedding-3-small` |
 | `EMBEDDING_DIMENSIONS` | No | — | Vector dimensions, default `1536` |
 | `JWT_SECRET` | No (may be empty) | 🔐 [Sensitive] | May be empty: `./start.sh` generates `token_hex(32)` (64 hex characters) on first start and writes it to the project-root `.env`. You may also pre-set a random string of at least 32 characters. |
-| `ADMIN_INITIAL_PASSWORD` | No | 🔐 [Sensitive] | Override the first admin account's initial password; uses a built-in preset (with warning) if unset |
+| `ADMIN_INITIAL_PASSWORD` | No | 🔐 [Sensitive] | Override the first admin account's initial password (built-in passwords rejected by default, see the switch below); if unset, a random password is generated and written to the one-time secret file `runtime/secrets/admin_initial_password.txt` (0600, auto-deleted after a password change) |
+| `ALLOW_DEFAULT_ADMIN_PASSWORD` | No | — | Emergency/internal use: allows an existing admin with a historical built-in password to start, and exempts the built-in-password blacklist for `ADMIN_INITIAL_PASSWORD` (e.g., `admin@2026` on first creation); logs a `[SECURITY]` warning on every boot (`1`/`true`/`yes`) |
 | `SERVER_PORT` | No | — | Service port, default `17957` |
 | `SERVER_HOST` | No | — | Listen address, default `127.0.0.1` (loopback only, exposed via reverse proxy); set `0.0.0.0` for direct deployment |
 | `ROOT_PATH` | No | — | Sub-path reverse-proxy prefix, e.g. `/prd-review`; leave empty for root-path deployment |
@@ -498,8 +504,12 @@ SERVER_HOST=127.0.0.1      # Exposed via reverse proxy (recommended); use 0.0.0.
 SERVER_PORT=17957
 ROOT_PATH=                 # Empty for root-path; sub-path e.g. /prd-review
 
-# 4) Optional: override the first admin's initial password
+# 4) Optional: override the first admin's initial password (unset = random, written to
+#    the one-time secret file under runtime/secrets/, 0600, auto-deleted on password change)
 # ADMIN_INITIAL_PASSWORD=<strong-password>
+# Emergency/internal: allows leftover built-in admin passwords and ADMIN_INITIAL_PASSWORD=admin@2026
+# ([SECURITY] warning on every boot; do not enable in production)
+# ALLOW_DEFAULT_ADMIN_PASSWORD=1
 ```
 
 > For production, also consider setting `auth.allow_public_registration` to `false` in `src/config.yaml`.

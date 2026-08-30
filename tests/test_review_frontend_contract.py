@@ -205,8 +205,10 @@ def test_failed_review_also_switches_to_result_page():
 
 def test_failed_review_is_included_in_tasks_with_results():
     load_review_history_block = REVIEW_JS.split("async _loadReviewHistory(projectId, stateVersion = this._stateVersion)", 1)[1].split("_isDocModeCompleted", 1)[0]
-    assert "const tasksWithResults = (tasks || []).filter(t => ['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(t.status));" in load_review_history_block
-    assert "this._reviewDocMap[key] = { taskId: task.task_id, status: task.status };" in load_review_history_block
+    # BUG-184 原子替换重构：tasksWithResults 改基于局部 history 构建，docMap
+    # 写入局部 docMap 后一次性赋给 this._reviewDocMap（语义不变）
+    assert "const tasksWithResults = history.filter(t => ['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(t.status));" in load_review_history_block
+    assert "docMap[key] = { taskId: task.task_id, status: task.status };" in load_review_history_block
 
 
 def test_batch_system_review_tasks_do_not_populate_single_doc_history():
@@ -879,3 +881,97 @@ def test_failed_tasks_do_not_propagate_to_submodes():
     # _upsertReviewTask 同样有 propagates 保护
     upsert_block = REVIEW_JS.split("_upsertReviewTask(task)", 1)[1].split("_getTaskInfo", 1)[0]
     assert "propagates" in upsert_block
+
+
+# ── BUG-184（GitHub Issue #8）：任务完成后角标实时刷新 ──────────────────────
+
+def test_issue8_terminal_callbacks_await_load_project_detail():
+    """SSE 与轮询终态都必须先 await loadProjectDetail（重建 map/角标）再 _showResult。"""
+    sse_block = REVIEW_JS.split("source.onmessage = async (event)", 1)[1].split("source.onerror", 1)[0]
+    assert "await this.loadProjectDetail(this.currentProjectId)" in sse_block
+    assert sse_block.index("await this.loadProjectDetail") < sse_block.index("_showResult({")
+    poll_block = REVIEW_JS.split("async _pollProgress(taskId)", 1)[1].split("\n    _updateProgress(data) {", 1)[0]
+    assert "await this.loadProjectDetail(this.currentProjectId)" in poll_block
+    assert poll_block.index("await this.loadProjectDetail") < poll_block.index("_showResult({")
+
+
+def test_issue8_upsert_terminal_writes_docmap_and_refreshes_badges():
+    """_upsertReviewTask 终态写入 _reviewDocMap（MODE_COVERS 传播），且任何路径都立即刷角标。"""
+    upsert_block = REVIEW_JS.split("_upsertReviewTask(task)", 1)[1].split("    _getTaskInfo(taskId = this.currentTaskId)", 1)[0]
+    assert "this._reviewDocMap[key]" in upsert_block
+    assert "'completed', 'completed_with_warnings', 'failed', 'cancelled'" in upsert_block
+    assert "const succeeded" in upsert_block  # 成功才展开子模式，失败/取消仅自身模式
+    assert "this._updateActionCardStatus();" in upsert_block
+    # map 原子替换：_loadReviewHistory 不得先清空 this._reviewDocMap 再 await
+    history_block = REVIEW_JS.split("async _loadReviewHistory", 1)[1].split("_isDocModeCompleted", 1)[0]
+    assert "this._reviewDocMap = docMap;" in history_block
+    assert "this._reviewDocMap = {}" not in history_block
+
+
+def test_issue8_action_card_prefers_taskmap_terminal():
+    """无 running 时 _updateActionCardStatus 优先读 _reviewTaskMap 终态，docMap 作补充。"""
+    block = REVIEW_JS.split("_updateActionCardStatus() {", 1)[1].split("_statusLabel(s)", 1)[0]
+    assert "taskTerminal" in block
+    assert "'completed', 'completed_with_warnings', 'failed', 'cancelled'" in block
+    assert "this._isDocModeReviewed(docId, mode)" in block  # 补充数据源
+
+
+def test_issue8_load_project_detail_reattaches_progress_listener():
+    """loadProjectDetail 结束后对选中文档/全局 running 任务自动重挂 _listenProgress。"""
+    lp_block = REVIEW_JS.split("async loadProjectDetail(id)", 1)[1].split("    _renderDocList(docs)", 1)[0]
+    assert "this._reattachProgressListener();" in lp_block
+    reattach = REVIEW_JS.split("_reattachProgressListener() {", 1)[1].split("    _renderDocList(docs)", 1)[0]
+    assert "_findLatestTaskForDocument" in reattach
+    assert "'running', 'pending'" in reattach
+    assert "this._listenProgress(task.taskId);" in reattach
+
+
+def test_bug192_reattach_covers_single_doc_modes_after_hard_refresh():
+    """BUG-192：硬刷新后 selectedDocumentId=null，历史回退查找不得限定
+    full/draft 模式，否则单文档任务（quick/review/pm/insight）监听丢失。"""
+    reattach = REVIEW_JS.split("_reattachProgressListener() {", 1)[1].split("    _renderDocList(docs)", 1)[0]
+    assert "['full', 'draft'].includes(t.mode)" not in reattach, \
+        "历史回退仅限 full/draft，单文档任务硬刷新后无法重挂监听"
+    assert "['running', 'pending'].includes(t.status)" in reattach
+
+
+def test_bug192_select_document_reattaches_listener():
+    """BUG-192：选择文档时补查一次进度监听，覆盖硬刷新后首次选文档的场景。"""
+    select_block = REVIEW_JS.split("selectDocument(id) {", 1)[1].split("    _syncSelectedDocTitle() {", 1)[0]
+    assert "this._reattachProgressListener();" in select_block, \
+        "selectDocument 未调用 _reattachProgressListener，硬刷新后选文档不重挂监听"
+
+
+def test_bug192_select_document_reattaches_after_navigate():
+    """硬刷新后首次选文档：_navigateOnDocSwitch 会关掉刚挂上的 SSE。
+    必须先切文档（关旧流），再 _reattachProgressListener，否则 calls 为空、角标停在进行中。"""
+    select_block = REVIEW_JS.split("selectDocument(id) {", 1)[1].split("    _syncSelectedDocTitle() {", 1)[0]
+    nav_pos = select_block.index("_navigateOnDocSwitch")
+    reattach_pos = select_block.index("_reattachProgressListener")
+    assert nav_pos < reattach_pos, (
+        "selectDocument 先 reattach 再 navigate：navigate 会 close EventSource，"
+        "硬刷新后选文档监听丢失"
+    )
+
+
+def test_bug192_navigate_stops_poll_timer():
+    """切换文档时必须同时停掉 SSE 与轮询，否则 _reattach 因 _pollTimer 仍在而早退。"""
+    nav = REVIEW_JS.split("_navigateOnDocSwitch() {", 1)[1].split("    _currentResultContainsDocument", 1)[0]
+    assert "this._stopProgressListener();" in nav, "navigate 必须调用 _stopProgressListener"
+    stop = REVIEW_JS.split("_stopProgressListener() {", 1)[1].split("    _nextStateVersion", 1)[0]
+    assert "this._pollTimer" in stop
+    assert "this.eventSource" in stop
+
+
+def test_issue8_sse_closes_on_completed_with_warnings_and_no_reconnect_after_terminal():
+    """后端 event_generator 收口含 completed_with_warnings；前端 onerror 终态后不重连。"""
+    review_py = (ROOT / "src/app/routers/review.py").read_text(encoding="utf-8")
+    gen_block = review_py.split("async def event_generator()", 1)[1].split("return StreamingResponse", 1)[0]
+    assert '"completed", "completed_with_warnings", "failed", "cancelled"' in gen_block
+    # handler 闭包持有 source（防误关后续新连接）
+    assert "const source = this.eventSource;" in REVIEW_JS
+    # onerror：终态判断在前，仅非终态才回退轮询
+    onerror_block = REVIEW_JS.split("source.onerror = () =>", 1)[1].split("        };\n    },", 1)[0]
+    assert "includes(info.status)" in onerror_block
+    assert "_pollProgress(taskId);" in onerror_block
+    assert onerror_block.index("includes(info.status)") < onerror_block.index("_pollProgress(taskId);")

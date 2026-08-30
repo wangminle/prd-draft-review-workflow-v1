@@ -1128,7 +1128,9 @@ async def review_progress_sse(
             try:
                 event = await asyncio.wait_for(queue.get(), timeout=30.0)
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event.get("task_status") in ("completed", "failed", "cancelled"):
+                if event.get("task_status") in ("completed", "completed_with_warnings", "failed", "cancelled"):
+                    # BUG-184（Issue #8）：completed_with_warnings 同为终态，缺失时
+                    # 流不收口，前端 EventSource 在 keepalive 循环里等不到断流。
                     break
             except asyncio.TimeoutError:
                 yield ": keepalive\n\n"

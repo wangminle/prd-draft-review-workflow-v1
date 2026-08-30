@@ -63,12 +63,12 @@
 
 | 来源 | 说明 |
 | --- | --- |
-| 环境变量 `ADMIN_INITIAL_PASSWORD` | **推荐**。启动时读取,创建/覆盖 admin 密码。 |
-| 代码默认口令 `admin@2026` | 未设置环境变量时使用,启动日志会打印 `[SECURITY]` 警告,要求尽快修改。 |
+| 环境变量 `ADMIN_INITIAL_PASSWORD` | **推荐**。启动时读取,仅用于**首次创建** admin 账号。 |
+| 随机生成 | 未设置环境变量时使用 `secrets.token_urlsafe(24)`,初始密码写入一次性保密文件 `runtime/secrets/admin_initial_password.txt`（0600,改密后自动删除,不进任何日志）,要求立即保存并修改。 |
 
 启动时的安全检测:
 
-- 若检测到 admin 仍在使用默认口令 `admin@2026` 或历史弱口令 `admin123`,日志会持续输出 `[SECURITY]` 警告,提示立即修改。
+- 若检测到 admin 仍在使用历史默认口令 `admin@2026` 或弱口令 `admin123`,**默认拒绝启动**;`ADMIN_INITIAL_PASSWORD` 设为内置口令时同样拒绝。应急排障或内部部署快速体验可设 `ALLOW_DEFAULT_ADMIN_PASSWORD=1`——同时放行上述两类检查（如 `ADMIN_INITIAL_PASSWORD=admin@2026` 首次建号）,日志仍会输出 `[SECURITY]` 警告;对外/生产部署前必须移除该开关并改密。
 
 **生产环境上线步骤(强烈建议):**
 
@@ -478,12 +478,12 @@ On first start, the platform **automatically ensures** the default admin account
 
 | Source | Description |
 | --- | --- |
-| Env var `ADMIN_INITIAL_PASSWORD` | **Recommended.** Read at startup to create/override the admin password. |
-| Code default `admin@2026` | Used when the env var is unset; startup logs print a `[SECURITY]` warning urging an immediate change. |
+| Env var `ADMIN_INITIAL_PASSWORD` | **Recommended.** Read at startup; used only when **creating** the first admin account. |
+| Random generation | If the env var is unset, `secrets.token_urlsafe(24)` is used; the password is written to the one-time secret file `runtime/secrets/admin_initial_password.txt` (0600, auto-deleted after a password change, never logged). Save it and change it immediately. |
 
 Startup security checks:
 
-- If admin is still using the default `admin@2026` or legacy weak `admin123`, logs keep emitting `[SECURITY]` warnings prompting an immediate password change.
+- If admin is still using the historical default `admin@2026` or legacy weak `admin123`, startup **fails by default**; setting `ADMIN_INITIAL_PASSWORD` to a built-in password is likewise rejected. Set `ALLOW_DEFAULT_ADMIN_PASSWORD=1` as an emergency escape hatch or for internal-deployment convenience — it lifts both checks (e.g., `ADMIN_INITIAL_PASSWORD=admin@2026` on first creation); logs still emit a `[SECURITY]` warning, and the switch must be removed and the password changed before external/production deployment.
 
 **Recommended production onboarding:**
 

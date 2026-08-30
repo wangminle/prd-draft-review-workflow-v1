@@ -15,6 +15,7 @@
 import logging
 from typing import AsyncGenerator
 
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import AgentProfile, AgentRun, User
@@ -41,6 +42,29 @@ class AgentApplicationService:
             conversation_id=conversation_id,
         )
         return run
+
+    async def prepare_and_claim_run(
+        self, run: AgentRun, profile: AgentProfile, user: User
+    ) -> AgentRun:
+        """统一执行门控：属主、启用状态、可执行状态、预算、原子抢占。"""
+        if run.user_id != user.id:
+            raise HTTPException(403, "Not your agent run")
+        if profile.status != "active":
+            raise HTTPException(400, "Agent is disabled")
+        if run.status not in ("planning", "failed"):
+            raise HTTPException(400, f"Run status is '{run.status}', cannot execute")
+
+        from app.repositories.workspace_repository import WorkspaceRepository
+        from app.services.budget_guard import ensure_workspace_llm_allowed
+
+        ws_repo = WorkspaceRepository(self._db)
+        default_ws = await ws_repo.get_default()
+        await ensure_workspace_llm_allowed(self._db, default_ws.id if default_ws else None)
+
+        claimed = await self._run_repo.try_claim_for_execution(run.id)
+        if claimed is None:
+            raise HTTPException(409, "Run is already executing or not executable")
+        return claimed
 
     async def execute_via_pi(self, run: AgentRun, profile: AgentProfile,
                               db: AsyncSession) -> AsyncGenerator[dict, None]:

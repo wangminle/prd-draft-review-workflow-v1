@@ -27,6 +27,32 @@ TEXT_EXTENSIONS = {
 
 WORD_NS = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
+# 聊天/上传路径的 DOCX 解压上限：单 entry 10MB、总量 50MB；
+# 对未压缩体积超过 64KB 的条目按压缩比 100x 拒绝 zip bomb。
+_MAX_DOCX_ENTRY_UNCOMPRESSED = 10 * 1024 * 1024
+_MAX_DOCX_TOTAL_UNCOMPRESSED = 50 * 1024 * 1024
+_MAX_DOCX_COMPRESSION_RATIO = 100
+_DOCX_RATIO_MIN_UNCOMPRESSED = 64 * 1024
+
+
+def _docx_zip_is_unsafe(docx: zipfile.ZipFile) -> bool:
+    total_uncomp = 0
+    for info in docx.infolist():
+        if info.file_size < 0 or info.compress_size < 0:
+            return True
+        if info.file_size > _MAX_DOCX_ENTRY_UNCOMPRESSED:
+            return True
+        if (
+            info.file_size > _DOCX_RATIO_MIN_UNCOMPRESSED
+            and info.compress_size > 0
+            and info.file_size > info.compress_size * _MAX_DOCX_COMPRESSION_RATIO
+        ):
+            return True
+        total_uncomp += info.file_size
+        if total_uncomp > _MAX_DOCX_TOTAL_UNCOMPRESSED:
+            return True
+    return False
+
 
 def extract_text_from_bytes(content: bytes, filename: str) -> str | None:
     """根据文件名后缀从字节内容中抽取可注入 LLM 的正文。"""
@@ -60,6 +86,8 @@ def extract_text_from_path(file_path: str | Path, filename: str | None = None) -
 def _extract_docx_text(content: bytes) -> str | None:
     try:
         with zipfile.ZipFile(io.BytesIO(content)) as docx:
+            if _docx_zip_is_unsafe(docx):
+                return None
             xml_bytes = docx.read("word/document.xml")
     except Exception:
         return None

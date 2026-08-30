@@ -237,9 +237,9 @@ def test_svg_gradient_fallback_and_quoted_ref_preserved():
 
 
 def test_cache_version_bumped_for_url_sanitizer_fix():
-    """缓存版本必须升级到 20260828-4，确保部署实例拿到新的 rich-content.js/main.css。"""
-    assert "?v=20260828-4" in INDEX_HTML
-    assert "?v=20260828-3" not in INDEX_HTML
+    """缓存版本必须升级到 20260830-3，确保部署实例拿到选文档重挂监听顺序修复。"""
+    assert "?v=20260830-3" in INDEX_HTML
+    assert "?v=20260830-2" not in INDEX_HTML
 
 
 # ── 真实浏览器功能验证（Playwright/Chromium 可用时执行，独立子进程避免事件循环冲突） ──

@@ -146,5 +146,10 @@ async def change_password(
 
     user.password_hash = hash_password(req.new_password)
     await db.commit()
+    # BUG-194：admin 改密成功后立即删除初始密码一次性文件（凭据生命周期收口）
+    if user.username == "admin":
+        from app.database import consume_admin_initial_secret
+
+        consume_admin_initial_secret()
     _audit_log_writer.write("auth.password_change", actor=user, request=request)
     return {"message": "密码修改成功"}

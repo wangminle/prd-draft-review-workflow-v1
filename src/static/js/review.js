@@ -92,6 +92,10 @@ const Review = {
     },
 
     destroy() {
+        this._stopProgressListener();
+    },
+
+    _stopProgressListener() {
         if (this.eventSource) {
             this.eventSource.close();
             this.eventSource = null;
@@ -325,8 +329,39 @@ const Review = {
             this._setResourceControlsEnabled(true);
             this._syncActionAvailability();
             this._updateActionCardStatus();
+            this._reattachProgressListener();
         } catch (e) {
             console.error('Failed to load project detail:', e);
+        }
+    },
+
+    _reattachProgressListener() {
+        // BUG-184：刷新页面/重进项目后 running 任务的进度监听丢失，完成事件
+        // 被丢弃。loadProjectDetail 重建 map 后，对当前选中文档（或 full 模式
+        // 的全局任务）的 running/pending 任务重新挂 SSE；SSE 失败由
+        // _listenProgress 内部回退到轮询。SSE ticket 每次连接重新签发，重连
+        // 安全；后端 queue 已 pop 时轮询会拿到 DB 快照终态，同样收敛。
+        if (this.eventSource || this._pollTimer) return;
+        if (!this.currentProjectId) return;
+        let task = null;
+        if (this.selectedDocumentId) {
+            task = this._findLatestTaskForDocument(this.selectedDocumentId, ['running', 'pending']);
+        }
+        if (!task && this.currentTaskId) {
+            const info = this._getTaskInfo(this.currentTaskId);
+            if (this._isRunningTask(info)) task = info;
+        }
+        if (!task) {
+            // full/draft 任务无单文档键；硬刷新后单文档任务（quick/review/pm/insight）
+            // 的 selectedDocumentId 也为空，故不限模式，取历史中最近的运行中任务
+            // （BUG-192：原先仅 full/draft 命中，单文档任务刷新后监听丢失）
+            const runningGlobal = (this._reviewHistory || []).find(t =>
+                ['running', 'pending'].includes(t.status));
+            if (runningGlobal) task = this._normalizeTaskInfo(runningGlobal);
+        }
+        if (task?.taskId) {
+            this.currentTaskId = task.taskId;
+            this._listenProgress(task.taskId);
         }
     },
 
@@ -435,10 +470,13 @@ const Review = {
         this._syncActionAvailability();
         this._updateActionCardStatus();
 
-        // 切换文档时，刷新当前页面到新文档对应状态
+        // BUG-192 / BUG-195：必须先切文档（_navigateOnDocSwitch 会关掉旧 SSE/轮询），
+        // 再 _reattachProgressListener。若顺序相反，硬刷新后首次选文档会把刚挂上
+        // 的监听立刻关掉，角标停在「进行中」（Chromium 复现 calls: []）。
         if (prevDocId !== id) {
             this._navigateOnDocSwitch();
         }
+        this._reattachProgressListener();
     },
 
     _syncSelectedDocTitle() {
@@ -459,10 +497,7 @@ const Review = {
         const hasVisibleResult = this._shellState !== 'no-result';
 
         // 关闭 SSE / 轮询，停止监听旧文档的审查进度
-        if (this.eventSource) {
-            this.eventSource.close();
-            this.eventSource = null;
-        }
+        this._stopProgressListener();
         this._isReviewRunning = false;
 
         // 在进度页或结果页：检查新文档在当前模式下是否有历史
@@ -551,29 +586,32 @@ const Review = {
     },
 
     async _loadReviewHistory(projectId, stateVersion = this._stateVersion) {
-        this._reviewHistory = [];
-        this._reviewDocMap = {};
-        this._reviewTaskMap = {};
+        // BUG-184：先在局部变量构建全部数据、成功后一次性原子替换三张状态，
+        // 不再「先清空再 await」——空窗期内 SSE/轮询的 upsert 会被空 map 吞掉，
+        // 或 stale return 把已到的终态角标数据抹掉。
+        const taskMap = {};
+        const docMap = {};
+        let history = [];
         try {
             const tasks = await API.listReviews(projectId);
             if (this._isStaleState(stateVersion) || this.currentProjectId !== projectId) return;
-            this._reviewHistory = tasks || [];
-            // Build _reviewTaskMap — expand mode coverage so higher modes
+            history = tasks || [];
+            // Build taskMap — expand mode coverage so higher modes
             // (full/insight/draft) mark their sub-modes as having a task too.
             // Running/pending propagate downward (sub-mode cards show 进行中);
             // successful results propagate downward (sub-mode cards show 已完成);
             // failed/cancelled do NOT propagate — a failed full task must not
             // shadow a previously completed quick task for the same document.
-            (tasks || []).forEach(task => {
+            history.forEach(task => {
                 const documentIds = Array.isArray(task.document_ids) ? task.document_ids : [];
                 if (documentIds.length !== 1) return;
                 const propagates = ['running', 'pending', 'completed', 'completed_with_warnings'].includes(task.status);
                 const coveredModes = propagates ? (this.MODE_COVERS[task.mode] || [task.mode]) : [task.mode];
                 coveredModes.forEach(m => {
                     const key = `${documentIds[0]}_${m}`;
-                    const existing = this._reviewTaskMap[key];
+                    const existing = taskMap[key];
                     if (!existing || task.task_id > existing.taskId) {
-                        this._reviewTaskMap[key] = {
+                        taskMap[key] = {
                             taskId: task.task_id,
                             status: task.status,
                             mode: m,
@@ -582,7 +620,7 @@ const Review = {
                     }
                 });
             });
-            const tasksWithResults = (tasks || []).filter(t => ['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(t.status));
+            const tasksWithResults = history.filter(t => ['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(t.status));
             const analysesResults = await Promise.all(
                 tasksWithResults.map(t => API.getReviewAnalyses(projectId, t.task_id).catch(() => []))
             );
@@ -601,19 +639,23 @@ const Review = {
                 analyses.forEach(a => {
                     docModes.forEach(m => {
                         const key = `${a.document_id}_${m}`;
-                        const existing = this._reviewDocMap[key];
+                        const existing = docMap[key];
                         if (!existing || task.task_id > existing.taskId) {
-                            this._reviewDocMap[key] = { taskId: task.task_id, status: task.status };
+                            docMap[key] = { taskId: task.task_id, status: task.status };
                         }
                     });
                 });
             });
-            if (this._docsCache.length) {
-                this._renderDocList(this._docsCache);
-            }
         } catch (e) {
             if (this._isStaleState(stateVersion)) return;
             console.error('加载审查历史失败:', e);
+            return; // 失败保留现有数据，不用半成品覆盖
+        }
+        this._reviewHistory = history;
+        this._reviewTaskMap = taskMap;
+        this._reviewDocMap = docMap;
+        if (this._docsCache.length) {
+            this._renderDocList(this._docsCache);
         }
     },
 
@@ -630,6 +672,14 @@ const Review = {
         if (entry.status === 'cancelled') return { ...entry, label: '已取消' };
         if (entry.status === 'failed') return { ...entry, label: '未完成' };
         return entry;
+    },
+
+    _terminalStatusLabel(status) {
+        if (status === 'completed_with_warnings') return '部分完成';
+        if (status === 'completed') return '已完成';
+        if (status === 'cancelled') return '已取消';
+        if (status === 'failed') return '未完成';
+        return null;
     },
 
     _syncActionCardSelection(mode) {
@@ -684,7 +734,24 @@ const Review = {
                     this._reviewTaskMap[key] = { ...normalized, mode: m };
                 }
             });
+            // BUG-184：终态同步写入 _reviewDocMap（与 _loadReviewHistory 相同的
+            // 传播规则——成功覆盖子模式、失败/取消仅记录自身模式），否则 SSE/轮询
+            // 到达的同一拍角标仍读不到终态（docMap 只在整页重载后重建）。
+            if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(normalized.status)) {
+                const succeeded = normalized.status === 'completed' || normalized.status === 'completed_with_warnings';
+                const docModes = succeeded ? (this.MODE_COVERS[normalized.mode] || [normalized.mode]) : [normalized.mode];
+                docModes.forEach(m => {
+                    const key = `${normalized.documentIds[0]}_${m}`;
+                    const existing = this._reviewDocMap[key];
+                    if (!existing || normalized.taskId >= existing.taskId) {
+                        this._reviewDocMap[key] = { taskId: normalized.taskId, status: normalized.status };
+                    }
+                });
+            }
         }
+        // BUG-184：启动（running）、进度、终态三条路径统一在此刷新角标，
+        // 不等 loadProjectDetail 整页重载。
+        this._updateActionCardStatus();
         return normalized;
     },
 
@@ -766,7 +833,13 @@ const Review = {
                 badge.classList.remove('badge-cancelled');
                 return;
             }
-            const reviewed = this._isDocModeReviewed(docId, mode);
+            // BUG-184：优先读 _reviewTaskMap 的终态——SSE/轮询 upsert 先更新
+            // taskMap（docMap 未重建），同一拍角标即可切到「已完成」；docMap
+            // （历史 analyses）作为补充。
+            const taskTerminal = this._findDocModeTask(docId, mode, ['completed', 'completed_with_warnings', 'failed', 'cancelled']);
+            const reviewed = taskTerminal
+                ? { ...taskTerminal, label: this._terminalStatusLabel(taskTerminal.status) }
+                : this._isDocModeReviewed(docId, mode);
             if (reviewed) {
                 if (!badge) {
                     badge = document.createElement('span');
@@ -1112,15 +1185,21 @@ const Review = {
         }
         try {
             this.eventSource = await API.getReviewProgress(this.currentProjectId, taskId);
-            this.eventSource.onmessage = (event) => {
+            // BUG-184：handler 闭包持有本次连接的 source。事件到达时
+            // this.eventSource 可能已被新的 _listenProgress 替换，直接操作
+            // this.eventSource 会误关新连接（onerror 空判同理）。
+            const source = this.eventSource;
+            source.onmessage = async (event) => {
                 const data = JSON.parse(event.data);
                 const current = this._getTaskInfo(taskId) || { taskId, mode: this.currentMode, documentIds: this.selectedDocumentId ? [this.selectedDocumentId] : [] };
                 this._upsertReviewTask({ ...current, status: data.task_status, current_step: data.current_step });
                 this._updateProgress(data);
                 if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(data.task_status)) {
-                    this.eventSource.close();
-                    this.eventSource = null;
-                    this.loadProjectDetail(this.currentProjectId);
+                    source.close();
+                    if (this.eventSource === source) this.eventSource = null;
+                    // BUG-184：先 await 整页刷新（含 map/角标重建），再展示结果，
+                    // 避免 _showResult 读到半旧数据；刷新本身已即时刷过角标。
+                    await this.loadProjectDetail(this.currentProjectId);
                     if (taskId === this.currentTaskId) {
                         this._isReviewRunning = false;
                         this._updateResultActions();
@@ -1129,9 +1208,17 @@ const Review = {
                     }
                 }
             };
-            this.eventSource.onerror = () => {
-                this.eventSource.close();
-                this.eventSource = null;
+            source.onerror = () => {
+                source.close();
+                if (this.eventSource === source) this.eventSource = null;
+                // BUG-184：终态后服务端关流属预期（event_generator break），
+                // 不再轮询/重连——EventSource 自动重连会复用已消费的一次性
+                // ticket 导致 401 循环；确需重连时经 _listenProgress 重新
+                // 调 getReviewProgress 签发新 ticket。
+                const info = this._getTaskInfo(taskId);
+                if (info && ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(info.status)) {
+                    return;
+                }
                 this._pollProgress(taskId);
             };
         } catch (e) {
@@ -1157,14 +1244,15 @@ const Review = {
                 this._upsertReviewTask({ ...current, status: data.task_status, current_step: data.current_step });
                 this._updateProgress(data);
                 if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(data.task_status)) {
+                    this._pollTimer = null;
+                    // BUG-184：与 SSE 终态路径一致——先 await 整页刷新再展示结果
+                    await this.loadProjectDetail(this.currentProjectId);
                     if (taskId === this.currentTaskId) {
                         this._isReviewRunning = false;
                         this._updateResultActions();
                         this._syncResultTitle();
                         this._showResult({ preserveActiveTab: true });
                     }
-                    this.loadProjectDetail(this.currentProjectId);
-                    this._pollTimer = null;
                     return;
                 }
             } catch (e) { /* ignore */ }

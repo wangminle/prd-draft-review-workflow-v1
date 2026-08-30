@@ -4,7 +4,8 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -19,6 +20,10 @@ from app.models.user import (
 from app.utils import now_cn
 
 logger = logging.getLogger(__name__)
+
+
+class DuplicateAgentAuthorizationError(ValueError):
+    """同一 Agent 对同一 scope 重复授权。"""
 
 
 class AgentProfileRepository:
@@ -76,10 +81,27 @@ class AgentAuthorizationRepository:
         )
         return list(result.scalars().all())
 
+    async def get_by_scope(
+        self, agent_id: int, scope_type: str, scope_id: int | None
+    ) -> Optional[AgentAuthorization]:
+        query = select(AgentAuthorization).where(
+            AgentAuthorization.agent_id == agent_id,
+            AgentAuthorization.scope_type == scope_type,
+        )
+        if scope_id is None:
+            query = query.where(AgentAuthorization.scope_id.is_(None))
+        else:
+            query = query.where(AgentAuthorization.scope_id == scope_id)
+        result = await self._db.execute(query)
+        return result.scalar_one_or_none()
+
     async def create(self, agent_id: int, granted_by: int, scope_type: str,
                      scope_id: int | None = None,
                      permissions_json: str | None = None,
                      expires_at: datetime | None = None) -> AgentAuthorization:
+        existing = await self.get_by_scope(agent_id, scope_type, scope_id)
+        if existing:
+            raise DuplicateAgentAuthorizationError("Authorization already exists")
         auth = AgentAuthorization(
             agent_id=agent_id,
             granted_by=granted_by,
@@ -89,7 +111,11 @@ class AgentAuthorizationRepository:
             expires_at=expires_at,
         )
         self._db.add(auth)
-        await self._db.commit()
+        try:
+            await self._db.commit()
+        except IntegrityError as exc:
+            await self._db.rollback()
+            raise DuplicateAgentAuthorizationError("Authorization already exists") from exc
         await self._db.refresh(auth)
         return auth
 
@@ -125,6 +151,23 @@ class AgentRunRepository:
         await self._db.commit()
         await self._db.refresh(run)
         return run
+
+    async def try_claim_for_execution(self, run_id: int) -> Optional[AgentRun]:
+        """原子抢占：仅当 status 为 planning/failed 时转为 running。并发第二请求返回 None。"""
+        result = await self._db.execute(
+            update(AgentRun)
+            .where(
+                AgentRun.id == run_id,
+                AgentRun.status.in_(("planning", "failed")),
+            )
+            .values(status="running")
+            .returning(AgentRun.id)
+        )
+        row = result.first()
+        await self._db.commit()
+        if row is None:
+            return None
+        return await self.get_by_id(run_id)
 
     async def get_by_id(self, run_id: int) -> Optional[AgentRun]:
         result = await self._db.execute(
