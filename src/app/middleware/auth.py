@@ -46,6 +46,13 @@ async def get_current_user(
             detail="用户不存在或已被禁用",
         )
 
+    # BUG-196: 会话版本校验——改密/重置密码后 auth_version 递增，旧 JWT 一律失效
+    if payload.get("av") != (user.auth_version or 1):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="登录状态已失效，请重新登录",
+        )
+
     await repo.update_last_active(user_id)
     await db.commit()
 

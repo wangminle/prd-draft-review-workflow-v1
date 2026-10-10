@@ -39,8 +39,7 @@ coverage.json
 .DS_Store
 
 # Agent / assistant local settings (may contain secrets or machine paths)
-.claude/settings.local.json
-.claude/*.local.json
+.claude/
 
 # Environment & secrets
 .env
@@ -80,5 +79,5 @@ node_modules/
 # Evaluation directory — POC experiments and P2.D.1 acceptance artifacts stay out of git entirely
 eval/
 
-# Design documents (internal, pending sensitive-info review before partial git tracking)
-design/
+# Competition presentation materials remain local
+design/4-竞赛汇报-20260731/

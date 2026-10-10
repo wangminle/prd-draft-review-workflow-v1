@@ -8,7 +8,7 @@ from app.config import get_settings
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
-from app.repositories.user_repository import UserRepository
+from app.repositories.user_repository import SessionVersionConflictError, UserRepository
 from app.repositories.workspace_repository import WorkspaceRepository
 from app.schemas.auth import (
     ChangePasswordRequest,
@@ -56,7 +56,7 @@ async def login(req: LoginRequest, request: Request, db: AsyncSession = Depends(
     await repo.update_last_active(user.id)
     await db.commit()
 
-    token = create_access_token(user.id, user.role)
+    token = create_access_token(user.id, user.role, user.auth_version or 1)
     _audit_log_writer.write("auth.login", actor=user, request=request, detail={"username": user.username})
     return TokenResponse(access_token=token)
 
@@ -103,7 +103,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 
     await db.commit()
 
-    token = create_access_token(user.id, user.role)
+    token = create_access_token(user.id, user.role, user.auth_version or 1)
     _audit_log_writer.write("auth.register", actor=user, request=request, detail={"username": user.username, "role": user.role})
     return TokenResponse(access_token=token)
 
@@ -111,7 +111,7 @@ async def register(req: RegisterRequest, request: Request, db: AsyncSession = De
 @router.post("/sse-ticket")
 async def create_sse_ticket(user: User = Depends(get_current_user)):
     """为当前登录用户签发短时一次性 SSE 票据。"""
-    return {"ticket": issue_sse_ticket(user.id)}
+    return {"ticket": issue_sse_ticket(user.id, user.auth_version or 1)}
 
 
 @router.get("/me", response_model=UserInfo)
@@ -144,7 +144,34 @@ async def change_password(
         )
         raise HTTPException(status_code=400, detail="原密码错误")
 
-    user.password_hash = hash_password(req.new_password)
+    # BUG-196/199：原子 UPDATE 一并递增会话版本号，撤销该用户全部旧 JWT
+    # （含当前会话，需重新登录）；杜绝并发改密/重置时的丢失更新
+    # BUG-200：以认证时刻的 auth_version 为乐观并发条件——管理员重置
+    # 推进版本后，在途改密命中 0 行被拒绝，防止过期请求覆盖新密码
+    repo = UserRepository(db)
+    try:
+        await repo.update_password(
+            user.id,
+            hash_password(req.new_password),
+            expected_auth_version=user.auth_version or 1,
+        )
+    except SessionVersionConflictError:
+        # rollback() 会使 ORM 属性过期，先以字典快照身份，避免审计读取
+        # user.id 等属性时触发懒加载（async 下抛 MissingGreenlet，409 变 500）
+        actor = {"user_id": user.id, "username": user.username, "role": user.role}
+        await db.rollback()
+        _audit_log_writer.write(
+            "auth.password_change",
+            actor=actor,
+            request=request,
+            result="failed",
+            detail={"reason": "auth_version_conflict"},
+            level="warning",
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="密码已在其他操作中被重置，请使用最新密码重新登录后再修改",
+        )
     await db.commit()
     # BUG-194：admin 改密成功后立即删除初始密码一次性文件（凭据生命周期收口）
     if user.username == "admin":

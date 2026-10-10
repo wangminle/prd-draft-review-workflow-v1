@@ -104,6 +104,10 @@ const Auth = {
             errEl.textContent = '新密码至少6位';
             return;
         }
+        if (new TextEncoder().encode(newPwd).length > 72) {
+            errEl.textContent = '新密码过长：不得超过 72 字节（约 72 个英文字符或 24 个中文字符）';
+            return;
+        }
         if (newPwd !== confirmPwd) {
             errEl.textContent = '两次输入的新密码不一致';
             return;
@@ -112,7 +116,11 @@ const Auth = {
         try {
             await API.changePassword(oldPwd, newPwd);
             Admin.closeModal();
-            alert('密码修改成功');
+            // BUG-196：改密成功后服务端撤销全部旧会话（含当前 JWT），需重新登录
+            alert('密码修改成功，所有登录状态已失效，请使用新密码重新登录');
+            this.logout();
+            sessionStorage.removeItem('lastPage');
+            location.reload();
         } catch (e) {
             errEl.textContent = e.message || '修改失败';
         }

@@ -5908,7 +5908,7 @@ input::placeholder, textarea::placeholder {
    ═══════════════════════════════════════════ */
 
 .review-comment-section {
-    margin-top: var(--sp-6);
+    margin: var(--sp-6) var(--sp-7) 0;
     border-top: 1px solid var(--color-border);
     padding-top: var(--sp-6);
 }
@@ -6033,7 +6033,11 @@ input::placeholder, textarea::placeholder {
     align-items: center;
     gap: var(--sp-4);
     padding: var(--sp-5);
-    margin-top: var(--sp-6);
+    /* 宽度随内容收缩，右侧不留大片空白；整体右对齐，右缘与 .result-content 内容列对齐 */
+    width: fit-content;
+    max-width: calc(100% - var(--sp-7));
+    align-self: flex-end;
+    margin: var(--sp-6) var(--sp-7) 0 0;
     border: 1px solid var(--green-5);
     border-radius: var(--radius-large);
     background: linear-gradient(135deg, #E8FFEA 0%, rgba(35, 195, 67, 0.08) 100%);
@@ -6087,7 +6091,7 @@ input::placeholder, textarea::placeholder {
 
 /* 产物卡片区域 */
 .review-artifact-section {
-    margin-top: var(--sp-6);
+    margin: var(--sp-6) var(--sp-7) 0;
     border-top: 1px solid var(--color-border);
     padding-top: var(--sp-6);
 }
@@ -6175,7 +6179,7 @@ input::placeholder, textarea::placeholder {
 
 /* 协作审查面板 */
 .review-collab-section {
-    margin-top: var(--sp-6);
+    margin: var(--sp-6) var(--sp-7) 0;
     border-top: 1px solid var(--color-border);
     padding-top: var(--sp-6);
 }

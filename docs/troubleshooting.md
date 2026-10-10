@@ -16,7 +16,7 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.17"}
+# 预期返回: {"status":"ok","version":"0.3.18"}
 ```
 
 ---
@@ -187,12 +187,20 @@ curl http://localhost:17957/api/health
 
 ---
 
-### 13. 健康检查与日志(排障入口)
+### 13. 改密后被登出:接口 401「登录状态已失效」或页面跳回登录页
+
+- **现象**:用户修改密码(或被管理员重置密码)后,任意接口返回 **401**(「登录状态已失效,请重新登录」),或正在浏览的页面自动跳回登录页;已打开的通知/审查进度流收到 `session_revoked` 事件后停止。
+- **原因**:这是**预期行为,不是故障**。平台引入会话版本号(`auth_version`)做会话撤销——改密或重置密码会让该用户的**全部旧 JWT 与 SSE 票据立即失效**(包括其他设备上的登录),强制用新密码重新登录。从旧版本升级后首次访问被登出一次,也属正常(升级前签发的旧 token 无会话版本声明,一律视为失效)。
+- **解决**:用**最新密码**重新登录即可。若改密时提示「密码已在其他操作中被重置」(409),说明管理员刚重置过密码,同样以最新密码登录后再改。密码要求 6–128 字符且 UTF-8 编码不超过 72 字节。
+
+---
+
+### 14. 健康检查与日志(排障入口)
 
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.17"}
+  # 预期返回: {"status":"ok","version":"0.3.18"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -228,7 +236,7 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.17"}
+# Expected: {"status":"ok","version":"0.3.18"}
 ```
 
 ---
@@ -399,12 +407,20 @@ curl http://localhost:17957/api/health
 
 ---
 
-### 13. Health check and logs (troubleshooting entry points)
+### 13. Logged out after a password change: API 401 "登录状态已失效" or the page returns to the login screen
+
+- **Symptom**: After a user changes their password (or an admin resets it), any API call returns **401** ("登录状态已失效，请重新登录"), the open page bounces back to the login screen, and open notification / review-progress streams stop after receiving a `session_revoked` event.
+- **Cause**: This is **expected behavior, not a fault**. The platform uses a session version (`auth_version`) for session revocation — a password change or reset immediately invalidates **all of that user's old JWTs and SSE tickets** (including logins on other devices), forcing a fresh sign-in with the new password. Being logged out once right after upgrading from an older version is also normal: pre-upgrade tokens carry no session-version claim and are treated as invalid.
+- **Fix**: Simply log in again with the **newest password**. If a password change fails with "密码已在其他操作中被重置" (409), an admin just reset the password — log in with the newest password before changing it again. Passwords must be 6–128 characters and at most 72 bytes UTF-8 encoded.
+
+---
+
+### 14. Health check and logs (troubleshooting entry points)
 
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.17"}
+  # Expected: {"status":"ok","version":"0.3.18"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).

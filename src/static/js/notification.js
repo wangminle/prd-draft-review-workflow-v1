@@ -42,6 +42,15 @@ const Notification = {
                 this._sse.onmessage = (event) => {
                     try {
                         const msg = JSON.parse(event.data);
+                        // BUG-198：改密/重置密码后服务端收口旧连接，强制重新登录
+                        if (msg && msg.type === 'session_revoked') {
+                            this._sse.close();
+                            this._sse = null;
+                            App._showToast('登录状态已失效，请重新登录', 3000);
+                            API.clearToken();
+                            setTimeout(() => location.reload(), 1200);
+                            return;
+                        }
                         // LLM 重试瞬时提示：仅弹 toast，不计未读数、不入通知列表
                         if (msg && msg.type === 'llm_retry') {
                             App._showToast(msg.title || '模型调用失败，正在自动重试', 5000);

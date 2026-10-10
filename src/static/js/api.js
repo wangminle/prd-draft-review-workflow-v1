@@ -35,6 +35,15 @@ const API = {
         return this._token;
     },
 
+    /* 提取错误详情文案：FastAPI 422 的 detail 为数组，提取 msg 拼接（BUG-197） */
+    _errorDetail(err, fallback) {
+        let detail = err && err.detail;
+        if (Array.isArray(detail)) {
+            detail = detail.map(d => (d && d.msg) ? d.msg : JSON.stringify(d)).join('；');
+        }
+        return detail || fallback;
+    },
+
     clearToken() {
         this._token = null;
         localStorage.removeItem('token');
@@ -52,7 +61,7 @@ const API = {
         const resp = await fetch(`${this._base}${path}`, opts);
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -87,7 +96,7 @@ const API = {
         });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.body.getReader();
     },
@@ -111,7 +120,7 @@ const API = {
         const resp = await fetch(this._url('/api/upload/file'), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -258,7 +267,7 @@ const API = {
         const resp = await fetch(this._url(`/api/personal/sources/${sourceId}/download`), { method: 'GET', headers });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         const disposition = resp.headers.get('Content-Disposition') || '';
         const match = disposition.match(/filename="([^"]+)"/);
@@ -275,7 +284,7 @@ const API = {
         const resp = await fetch(this._url('/api/personal/sources'), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -288,7 +297,7 @@ const API = {
         const resp = await fetch(this._url(`/api/workspace/${wsId}/sources/${sourceId}/download`), { method: 'GET', headers });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         const disposition = resp.headers.get('Content-Disposition') || '';
         const match = disposition.match(/filename="([^"]+)"/);
@@ -306,7 +315,7 @@ const API = {
         const resp = await fetch(this._url(`/api/workspace/${wsId}/sources`), { method: 'POST', headers, body: formData });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -339,7 +348,7 @@ const API = {
         });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -354,7 +363,7 @@ const API = {
         });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.json();
     },
@@ -377,7 +386,7 @@ const API = {
         const ticketResp = await fetch(this._url('/api/auth/sse-ticket'), { method: 'POST', headers });
         if (!ticketResp.ok) {
             const err = await ticketResp.json().catch(() => ({ detail: ticketResp.statusText }));
-            throw new Error(`${ticketResp.status} ${err.detail || ticketResp.statusText}`);
+            throw new Error(`${ticketResp.status} ${this._errorDetail(err, ticketResp.statusText)}`);
         }
         const data = await ticketResp.json();
         // 与全局规范一致：统一走 _url 拼接部署前缀，避免手拼 _base 在 _url 增强时遗漏
@@ -473,7 +482,7 @@ const API = {
         });
         if (!resp.ok) {
             const err = await resp.json().catch(() => ({ detail: resp.statusText }));
-            throw new Error(`${resp.status} ${err.detail || resp.statusText}`);
+            throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);
         }
         return resp.body.getReader();
     },

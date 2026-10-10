@@ -1,0 +1,132 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="600" viewBox="0 0 1180 600" role="img" aria-labelledby="title desc">
+  <title id="title">内网部署与数据安全闭环</title>
+  <desc id="desc">展示平台在企业内网环境中的部署拓扑、数据流向及安全管控措施，强调需求文档、分析结果和大模型调用均在内网闭环处理，数据不外溢。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#16a34a"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .zone-intranet { fill: #eff6ff; stroke: #93c5fd; stroke-width: 2; stroke-dasharray: 12 6; rx: 18; }
+      .zone-secure { fill: #ecfdf5; stroke: #86efac; stroke-width: 2; rx: 14; }
+      .zone-model { fill: #fef3c7; stroke: #fbbf24; stroke-width: 2; rx: 14; }
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 14; }
+      .box-blue { fill: #eff6ff; stroke: #93c5fd; stroke-width: 1.5; rx: 14; }
+      .box-green { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.5; rx: 14; }
+      .box-amber { fill: #fffbeb; stroke: #fbbf24; stroke-width: 1.5; rx: 14; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 26px; font-weight: 700; fill: #0f172a; }
+      .zone-label { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; font-weight: 600; fill: #3b82f6; }
+      .zone-label-green { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; font-weight: 600; fill: #16a34a; }
+      .zone-label-amber { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; font-weight: 600; fill: #b45309; }
+      .h { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .t { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; fill: #334155; }
+      .small { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; fill: #64748b; }
+      .pill { fill: #dbeafe; stroke: #60a5fa; stroke-width: 1; rx: 16; }
+      .pill-green { fill: #dcfce7; stroke: #4ade80; stroke-width: 1; rx: 16; }
+      .pill-amber { fill: #fef3c7; stroke: #fbbf24; stroke-width: 1; rx: 16; }
+      .line { stroke: #1d4ed8; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .line-green { stroke: #16a34a; stroke-width: 2; fill: none; marker-end: url(#arrow-green); }
+      .thin { stroke: #94a3b8; stroke-width: 1.4; fill: none; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+      .shield { fill: #16a34a; }
+      .lock { fill: #1d4ed8; }
+    </style>
+  </defs>
+
+  <!-- 背景 -->
+  <rect class="bg" width="1180" height="600"/>
+
+  <!-- 标题 -->
+  <text class="title" x="40" y="46">内网部署与数据安全闭环</text>
+  <text class="small" x="40" y="72">所有数据流在企业内网闭环：需求文档、模型调用、审查结果均不出网，满足数据安全要求。</text>
+
+  <!-- 内网边界 -->
+  <rect class="zone-intranet" x="30" y="100" width="1120" height="430"/>
+  <text class="zone-label" x="56" y="130">🏢 企业内网</text>
+
+  <!-- 用户端 -->
+  <rect class="box" x="60" y="170" width="180" height="120"/>
+  <text class="h" x="100" y="202">团队成员</text>
+  <text class="t" x="86" y="228">浏览器访问</text>
+  <text class="t" x="86" y="250">http://内网IP:17957</text>
+  <rect class="pill" x="86" y="260" width="120" height="24"/>
+  <text class="small" x="104" y="277">JWT 登录认证</text>
+
+  <!-- 安全管控层 -->
+  <rect class="zone-secure" x="300" y="150" width="210" height="340"/>
+  <text class="zone-label-green" x="330" y="178">🔒 安全管控层</text>
+
+  <rect class="box-green" x="315" y="200" width="180" height="56"/>
+  <text class="t" x="347" y="224">JWT 认证 / 权限隔离</text>
+  <text class="small" x="347" y="244">用户 / admin 角色控制</text>
+
+  <rect class="box-green" x="315" y="270" width="180" height="56"/>
+  <text class="t" x="347" y="294">项目级数据隔离</text>
+  <text class="small" x="347" y="314">文档/结果按用户隔离</text>
+
+  <rect class="box-green" x="315" y="340" width="180" height="56"/>
+  <text class="t" x="347" y="364">SSE 票据鉴权</text>
+  <text class="small" x="347" y="384">流式推送防越权</text>
+
+  <rect class="box-green" x="315" y="410" width="180" height="56"/>
+  <text class="t" x="347" y="434">SSRF 防护 / 审计日志</text>
+  <text class="small" x="347" y="454">URL 抓取白名单 + 操作记录</text>
+
+  <!-- 核心服务 -->
+  <rect class="box-blue" x="570" y="160" width="230" height="170"/>
+  <text class="h" x="635" y="194">平台核心服务</text>
+  <rect class="pill" x="590" y="210" width="190" height="28"/>
+  <text class="small" x="614" y="230">FastAPI + SQLite</text>
+  <rect class="pill" x="590" y="248" width="190" height="28"/>
+  <text class="small" x="600" y="268">SkillRunner 流水线</text>
+  <rect class="pill" x="590" y="286" width="190" height="28"/>
+  <text class="small" x="608" y="306">评审上下文 + 缓存</text>
+
+  <!-- 数据存储 -->
+  <rect class="box" x="570" y="360" width="230" height="110"/>
+  <text class="h" x="623" y="392">数据存储（内网）</text>
+  <text class="t" x="590" y="420">SQLite 单文件数据库</text>
+  <text class="t" x="590" y="444">runtime/ 文档与转换缓存</text>
+
+  <!-- 内网大模型 -->
+  <rect class="zone-model" x="860" y="150" width="260" height="250"/>
+  <text class="zone-label-amber" x="888" y="178">⚙️ 内网大模型服务</text>
+
+  <rect class="box-amber" x="878" y="200" width="220" height="56"/>
+  <text class="t" x="918" y="224">Ollama / vLLM</text>
+  <text class="small" x="918" y="244">DeepSeek / Qwen / 自部署</text>
+
+  <rect class="box-amber" x="878" y="270" width="220" height="56"/>
+  <text class="t" x="918" y="294">企业模型服务</text>
+  <text class="small" x="918" y="314">内网 API 端点</text>
+
+  <rect class="box-amber" x="878" y="340" width="220" height="42"/>
+  <text class="small" x="948" y="366">模型调用不出网</text>
+
+  <!-- 连接线 -->
+  <!-- 用户 → 安全管控 -->
+  <path class="line" d="M240 230 L300 230"/>
+
+  <!-- 安全管控 → 核心服务 -->
+  <path class="line" d="M510 245 L570 245"/>
+
+  <!-- 核心服务 → 数据存储 -->
+  <path class="line" d="M685 330 L685 360"/>
+
+  <!-- 核心服务 → 内网大模型 -->
+  <path class="line" d="M800 245 L860 270"/>
+
+  <!-- 内网大模型 → 核心服务（结果回流） -->
+  <path class="line-green" d="M860 330 C820 330, 810 310, 800 310" stroke-dasharray="6 4"/>
+
+  <!-- 底部闭环说明 -->
+  <rect class="box-green" x="60" y="520" width="1080" height="50" rx="10"/>
+  <text class="small" x="370" y="542" style="font-size:13px;fill:#15803d">✅ 数据闭环：需求文档上传 → 内网模型分析 → 审查结果存储 — 全程数据不出企业内网</text>
+  <text class="small" x="370" y="560" style="font-size:12px;fill:#16a34a">部署形态：局域网单机（macOS/Linux）或内网服务器，零公网依赖，零数据外溢</text>
+
+  <!-- 公网阻断标记 -->
+  <rect x="30" y="100" width="30" height="430" fill="#fef2f2" opacity="0.5" rx="4"/>
+  <text x="48" y="310" text-anchor="middle" transform="rotate(-90,48,310)" style="font-family:-apple-system,sans-serif;font-size:13px;font-weight:600;fill:#dc2626">公网不可达</text>
+</svg>

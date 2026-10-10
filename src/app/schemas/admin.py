@@ -1,6 +1,8 @@
 """Pydantic 管理后台相关请求/响应模型"""
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from app.schemas.auth import _validate_password_bytes
 
 
 class AdminCreateUserRequest(BaseModel):
@@ -8,12 +10,16 @@ class AdminCreateUserRequest(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     role: str = Field(default="user", pattern="^(user|admin)$")
 
+    _check_password_bytes = field_validator("password")(_validate_password_bytes)
+
 
 class AdminUpdateUserRequest(BaseModel):
     username: str | None = Field(default=None, min_length=2, max_length=50)
     password: str | None = Field(default=None, min_length=6, max_length=128)
     role: str | None = Field(default=None, pattern="^(user|admin)$")
     is_active: bool | None = None
+
+    _check_password_bytes = field_validator("password")(_validate_password_bytes)
 
 
 class AdminUserInfo(BaseModel):

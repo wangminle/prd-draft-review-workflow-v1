@@ -14,7 +14,7 @@ from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.repositories.notification_repository import NotificationRepository, CommentRepository
 from app.services.notification_service import get_notification_channel, clear_channel
-from app.services.auth import consume_sse_ticket
+from app.services.auth import is_session_alive, validate_sse_ticket
 from app.services.object_access import assert_object_access
 
 router = APIRouter()
@@ -70,6 +70,7 @@ def _serialize_comment(c) -> dict:
 @router.get("/stream")
 async def notification_stream(
     ticket: str | None = Query(None),
+    db: AsyncSession = Depends(get_db),
 ):
     """P4.D.4: Notification SSE 端点 — 推送 unread 通知增量事件。
 
@@ -80,9 +81,12 @@ async def notification_stream(
         # 降级：尝试 Bearer 认证（兼容非 SSE 客户端）
         raise HTTPException(status_code=401, detail="未提供认证票据")
 
-    user_id = consume_sse_ticket(ticket)
-    if user_id is None:
+    # BUG-198：消费时校验会话版本，改密/重置前签发的票据立即失效
+    ticket_user = await validate_sse_ticket(ticket, db)
+    if ticket_user is None:
         raise HTTPException(status_code=401, detail="认证票据无效或已过期")
+    user_id = ticket_user.id
+    auth_version = ticket_user.auth_version or 1
 
     import asyncio as _asyncio
 
@@ -90,6 +94,10 @@ async def notification_stream(
         channel = get_notification_channel(user_id)
         try:
             while True:
+                # BUG-198：改密/重置密码后旧长连接停止推送并收口
+                if not await is_session_alive(db, user_id, auth_version):
+                    yield 'data: {"type": "session_revoked"}\n\n'
+                    break
                 # 发送缓冲区中的事件
                 while channel:
                     event_data = channel.pop(0)

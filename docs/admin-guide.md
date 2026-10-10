@@ -92,8 +92,8 @@ export ADMIN_INITIAL_PASSWORD='<你的强随机口令>'
 | 操作 | 方法与端点 | 说明 |
 | --- | --- | --- |
 | 列出全部用户 | `GET /users` | 返回 id、username、role、is_active、创建时间、最近活跃时间 |
-| 创建用户 | `POST /users` | 用户名 2–50 字符,密码 6–128 字符,角色 `user` 或 `admin` |
-| 更新用户 | `PUT /users/{user_id}` | 可改角色、启用/禁用(`is_active`)、重置密码 |
+| 创建用户 | `POST /users` | 用户名 2–50 字符,密码 6–128 字符且 UTF-8 编码不超过 72 字节(bcrypt 上限,超限 422),角色 `user` 或 `admin` |
+| 更新用户 | `PUT /users/{user_id}` | 可改角色、启用/禁用(`is_active`)、重置密码;重置密码会**立即撤销该用户全部已登录会话**(旧 JWT 与 SSE 票据失效,需重新登录),仅改角色/启用状态不会 |
 | 删除用户 | `DELETE /users/{user_id}` | 默认 `admin` 账号不可删除 |
 
 常用管理动作:
@@ -507,8 +507,8 @@ Prefix `/api/admin/users`. Admins manage the full account lifecycle.
 | Action | Method & Endpoint | Notes |
 | --- | --- | --- |
 | List all users | `GET /users` | Returns id, username, role, is_active, created/last-active timestamps |
-| Create user | `POST /users` | Username 2–50 chars, password 6–128 chars, role `user` or `admin` |
-| Update user | `PUT /users/{user_id}` | Change role, enable/disable (`is_active`), reset password |
+| Create user | `POST /users` | Username 2–50 chars, password 6–128 chars and at most 72 bytes UTF-8 encoded (bcrypt limit; oversized → 422), role `user` or `admin` |
+| Update user | `PUT /users/{user_id}` | Change role, enable/disable (`is_active`), reset password; a password reset **immediately revokes all of that user's logged-in sessions** (old JWTs and SSE tickets die; re-login required), while role/`is_active`-only updates do not |
 | Delete user | `DELETE /users/{user_id}` | The default `admin` account cannot be deleted |
 
 Common actions:

@@ -19,6 +19,7 @@ from app.repositories.user_repository import UserRepository
 from app.repositories.model_config_repository import ModelConfigRepository
 from app.repositories.prompt_template_repository import PromptTemplateRepository
 from app.repositories.skill_config_repository import SkillConfigRepository
+from app.schemas.auth import _validate_password_bytes
 from app.services.crypto import decrypt_key, encrypt_key, mask_key
 from app.services.llm import check_connection, speed_test
 
@@ -48,11 +49,15 @@ class UserCreate(BaseModel):
     password: str = Field(..., min_length=6, max_length=128)
     role: str = Field(default="user", pattern=r"^(user|admin)$")
 
+    _check_password_bytes = field_validator("password")(_validate_password_bytes)
+
 
 class UserUpdate(BaseModel):
     role: str | None = Field(default=None, pattern=r"^(user|admin)$")
     is_active: bool | None = None
     password: str | None = Field(default=None, min_length=6, max_length=128)
+
+    _check_password_bytes = field_validator("password")(_validate_password_bytes)
 
 
 class PromptCreate(BaseModel):

@@ -226,8 +226,9 @@
 #### 修改密码
 
 1. 点击右上角用户名,选择「修改密码」。
-2. 输入当前密码和新密码。
-3. 提交后密码立即生效(对应接口 `PUT /api/auth/password`)。
+2. 输入当前密码和新密码。新密码需 6–128 字符,且 UTF-8 编码**不超过 72 字节**(约 72 个英文字符或 24 个中文字符,超出会提示「密码过长」)。
+3. 提交后密码立即生效(对应接口 `PUT /api/auth/password`);成功后**本账号所有设备的登录状态全部失效**(包括当前会话),页面会自动回到登录页,需用新密码重新登录。
+4. 若提交时提示「密码已在其他操作中被重置」(409),说明管理员刚重置过你的密码——请用最新密码重新登录后再修改。
 
 ---
 
@@ -476,8 +477,9 @@ Both regular users and admins manage **their own** Agent from this menu; it is n
 #### Change Password
 
 1. Click your username in the top right and choose **Change Password**.
-2. Enter your current password and a new password.
-3. Submit, and the new password takes effect immediately (endpoint: `PUT /api/auth/password`).
+2. Enter your current password and a new password. The new password must be 6–128 characters and **at most 72 bytes when UTF-8 encoded** (roughly 72 ASCII or 24 Chinese characters; longer passwords are rejected with a "password too long" message).
+3. Submit, and the new password takes effect immediately (endpoint: `PUT /api/auth/password`); on success, **the login state of this account is revoked on all devices** (including the current session) — the page returns to the login screen and you sign in again with the new password.
+4. If submission fails with "密码已在其他操作中被重置" (409), an admin has just reset your password — re-login with the newest password before changing it again.
 
 ---
 

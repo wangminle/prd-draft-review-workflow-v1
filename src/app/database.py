@@ -97,6 +97,7 @@ async def init_db():
         await _migrate_agent_profile_default_scope(conn)
         await _migrate_comment_resolve_fields(conn)
         await _migrate_agent_authorization_unique(conn)
+        await _migrate_user_auth_version(conn)
 
     # FTS5 虚拟表
     await _ensure_fts5()
@@ -1057,3 +1058,20 @@ async def _migrate_agent_authorization_unique(conn):
         CREATE UNIQUE INDEX IF NOT EXISTS uq_agent_auth_scope
         ON agent_authorizations (agent_id, scope_type, IFNULL(scope_id, 0))
     """))
+
+
+async def _migrate_user_auth_version(conn):
+    """BUG-196：users 表补 auth_version 会话版本号列（改密/重置密码时递增，
+    JWT 校验按此撤销旧会话）。存量用户默认 1，旧格式 JWT（无 av 声明）失效。"""
+    result = await conn.execute(text(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+    ))
+    if not result.fetchone():
+        return
+    col_result = await conn.execute(text("PRAGMA table_info(users)"))
+    existing_cols = {row[1] for row in col_result.fetchall()}
+    if "auth_version" not in existing_cols:
+        await conn.execute(text(
+            "ALTER TABLE users ADD COLUMN auth_version INTEGER NOT NULL DEFAULT 1"
+        ))
+        logger.info("[MIGRATE] users 新增列: auth_version")

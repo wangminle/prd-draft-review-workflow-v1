@@ -379,6 +379,7 @@ async def test_old_database_can_be_loaded_by_current_engine():
         _migrate_skill_config_status_version,
         _migrate_message_anchor_fields,
         _migrate_conversation_mode_project,
+        _migrate_user_auth_version,
     )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -386,6 +387,7 @@ async def test_old_database_can_be_loaded_by_current_engine():
         await _migrate_skill_config_status_version(conn)
         await _migrate_message_anchor_fields(conn)
         await _migrate_conversation_mode_project(conn)
+        await _migrate_user_auth_version(conn)
 
     async with session_maker() as session:
         # Users
@@ -514,12 +516,14 @@ async def test_init_db_preserves_existing_data():
             _migrate_skill_config_status_version,
             _migrate_message_anchor_fields,
             _migrate_conversation_mode_project,
+            _migrate_user_auth_version,
         )
         await _ensure_review_schema(conn)
         await _migrate_approval_approver_required(conn)
         await _migrate_skill_config_status_version(conn)
         await _migrate_message_anchor_fields(conn)
         await _migrate_conversation_mode_project(conn)
+        await _migrate_user_auth_version(conn)
 
     # Verify old data still intact after migration
     async with session_maker() as session:

@@ -250,11 +250,11 @@ REVIEW_JS = STATIC / "js" / "review.js"
 
 
 def test_api_request_error_message_includes_status_code():
-    """API.request 方法应在错误消息中包含 HTTP status code"""
+    """API.request 方法应在错误消息中包含 HTTP status code（BUG-197 起经 _errorDetail 统一提取详情）"""
     js = _read(API_JS)
     request_block = js.split("async request(method, path, body)", 1)[1].split("/* 认证 */", 1)[0]
     assert "const err = await resp.json().catch(() => ({ detail: resp.statusText }));" in request_block
-    assert "throw new Error(`${resp.status} ${err.detail || resp.statusText}`);" in request_block
+    assert "throw new Error(`${resp.status} ${this._errorDetail(err, resp.statusText)}`);" in request_block
 
 
 def test_js_global_objects_exposed_for_inline_handlers():

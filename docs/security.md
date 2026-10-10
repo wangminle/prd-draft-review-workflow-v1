@@ -35,8 +35,9 @@
 
 ### 二、认证机制(JWT + bcrypt)
 
-- **登录签发**:用户通过 `POST /api/auth/login` 验证账号密码后获取 JWT。密码以 **bcrypt 哈希**存储,明文不可逆。
+- **登录签发**:用户通过 `POST /api/auth/login` 验证账号密码后获取 JWT。密码以 **bcrypt 哈希**存储,明文不可逆;密码 UTF-8 编码后不得超过 **72 字节**(bcrypt 算法上限),超限在注册/改密/管理员创建与重置入口统一返回 422。
 - **算法与有效期**:JWT 签名算法 **HS256**,Token 有效期 **480 分钟(8 小时)**,前端存储于 `localStorage`。
+- **会话撤销(auth_version)**:JWT 携带 `av` 会话版本号,与 `users.auth_version` 逐请求比对;用户改密或管理员重置密码即通过原子 SQL 更新递增版本号(杜绝并发丢失更新),该用户全部旧 JWT 立即失效,需重新登录。升级前签发的无 `av` 旧 Token 一律视为失效。SSE 一次性票据签发时绑定 `auth_version`,消费时与数据库比对(改密前签发的票据立即失效);通知流与审查进度流的生成器循环内周期校验会话版本,改密/重置后旧长连接收到 `session_revoked` 事件并停止推送。
 - **JWT_SECRET 安全校验(启动期硬阻断)**:Service 层 `assert_jwt_secret_safe` 拒绝已知不安全占位值和不足 32 字符的密钥,直接抛 `RuntimeError` 阻止进程启动。空值不会拒绝启动：`./start.sh` 会先生成随机密钥并写入项目根目录 `.env`；不走官方脚本时 `config.py` 会生成进程内临时密钥（不落盘，重启后 token 失效）。占位值示例:`change-me-in-production`、`change-this-to-a-random-secret-string`、`secret`、`jwt-secret`、`your-secret-key`。配置方法见 [configuration.md](./configuration.md)。
 - **SSE 短票据(避免 Token 泄露)**:SSE 流式端点(通知流、Agent 流)无法使用 `Authorization: Bearer` 头(EventSource 限制),平台改用**一次性短票据**:
   - `POST /api/auth/sse-ticket` 获取票据,**TTL 60 秒**,单次消费即失效;
@@ -120,8 +121,9 @@ The platform uses three layers — System → Workspace → Collaborative Review
 
 ### 2. Authentication (JWT + bcrypt)
 
-- **Login issuance**: Users call `POST /api/auth/login`; upon successful credential verification a JWT is returned. Passwords are stored as **bcrypt hashes** (non-reversible).
+- **Login issuance**: Users call `POST /api/auth/login`; upon successful credential verification a JWT is returned. Passwords are stored as **bcrypt hashes** (non-reversible); passwords must not exceed **72 bytes** when UTF-8 encoded (the bcrypt algorithm limit) — oversized passwords are rejected with HTTP 422 at the register / change-password / admin create & reset entry points.
 - **Algorithm & lifetime**: JWT is signed with **HS256**; the token is valid for **480 minutes (8 hours)** and stored in `localStorage` on the client.
+- **Session revocation (auth_version)**: JWTs carry an `av` session-version claim compared per-request against `users.auth_version`; a password change or admin password reset increments the version via an atomic SQL update (no lost updates under concurrency), immediately invalidating all of that user's old JWTs and forcing re-login. Pre-upgrade tokens without an `av` claim are treated as invalid. SSE one-time tickets are bound to `auth_version` at issuance and validated against the database when consumed (tickets issued before a password change are rejected); the notification and review-progress stream generators re-check the session version in their loops, so established streams receive a `session_revoked` event and stop pushing after a password change or reset.
 - **JWT_SECRET safety check (hard-fail at startup)**: The service-layer `assert_jwt_secret_safe` rejects known insecure placeholders and secrets shorter than 32 characters (`MIN_JWT_SECRET_LENGTH = 32`) by raising `RuntimeError`. An empty value does not refuse startup: `./start.sh` generates a random secret and writes it to the project-root `.env`; if you skip the official script, `config.py` generates an in-process ephemeral secret (not persisted; tokens die after restart). Placeholder examples: `change-me-in-production`, `change-this-to-a-random-secret-string`, `secret`, `jwt-secret`, `your-secret-key`. For configuration see [configuration.md](./configuration.md).
 - **SSE short-lived ticket (avoids token leakage)**: SSE streaming endpoints (notification stream, Agent stream) cannot use the `Authorization: Bearer` header (an EventSource limitation), so the platform uses **single-use short-lived tickets** instead:
   - Obtain a ticket via `POST /api/auth/sse-ticket`, **TTL 60 seconds**, consumed once and then invalidated;

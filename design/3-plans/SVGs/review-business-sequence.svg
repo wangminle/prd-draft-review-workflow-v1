@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="720" viewBox="0 0 1180 720" role="img" aria-labelledby="title desc">
+  <title id="title">需求审查业务时序图</title>
+  <desc id="desc">展示用户、前端、审查 API、SkillRunner、Skills、数据库和 LLM 之间的审查业务时序。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
+    </marker>
+    <style>
+      .bg{fill:#f8fafc}
+      .lane{stroke:#cbd5e1;stroke-width:1.4;stroke-dasharray:5 5}
+      .head{fill:#e0f2fe;stroke:#0284c7;stroke-width:1.5}
+      .act{fill:#fff;stroke:#94a3b8;stroke-width:1.3}
+      .ok{fill:#ecfdf5;stroke:#059669;stroke-width:1.3}
+      .warn{fill:#fff7ed;stroke:#ea580c;stroke-width:1.3}
+      .title{font:700 22px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#0f172a}
+      .h{font:700 14px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#0f172a}
+      .t{font:12px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#334155}
+      .small{font:11px system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#64748b}
+      .line{stroke:#2563eb;stroke-width:1.8;fill:none;marker-end:url(#arrow)}
+      .return{stroke:#64748b;stroke-width:1.5;fill:none;stroke-dasharray:4 4;marker-end:url(#arrow)}
+    </style>
+  </defs>
+  <rect class="bg" width="1180" height="720" rx="18"/>
+  <text x="40" y="42" class="title">需求审查业务时序</text>
+  <text x="40" y="68" class="small">从文档导入到报告生成，状态、缓存、上下文和部分失败都由后端统一收口。</text>
+
+  <g>
+    <rect x="40" y="95" width="120" height="44" rx="10" class="head"/><text x="76" y="122" class="h">用户</text>
+    <rect x="210" y="95" width="120" height="44" rx="10" class="head"/><text x="246" y="122" class="h">前端</text>
+    <rect x="380" y="95" width="120" height="44" rx="10" class="head"/><text x="408" y="122" class="h">审查 API</text>
+    <rect x="550" y="95" width="120" height="44" rx="10" class="head"/><text x="578" y="122" class="h">Runner</text>
+    <rect x="720" y="95" width="120" height="44" rx="10" class="head"/><text x="758" y="122" class="h">Skills</text>
+    <rect x="890" y="95" width="120" height="44" rx="10" class="head"/><text x="918" y="122" class="h">SQLite</text>
+    <rect x="1060" y="95" width="90" height="44" rx="10" class="head"/><text x="1084" y="122" class="h">LLM</text>
+  </g>
+
+  <line x1="100" y1="150" x2="100" y2="680" class="lane"/>
+  <line x1="270" y1="150" x2="270" y2="680" class="lane"/>
+  <line x1="440" y1="150" x2="440" y2="680" class="lane"/>
+  <line x1="610" y1="150" x2="610" y2="680" class="lane"/>
+  <line x1="780" y1="150" x2="780" y2="680" class="lane"/>
+  <line x1="950" y1="150" x2="950" y2="680" class="lane"/>
+  <line x1="1105" y1="150" x2="1105" y2="680" class="lane"/>
+
+  <rect x="58" y="170" width="168" height="42" rx="8" class="act"/><text x="76" y="196" class="t">上传 DOCX / 导入历史文档</text>
+  <path class="line" d="M226 190 H380"/>
+  <rect x="388" y="220" width="174" height="42" rx="8" class="act"/><text x="406" y="246" class="t">保存文档并创建任务</text>
+  <path class="line" d="M562 240 H890"/>
+  <rect x="828" y="272" width="205" height="42" rx="8" class="ok"/><text x="846" y="298" class="t">写入 documents / tasks</text>
+  <path class="return" d="M890 330 H440"/>
+  <rect x="238" y="320" width="195" height="42" rx="8" class="ok"/><text x="256" y="346" class="t">SSE 订阅任务进度</text>
+  <path class="line" d="M440 365 H550"/>
+
+  <rect x="536" y="380" width="200" height="42" rx="8" class="warn"/><text x="554" y="406" class="t">读取上下文和缓存策略</text>
+  <path class="line" d="M736 400 H890"/>
+  <rect x="728" y="440" width="198" height="42" rx="8" class="act"/><text x="746" y="466" class="t">按模式执行 Skills 组合</text>
+  <path class="line" d="M840 460 H1060"/>
+  <rect x="1028" y="490" width="115" height="42" rx="8" class="act"/><text x="1046" y="516" class="t">结构化调用</text>
+  <path class="return" d="M1060 535 H780"/>
+  <rect x="700" y="545" width="260" height="42" rx="8" class="ok"/><text x="718" y="571" class="t">输出分类、逐篇分析、体系 Review、报告</text>
+  <path class="line" d="M780 590 H890"/>
+  <rect x="833" y="610" width="215" height="42" rx="8" class="ok"/><text x="851" y="636" class="t">持久化结果和上下文版本</text>
+  <path class="return" d="M890 660 H270"/>
+  <rect x="205" y="635" width="185" height="42" rx="8" class="ok"/><text x="223" y="661" class="t">展示三栏结果和可导出报告</text>
+
+  <path class="return" d="M610 425 C500 470, 500 520, 440 560"/>
+  <text x="452" y="520" class="small">取消/失败/部分失败：任务状态明确收口，保留中间结果入口</text>
+</svg>

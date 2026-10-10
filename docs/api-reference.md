@@ -10,7 +10,7 @@
 
 本文件为「AI 需求评审工作流平台」的 API 参考，面向集成方与二次开发者。所有业务接口均以 `/api` 为前缀,后端基于 FastAPI。
 
-> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.17`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
+> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.18`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
 
 ---
 
@@ -40,6 +40,7 @@ Authorization: Bearer <JWT token>
 - token 有效期 **480 分钟(8 小时)**,签发算法 **HS256**,密码使用 **bcrypt** 哈希校验。
 - 相关配置见 `src/config.yaml` 的 `auth` 段(`access_token_expire_minutes`、`algorithm`、`secret_key`)。
 - token 缺失或过期返回 `401 Unauthorized`。
+- **会话撤销(auth_version)**:JWT 负载携带 `av` 会话版本号,每个请求与数据库 `users.auth_version` 比对;用户改密或管理员重置密码后版本号原子递增,该用户**全部旧 token 立即失效**,返回 `401`(「登录状态已失效,请重新登录」),需重新登录。升级到会话撤销机制前签发的无 `av` 旧 token 同样视为失效(升级后需全员重新登录一次)。
 
 #### 2. SSE 流式端点 — 短票据(ticket)
 
@@ -52,6 +53,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 
 - TTL **60 秒**(`auth.sse_ticket_ttl_seconds`),进程内内存存储,**一次性消费**(consume 后即失效)。
 - **不再通过 query 传递 JWT token**;只用 ticket 换取用户身份。
+- **票据绑定会话版本**:签发时记录当时的 `auth_version`,消费时与数据库比对;用户改密/被重置密码后,改密前签发的票据消费即返回 `401`。已建立的通知流与审查进度流也会周期校验会话版本,失效后推送 `{"type":"session_revoked"}`(通知流)或 `{"task_status":"session_revoked"}`(审查进度流)事件并停止推送,前端收到后清除凭据并跳回登录页。
 
 > 注:Agent 流式端点 `POST /api/agent/runs/{run_id}/stream` 与聊天 `POST /api/chat` 虽然返回 `text/event-stream`,但它们是 **POST** 请求,可携带 Header,因此仍使用普通 Bearer,不需要 ticket。**只有 GET 类型的 SSE 端点**需要短票据。
 
@@ -70,7 +72,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 
 | 方法 | 路径 | 用途 | 鉴权 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.17"}` | 公开 |
+| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.18"}` | 公开 |
 | GET | `/api/app/branding` | 品牌配置(登录页 logo、顶栏 logo、favicon 等) | 公开 |
 | GET | `/assets/branding/{path}` | 静态品牌资产文件(防目录穿越) | 公开 |
 | POST | `/api/log` | 前端日志上报(写入 `runtime/logs/frontend.jsonl` 并记审计) | 用户(可选) |
@@ -84,6 +86,8 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 | POST | `/sse-ticket` | 获取一次性 SSE 短票据(TTL 60s) | 用户 |
 | GET | `/me` | 获取当前用户信息 | 用户 |
 | PUT | `/password` | 修改当前用户密码 | 用户 |
+
+> 注(密码与错误码):所有密码入口(注册、改密、管理员创建/重置)要求**长度 6–128 字符且 UTF-8 编码不超过 72 字节**(bcrypt 算法上限,约 72 个英文字符或 24 个中文字符),超限返回 `422`。`PUT /password` 的错误码:原密码错误 `400`;密码超限 `422`;提交时密码已被管理员等其他操作重置(会话版本冲突)`409`(「密码已在其他操作中被重置,请使用最新密码重新登录后再修改」),需用最新密码重新登录后再改。改密**成功即撤销该用户全部旧会话**(含当前登录,前端会自动回到登录页)。
 
 ### 对话 `/api/chat`
 
@@ -378,6 +382,7 @@ Authorization: Bearer <JWT token>
 - Token lifetime is **480 minutes (8 hours)**, signed with **HS256**; passwords are verified with **bcrypt**.
 - Configuration lives in the `auth` section of `src/config.yaml` (`access_token_expire_minutes`, `algorithm`, `secret_key`).
 - Missing/expired tokens return `401 Unauthorized`.
+- **Session revocation (auth_version)**: the JWT payload carries an `av` session-version claim compared against `users.auth_version` in the database on every request. A password change or admin reset increments the version atomically, so **all of that user's old tokens are invalidated immediately** with `401` ("登录状态已失效，请重新登录") and a re-login is required. Pre-upgrade tokens without an `av` claim are also treated as invalid (everyone logs in once more after upgrading).
 
 #### 2. SSE streaming endpoints — short-lived ticket
 
@@ -390,6 +395,7 @@ Ticket properties:
 
 - TTL **60 seconds** (`auth.sse_ticket_ttl_seconds`), in-memory, **single-use** (invalidated on consume).
 - **JWT tokens are no longer passed via query**; only the ticket is used to resolve the user identity.
+- **Tickets are bound to the session version**: the `auth_version` at issuance is recorded and re-checked against the database on consume; after the user changes their password or has it reset, tickets issued beforehand are rejected with `401` on consume. Established notification and review-progress streams also re-check the session version periodically; once revoked they push a `{"type":"session_revoked"}` (notification stream) or `{"task_status":"session_revoked"}` (review-progress stream) event and stop pushing — the frontend then clears credentials and returns to the login page.
 
 > Note: The Agent streaming endpoint `POST /api/agent/runs/{run_id}/stream` and chat `POST /api/chat` also return `text/event-stream`, but they are **POST** requests that can carry headers, so they still use plain Bearer and **do not** need a ticket. **Only GET-type SSE endpoints** require the short ticket.
 
@@ -408,7 +414,7 @@ The "Auth" column in the tables below uses these markers:
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.17"}` | Public |
+| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.18"}` | Public |
 | GET | `/api/app/branding` | Branding config (login logo, topbar logo, favicon, etc.) | Public |
 | GET | `/assets/branding/{path}` | Static branding assets (path-traversal protected) | Public |
 | POST | `/api/log` | Frontend log ingestion (writes `runtime/logs/frontend.jsonl` + audit) | User (optional) |
@@ -422,6 +428,8 @@ The "Auth" column in the tables below uses these markers:
 | POST | `/sse-ticket` | Obtain a one-time SSE ticket (TTL 60s) | User |
 | GET | `/me` | Get current user info | User |
 | PUT | `/password` | Change current user password | User |
+
+> Note (passwords & error codes): every password entry point (register, change, admin create/reset) requires **6–128 characters and at most 72 bytes when UTF-8 encoded** (the bcrypt limit — roughly 72 ASCII or 24 Chinese characters); oversized passwords return `422`. Error codes for `PUT /password`: wrong current password `400`; oversized new password `422`; the password was reset by another operation (e.g., an admin) while the request was in flight (session-version conflict) `409` ("密码已在其他操作中被重置，请使用最新密码重新登录后再修改") — re-login with the newest password and retry. A successful change **revokes all of the user's old sessions** (including the current one; the frontend returns to the login page automatically).
 
 ### Chat `/api/chat`
 

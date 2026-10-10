@@ -45,7 +45,7 @@ from app.schemas.review import (
     TaskInfo,
 )
 from app.services.crypto import decrypt_key
-from app.services.auth import consume_sse_ticket
+from app.services.auth import is_session_alive, validate_sse_ticket
 from app.utils import now_cn
 from app.services.retry import (
     RetryConfig,
@@ -241,9 +241,6 @@ async def _load_project_knowledge_context(db: AsyncSession, project_id: int, sna
     return "\n".join(parts)
 
 
-progress_queues: dict[int, asyncio.Queue] = {}
-
-
 def _resolve_stored_file_path(stored_path: str | os.PathLike[str] | None) -> str | None:
     """Delegate path resolution to ReviewFileStorage."""
     return _review_file_storage._resolve_stored_file_path(stored_path)
@@ -285,8 +282,44 @@ async def _find_cached_analyses(
     return await repo.find_cached_analyses(doc_ids, context_version, model_id)
 
 
-progress_queues: dict[int, asyncio.Queue] = {}
+# BUG-201：发布/订阅结构——键存在表示该任务管线活跃（启动时注册、结束时注销），
+# 值为各 SSE 连接的独立订阅队列。被撤销会话的连接收口时不会从共享队列
+# 取走并丢弃其他有效连接所需的终态事件。
+progress_queues: dict[int, set[asyncio.Queue]] = {}
 _pipeline_tasks: dict[int, asyncio.Task] = {}
+
+
+def _subscribe_progress(task_id: int) -> asyncio.Queue:
+    """为一条 SSE 连接注册独立订阅队列。"""
+    queue: asyncio.Queue = asyncio.Queue()
+    progress_queues.setdefault(task_id, set()).add(queue)
+    return queue
+
+
+def _unsubscribe_progress(task_id: int, queue: asyncio.Queue) -> None:
+    subscribers = progress_queues.get(task_id)
+    if not subscribers:
+        return
+    subscribers.discard(queue)
+
+
+async def _publish_progress(task_id: int, event: dict) -> None:
+    """向该任务的全部订阅连接广播事件；无订阅者时静默丢弃（DB 有终态可查）。"""
+    subscribers = progress_queues.get(task_id)
+    if not subscribers:
+        return
+    for queue in list(subscribers):
+        await queue.put(event)
+
+
+class _ProgressPublisher:
+    """管线侧发布句柄：保持原 `queue.put(...)` 调用形态，内部广播给全部订阅者。"""
+
+    def __init__(self, task_id: int):
+        self._task_id = task_id
+
+    async def put(self, event: dict) -> None:
+        await _publish_progress(self._task_id, event)
 
 # BUG-152: per-project asyncio.Lock 串行化 start_review 的"查询 active task + 创建新 task"
 # 临界区，消除并发请求重复创建 task、重复跑 LLM 分析的 TOCTOU 竞态。
@@ -1074,7 +1107,7 @@ async def start_review(
             },
         )
 
-        progress_queues[task.id] = asyncio.Queue()
+        progress_queues[task.id] = set()
 
         track_pipeline_task(
             task.id,
@@ -1100,17 +1133,20 @@ async def review_progress_sse(
     if not ticket:
         raise HTTPException(status_code=401, detail="未提供认证票据")
 
-    user_id_from_ticket = consume_sse_ticket(ticket)
-    if user_id_from_ticket is None:
+    # BUG-198：消费时校验会话版本，改密/重置前签发的票据立即失效
+    ticket_user = await validate_sse_ticket(ticket, db)
+    if ticket_user is None:
         raise HTTPException(status_code=401, detail="认证票据无效或已过期")
+    user_id_from_ticket = ticket_user.id
+    ticket_auth_version = ticket_user.auth_version or 1
 
     await _verify_project_owner(db, project_id, user_id_from_ticket)
     task_result = await db.execute(select(ReviewTask).where(ReviewTask.id == review_id, ReviewTask.project_id == project_id))
     if task_result.scalar_one_or_none() is None:
         raise HTTPException(status_code=404, detail="审查任务不存在")
 
-    queue = progress_queues.get(review_id)
-    if not queue:
+    subscribers = progress_queues.get(review_id)
+    if subscribers is None:
         try:
             result = await db.execute(select(ReviewTask).where(ReviewTask.id == review_id))
             task = result.scalar_one_or_none()
@@ -1123,17 +1159,42 @@ async def review_progress_sse(
         except Exception:
             raise HTTPException(status_code=404, detail="审查任务不存在")
 
+    queue = _subscribe_progress(review_id)
+
+    # BUG-201：订阅后复查任务状态——若管线在「检查→订阅」窗口内结束并注销，
+    # 终态事件发布时本连接尚未订阅，需从 DB 快照直接收口，避免空等。
+    await db.rollback()
+    early_result = await db.execute(select(ReviewTask).where(ReviewTask.id == review_id))
+    early_task = early_result.scalar_one_or_none()
+    if early_task is not None and early_task.status in (
+        "completed", "completed_with_warnings", "failed", "cancelled",
+    ):
+        _unsubscribe_progress(review_id, queue)
+        data = {"task_status": early_task.status, "current_step": early_task.current_step}
+        return StreamingResponse(iter([f"data: {json.dumps(data)}\n\n"]), media_type="text/event-stream")
+
     async def event_generator():
-        while True:
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=30.0)
-                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
-                if event.get("task_status") in ("completed", "completed_with_warnings", "failed", "cancelled"):
-                    # BUG-184（Issue #8）：completed_with_warnings 同为终态，缺失时
-                    # 流不收口，前端 EventSource 在 keepalive 循环里等不到断流。
-                    break
-            except asyncio.TimeoutError:
-                yield ": keepalive\n\n"
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    # BUG-198/201：撤销校验在取事件之后，但本连接独占订阅队列，
+                    # 收口不会消耗其他有效连接的事件。
+                    if not await is_session_alive(db, user_id_from_ticket, ticket_auth_version):
+                        yield f"data: {json.dumps({'task_status': 'session_revoked'}, ensure_ascii=False)}\n\n"
+                        return
+                    yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+                    if event.get("task_status") in ("completed", "completed_with_warnings", "failed", "cancelled"):
+                        # BUG-184（Issue #8）：completed_with_warnings 同为终态，缺失时
+                        # 流不收口，前端 EventSource 在 keepalive 循环里等不到断流。
+                        return
+                except asyncio.TimeoutError:
+                    if not await is_session_alive(db, user_id_from_ticket, ticket_auth_version):
+                        yield f"data: {json.dumps({'task_status': 'session_revoked'}, ensure_ascii=False)}\n\n"
+                        return
+                    yield ": keepalive\n\n"
+        finally:
+            _unsubscribe_progress(review_id, queue)
 
     return StreamingResponse(event_generator(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -1168,9 +1229,7 @@ async def cancel_review(project_id: int, review_id: int, request: Request, user:
         raise HTTPException(status_code=400, detail="任务已结束")
     task.status = "cancelled"
     await db.commit()
-    q = progress_queues.get(review_id)
-    if q:
-        await q.put({"task_status": "cancelled"})
+    await _publish_progress(review_id, {"task_status": "cancelled"})
     _audit_log_writer.write(
         "review.cancel",
         actor=user,
@@ -1561,13 +1620,11 @@ async def _run_pipeline(
             _early_step_statuses = {str(i): "skipped" for i in range(len(steps))}
             task.step_statuses = json.dumps(_early_step_statuses, ensure_ascii=False)
             await db.commit()
-            _early_queue = progress_queues.get(task_id)
-            if _early_queue:
-                await _early_queue.put({
-                    "task_status": "failed",
-                    "error": err_msg,
-                    "step_statuses": _early_step_statuses,
-                })
+            await _publish_progress(task_id, {
+                "task_status": "failed",
+                "error": err_msg,
+                "step_statuses": _early_step_statuses,
+            })
             return
 
         # P0.C.3: Freeze snapshot versions for project source refs
@@ -1581,7 +1638,8 @@ async def _run_pipeline(
         await db.commit()
 
         repo = ReviewTaskRepository(db)
-        queue = progress_queues.get(task_id)
+        # BUG-201：发布/订阅广播句柄，向全部订阅连接投递（无订阅者时静默丢弃）
+        queue = _ProgressPublisher(task_id)
 
         try:
             async def _check_cancelled():

@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1180" height="520" viewBox="0 0 1180 520" role="img" aria-labelledby="title desc">
+  <title id="title">需求审查用户主流程</title>
+  <desc id="desc">展示用户从登录、新建项目、上传文档、选择审查模式、后台流水线处理到查看六类结果的主流程。</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L10,5 L0,10 z" fill="#1d4ed8"/>
+    </marker>
+    <style>
+      .bg { fill: #f8fafc; }
+      .box { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; rx: 14; }
+      .box-blue { fill: #eff6ff; stroke: #93c5fd; stroke-width: 1.5; rx: 14; }
+      .box-green { fill: #ecfdf5; stroke: #86efac; stroke-width: 1.5; rx: 14; }
+      .box-orange { fill: #fff7ed; stroke: #fdba74; stroke-width: 1.5; rx: 14; }
+      .title { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 26px; font-weight: 700; fill: #0f172a; }
+      .h { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 17px; font-weight: 700; fill: #0f172a; }
+      .t { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 13px; fill: #334155; }
+      .small { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 12px; fill: #64748b; }
+      .line { stroke: #1d4ed8; stroke-width: 2.2; fill: none; marker-end: url(#arrow); }
+      .thin { stroke: #94a3b8; stroke-width: 1.4; fill: none; stroke-dasharray: 5 5; marker-end: url(#arrow); }
+      .pill { fill: #dbeafe; stroke: #60a5fa; stroke-width: 1; rx: 16; }
+      .pill-green { fill: #dcfce7; stroke: #4ade80; stroke-width: 1; rx: 16; }
+    </style>
+  </defs>
+  <rect class="bg" width="1180" height="520"/>
+  <text class="title" x="40" y="46">需求审查用户主流程</text>
+  <text class="small" x="40" y="72">页面操作触发 SkillRunner，Runner 串联可插拔 Skills，并将进度和结果回传到三栏工作台。</text>
+
+  <rect class="box" x="45" y="116" width="160" height="76"/>
+  <text class="h" x="83" y="148">用户登录</text>
+  <text class="small" x="77" y="170">JWT 认证 / 权限隔离</text>
+
+  <rect class="box" x="245" y="116" width="175" height="76"/>
+  <text class="h" x="283" y="148">选择/新建项目</text>
+  <text class="small" x="286" y="170">项目级文档与上下文</text>
+
+  <rect class="box" x="460" y="116" width="185" height="76"/>
+  <text class="h" x="498" y="148">上传或导入文档</text>
+  <text class="small" x="500" y="170">DOCX / 历史文档 / 飞书规划</text>
+
+  <rect class="box-blue" x="685" y="94" width="230" height="120"/>
+  <text class="h" x="742" y="126">选择审查模式</text>
+  <rect class="pill" x="710" y="148" width="78" height="28"/>
+  <text class="small" x="727" y="166">quick</text>
+  <rect class="pill" x="798" y="148" width="78" height="28"/>
+  <text class="small" x="814" y="166">review</text>
+  <rect class="pill" x="710" y="182" width="78" height="28"/>
+  <text class="small" x="728" y="200">insight</text>
+  <rect class="pill" x="798" y="182" width="78" height="28"/>
+  <text class="small" x="819" y="200">draft</text>
+  <rect class="pill" x="886" y="148" width="58" height="62"/>
+  <text class="small" x="904" y="174">pm</text>
+  <text class="small" x="902" y="196">full</text>
+
+  <rect class="box-green" x="960" y="116" width="175" height="76"/>
+  <text class="h" x="1000" y="148">创建审查任务</text>
+  <text class="small" x="1008" y="170">SSE 推送进度</text>
+
+  <path class="line" d="M205 154 L245 154"/>
+  <path class="line" d="M420 154 L460 154"/>
+  <path class="line" d="M645 154 L685 154"/>
+  <path class="line" d="M915 154 L960 154"/>
+
+  <rect class="box-orange" x="190" y="278" width="250" height="150"/>
+  <text class="h" x="255" y="310">SkillRunner 流水线</text>
+  <text class="t" x="222" y="342">1. DOCX 转 Markdown</text>
+  <text class="t" x="222" y="366">2. 文档分类与版本链</text>
+  <text class="t" x="222" y="390">3. 逐篇分析 / 体系 Review</text>
+  <text class="t" x="222" y="414">4. 洞察 / PRD / 报告生成</text>
+
+  <rect class="box-blue" x="505" y="278" width="250" height="150"/>
+  <text class="h" x="563" y="310">上下文与缓存</text>
+  <text class="t" x="535" y="342">ReviewContext 版本注入</text>
+  <text class="t" x="535" y="366">按文档范围和模型复用缓存</text>
+  <text class="t" x="535" y="390">取消、失败、部分成功收口</text>
+  <text class="t" x="535" y="414">结构化结果入库</text>
+
+  <rect class="box-green" x="820" y="278" width="270" height="150"/>
+  <text class="h" x="900" y="310">结果工作台</text>
+  <rect class="pill-green" x="850" y="336" width="78" height="28"/>
+  <text class="small" x="873" y="354">概览</text>
+  <rect class="pill-green" x="940" y="336" width="78" height="28"/>
+  <text class="small" x="958" y="354">快速审查</text>
+  <rect class="pill-green" x="850" y="372" width="78" height="28"/>
+  <text class="small" x="861" y="390">深度分析</text>
+  <rect class="pill-green" x="940" y="372" width="78" height="28"/>
+  <text class="small" x="950" y="390">下一阶段</text>
+  <rect class="pill-green" x="1030" y="336" width="42" height="64"/>
+  <text class="small" x="1040" y="360">PRD</text>
+  <text class="small" x="1040" y="386">PM</text>
+
+  <path class="line" d="M1048 192 C1048 250, 440 235, 365 278"/>
+  <path class="line" d="M440 353 L505 353"/>
+  <path class="line" d="M755 353 L820 353"/>
+  <path class="thin" d="M630 278 C650 235, 790 235, 801 214"/>
+</svg>

@@ -1191,6 +1191,15 @@ const Review = {
             const source = this.eventSource;
             source.onmessage = async (event) => {
                 const data = JSON.parse(event.data);
+                // BUG-198：改密/重置密码后服务端收口旧连接，强制重新登录
+                if (data.task_status === 'session_revoked') {
+                    source.close();
+                    if (this.eventSource === source) this.eventSource = null;
+                    App._showToast('登录状态已失效，请重新登录', 3000);
+                    API.clearToken();
+                    setTimeout(() => location.reload(), 1200);
+                    return;
+                }
                 const current = this._getTaskInfo(taskId) || { taskId, mode: this.currentMode, documentIds: this.selectedDocumentId ? [this.selectedDocumentId] : [] };
                 this._upsertReviewTask({ ...current, status: data.task_status, current_step: data.current_step });
                 this._updateProgress(data);
@@ -1216,7 +1225,7 @@ const Review = {
                 // ticket 导致 401 循环；确需重连时经 _listenProgress 重新
                 // 调 getReviewProgress 签发新 ticket。
                 const info = this._getTaskInfo(taskId);
-                if (info && ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(info.status)) {
+                if (info && ['completed', 'completed_with_warnings', 'failed', 'cancelled', 'session_revoked'].includes(info.status)) {
                     return;
                 }
                 this._pollProgress(taskId);

@@ -10,7 +10,7 @@
 
 ## 中文
 
-面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.17。
+面向团队协作的需求评审工作流平台，重点解决 PRD 从上传、拆解、逐篇分析、系统评审到报告生成的全流程闭环问题。项目采用内网可部署架构，强调可追溯、可配置、可扩展，以及运行时数据与源码分离。当前版本 V0.3.18。
 
 ### 架构设计
 
@@ -70,7 +70,7 @@ flowchart LR
 - 个人知识与个人 Agent（P5）：个人私有知识作用域，支持"团队资料/我的资料"子视图切换；个人 Agent 默认行为配置（默认范围、名称、状态）；Agent 间对话通知；消息中心完善（批量已读/归档）；评论 @提及和 resolve 功能。
 - 治理与运营（P6）：成本统计服务（LLM 会话日志写入 `workspace_id`/`user_id`/`mode` 并按归属聚合，支持日/周/自定义范围查询和汇总）；质量统计服务（基于 DocAnalysis 质量评分的周聚合和趋势查询）；Skill 管理与回归测试框架（启停控制、参数化回归验证）；Agent 生命周期治理（归档退役）；权限审计日志查询；Workspace 配额与预警（WorkspaceBudget + BudgetGuard 硬限制拦截；聊天与审查启动均校验 workspace 成员资格并执行硬限，拒绝伪造空间绕过配额）。
 - 品牌与本地个性化配置：支持通过 `runtime/config/ui-branding.yaml` 和 `runtime/assets/branding/` 覆盖产品名称、Logo、favicon、主题色和页面文案，便于通用代码覆盖旧项目时保留本地品牌。顶栏展示版本来自品牌配置 `app_version`；应用版本号的唯一事实来源是根目录 `VERSION` 文件（`update.sh` 部署时会把 yaml 中的 `app_version` 同步为该值）。
-- 安全启动与密钥治理：`JWT_SECRET` 可留空（`./start.sh` 首次生成并写入项目根目录 `.env`），拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；聊天附件 `file_id` 经安全路径解析防目录穿越；SQLite 连接启用 `foreign_keys=ON`；生命周期结束前先停止审查后台任务与 Embedding Worker，再释放 SQLAlchemy engine。
+- 安全启动与密钥治理：`JWT_SECRET` 可留空（`./start.sh` 首次生成并写入项目根目录 `.env`），拒绝示例/过短密钥；支持 `ADMIN_INITIAL_PASSWORD` 覆盖首次管理员密码；改密/管理员重置密码即撤销该用户全部旧会话（JWT 携带 `auth_version` 会话版本号逐请求比对，SSE 票据绑定版本、长连接收 `session_revoked` 断流）；密码统一限制 UTF-8 编码 72 字节内（bcrypt 上限，超限 422）；聊天附件 `file_id` 经安全路径解析防目录穿越；SQLite 连接启用 `foreign_keys=ON`；生命周期结束前先停止审查后台任务与 Embedding Worker，再释放 SQLAlchemy engine。
 - 流程可追踪：评审任务具备状态、步骤详情、结果落库和日志记录能力，便于排查和复盘。
 - 上下文注入与 Prompt 配置：支持评审上下文管理、通用 Prompt 模板和需求评审 Prompt 分离管理。
 - 实时任务体验：评审流程支持流式进度反馈；LLM 瞬时失败会自动重试（默认 7 次、退避 2–64 秒），等待期间页面弹出 toast 提示，不写入通知列表。
@@ -167,7 +167,7 @@ Apache License 2.0。详见 [LICENSE](LICENSE)。
 
 ## English
 
-An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.17.
+An intranet-deployable PRD review workflow platform built for team collaboration. The system is designed around end-to-end requirement review rather than isolated chat sessions, covering document intake, decomposition, per-document analysis, system-level review, and report generation in one traceable pipeline. Current version V0.3.18.
 
 ### Architecture
 
@@ -227,7 +227,7 @@ Supported review modes:
 - Agent conversation and tool registration: autonomous tool-calling conversations via Pi Agent (Architecture A: RPC subprocess bridging); AgentProfile/AgentRun for identity and run tracking; deny-by-default tool allowlist (empty list → `rag_search` only) with authorization scope enforced in the Extension and again on the RAG endpoint; high-risk tools (`bash`/`write`/`edit`/`read`) require human approval; non-admins cannot enable or self-approve high-risk tools; Pi cwd sandboxed under `runtime/agent_sandboxes/`; global MCP config requires admin, workspace-scoped MCP requires manage; frontend Agent mode toggle and approval panel.
 - Personal knowledge and personal Agent (P5): personal private knowledge scope with "Team / Mine" sub-view toggle; personal Agent default behavior configuration (default scope, name, status); inter-Agent conversation notifications; enhanced message center (batch read/archive); comment @mention and resolve features.
 - Governance and operations (P6): cost statistics service (LLM session logs record `workspace_id`/`user_id`/`mode` and aggregate by ownership; daily/weekly/custom range query and summary); quality statistics service (weekly aggregation and trend queries based on DocAnalysis quality scores); Skill management and regression testing framework (enable/disable, parametrized regression verification); Agent lifecycle governance (archive and retirement); permission audit log queries; Workspace quota and alerting (WorkspaceBudget + BudgetGuard hard-limit enforcement; chat and review start both verify workspace membership and enforce the hard limit, rejecting forged workspace IDs that bypass quotas).
-- Secure startup and secret hygiene: `JWT_SECRET` may be empty (`./start.sh` generates one and writes it to the project-root `.env`); example/short secrets are rejected; optional `ADMIN_INITIAL_PASSWORD`; chat attachment `file_id` is resolved safely to block path traversal; SQLite connections enable `foreign_keys=ON`; lifespan stops review pipeline tasks and the Embedding Worker before disposing the SQLAlchemy engine.
+- Secure startup and secret hygiene: `JWT_SECRET` may be empty (`./start.sh` generates one and writes it to the project-root `.env`); example/short secrets are rejected; optional `ADMIN_INITIAL_PASSWORD`; a password change or admin reset revokes all of that user's old sessions (JWTs carry an `auth_version` session-version claim checked per request; SSE tickets are version-bound and live streams receive `session_revoked` and stop); passwords are capped at 72 UTF-8 bytes (the bcrypt limit; oversized → 422); chat attachment `file_id` is resolved safely to block path traversal; SQLite connections enable `foreign_keys=ON`; lifespan stops review pipeline tasks and the Embedding Worker before disposing the SQLAlchemy engine.
 - Traceable workflow execution with task status, step details, persisted outputs, and runtime logs.
 - Separate management for general prompts and review-specific prompts.
 - Streaming progress for long-running AI review tasks; transient LLM failures retry automatically (7 attempts, 2–64s backoff) with an in-page toast (not stored in the notification inbox).
