@@ -446,13 +446,18 @@ class TestPathResolution:
         assert result is not None
         assert "review_uploads" in result
 
-    def test_absolute_path_preserved(self):
-        """绝对路径应直接返回不修改"""
-        # 使用平台原生的绝对路径（Windows 上 /tmp/... 不是绝对路径）
-        import tempfile
-        abs_path = os.path.join(tempfile.gettempdir(), "some", "absolute", "path.docx")
+    def test_absolute_path_preserved_within_runtime(self):
+        """runtime 内的绝对路径应原样返回（BUG-217 可信根边界）。"""
+        from app.runtime_paths import runtime_path
+        abs_path = str(runtime_path("data", "some", "absolute", "path.docx"))
         result = _resolve_stored_file_path(abs_path)
         assert result == abs_path
+
+    def test_absolute_path_outside_runtime_rejected(self):
+        """runtime/upload 根外的绝对路径不得进入读取/转换链路。"""
+        import tempfile
+        abs_path = os.path.join(tempfile.gettempdir(), "outside-root.docx")
+        assert _resolve_stored_file_path(abs_path) is None
 
     def test_none_path_returns_none(self):
         result = _resolve_stored_file_path(None)

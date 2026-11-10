@@ -57,6 +57,14 @@ async def _register_and_login(client, username, password="testpass123"):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _approver_id(client):
+    import uuid
+    headers = await _register_and_login(client, f"bug7_approver_{uuid.uuid4().hex[:8]}")
+    resp = await client.get("/api/auth/me", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
 async def _create_project(client, headers, name="Bug测试项目"):
     resp = await client.post(
         "/api/review/projects",
@@ -140,7 +148,7 @@ async def test_bug2_get_request_requires_access(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "Bug2b测试"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "Bug2b测试"},
         headers=admin_h,
     )
     request_id = req_resp.json()["id"]
@@ -174,7 +182,7 @@ async def test_bug2_add_participant_requires_initiator(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "Bug2d测试"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "Bug2d测试"},
         headers=admin_h,
     )
     request_id = req_resp.json()["id"]

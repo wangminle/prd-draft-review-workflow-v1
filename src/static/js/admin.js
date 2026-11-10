@@ -2,6 +2,7 @@
 const Admin = {
     _lastTab: null,
     _modelDragPreview: null,
+    _modalToken: 0,
 
     init() {
         const savedTab = this._lastTab || localStorage.getItem('admin-active-tab') || 'stats';
@@ -68,6 +69,8 @@ const Admin = {
 
     /* ── 模态框 ── */
     showModal(html) {
+        this._modalToken += 1;
+        const modalToken = this._modalToken;
         const overlay = document.getElementById('modal-overlay');
         const content = document.getElementById('modal-content');
         content.innerHTML = `
@@ -76,9 +79,11 @@ const Admin = {
         `;
         overlay.style.display = 'flex';
         content.querySelector('[data-action="modal-close"]')?.addEventListener('click', () => this.closeModal());
+        return modalToken;
     },
 
     closeModal() {
+        this._modalToken += 1;
         const overlay = document.getElementById('modal-overlay');
         overlay.style.display = 'none';
         overlay.onclick = null;
@@ -558,7 +563,7 @@ const Admin = {
                     </td>
                     <td><small>${this._esc(m.api_base)}</small></td>
                     <td>
-                        <code style="font-size:var(--fs-12)">${m.api_key_masked || '未配置'}</code>
+                        <code style="font-size:var(--fs-12)">${this._esc(m.api_key_masked || '未配置')}</code>
                     </td>
                     <td>
                         ${m.enabled
@@ -585,14 +590,17 @@ const Admin = {
                     </td>
                 </tr>
             `).join('');
-            tbody.querySelectorAll('[data-action="edit-model"]').forEach((btn, i) => {
-                btn.addEventListener('click', () => this.editModel(models[i].model_id));
+            tbody.querySelectorAll('[data-action="edit-model"]').forEach((btn) => {
+                const row = btn.closest('tr');
+                btn.addEventListener('click', () => this.editModel(row?.dataset.modelId));
             });
-            tbody.querySelectorAll('[data-action="test-model"]').forEach((btn, i) => {
-                btn.addEventListener('click', (e) => this.testAndSpeed(models[i].model_id, e));
+            tbody.querySelectorAll('[data-action="test-model"]').forEach((btn) => {
+                const row = btn.closest('tr');
+                btn.addEventListener('click', (e) => this.testAndSpeed(row?.dataset.modelId, e));
             });
-            tbody.querySelectorAll('[data-action="delete-model"]').forEach((btn, i) => {
-                btn.addEventListener('click', () => this.deleteModel(models[i].model_id));
+            tbody.querySelectorAll('[data-action="delete-model"]').forEach((btn) => {
+                const row = btn.closest('tr');
+                btn.addEventListener('click', () => this.deleteModel(row?.dataset.modelId));
             });
             this._bindModelDragAndDrop(tbody, models);
         } catch (e) {
@@ -720,7 +728,7 @@ const Admin = {
     },
 
     editModel(modelId) {
-        this.showModal(`
+        const modalToken = this.showModal(`
             <h3>模型配置</h3>
             <div class="field">
                 <label>模型 ID</label>
@@ -805,9 +813,12 @@ const Admin = {
 
         this._bindSensitiveInputToggle('modal-api-key');
         this._bindThinkingFieldsVisibility();
+        const saveModelBtn = document.getElementById('btn-save-model');
+        if (saveModelBtn) saveModelBtn.disabled = true;
         document.getElementById('btn-save-model').addEventListener('click', () => this.saveModel(modelId));
 
         API.getAdminModels().then(models => {
+            if (modalToken !== this._modalToken) return;
             const m = models.find(x => x.model_id === modelId);
             if (m) {
                 document.getElementById('modal-model-name').value = m.name || '';
@@ -822,7 +833,16 @@ const Admin = {
                 document.getElementById('modal-thinking-adapter').value = m.thinking_adapter || 'none';
                 if (m.thinking_payload) document.getElementById('modal-thinking-payload').value = m.thinking_payload;
                 this._syncThinkingFieldsVisibility();
+                if (saveModelBtn) saveModelBtn.disabled = false;
+            } else {
+                this.closeModal();
+                alert('模型配置不存在或已被删除');
             }
+        }).catch(e => {
+            // BUG-216：加载失败时关闭弹窗，且加载完成前禁止提交空表单。
+            if (modalToken !== this._modalToken) return;
+            this.closeModal();
+            alert('加载模型配置失败: ' + (e.message || '未知错误'));
         });
     },
 
@@ -994,9 +1014,11 @@ const Admin = {
             <div id="skill-edit-error" class="field-error" aria-live="polite"></div>
             <div class="btn-row">
                 <button class="btn btn-ghost btn-sm" onclick="Admin.closeModal()">取消</button>
-                <button class="btn btn-primary btn-sm" onclick="Admin.saveSkillUpdateUrl('${this._escAttr(skill.skill_id)}')">保存</button>
+                <button class="btn btn-primary btn-sm" id="btn-save-skill-update" data-skill-id="${this._escAttr(skill.skill_id)}">保存</button>
             </div>
         `);
+        const saveBtn = document.getElementById('btn-save-skill-update');
+        saveBtn?.addEventListener('click', () => this.saveSkillUpdateUrl(saveBtn.dataset.skillId));
     },
 
     async saveSkillUpdateUrl(skillId) {

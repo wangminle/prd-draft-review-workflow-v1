@@ -20,13 +20,15 @@ async def test_docx_conversion_accepts_skill_string_return(tmp_path, monkeypatch
         "    return str(output_md)\n",
         encoding="utf-8",
     )
-    source_docx = tmp_path / "input.docx"
+    runtime_root = tmp_path / "runtime"
+    source_docx = runtime_root / "data" / "review_uploads" / "6" / "input.docx"
+    source_docx.parent.mkdir(parents=True)
     source_docx.write_bytes(b"fake docx is enough because the skill is stubbed")
 
     monkeypatch.setattr(review, "SKILLS_DIR", str(skills_dir))
     # 转换缓存按 document_id 落在 runtime/data/converted/ 下；不隔离 runtime 根
     # 会读写真实缓存——既被旧缓存假绿掩盖（BUG-177），也污染真实数据
-    monkeypatch.setenv("RUNTIME_ROOT", str(tmp_path / "runtime"))
+    monkeypatch.setenv("RUNTIME_ROOT", str(runtime_root))
     sys.modules.pop("convert_docx", None)
 
     result = Path(await review._convert_docx(str(source_docx), 123))

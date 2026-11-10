@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.review import KnowledgeSnapshot, Artifact
@@ -133,33 +133,50 @@ class ArtifactRepository:
         return list(result.scalars().all())
 
     async def confirm(self, artifact: Artifact) -> Artifact:
-        """P4.B.4: 物料确认冻结 — draft→confirmed，confirmed 后不可修改。"""
-        if artifact.status != "draft":
-            raise ValueError(f"Artifact status is '{artifact.status}', can only confirm from 'draft'")
-        artifact.status = "confirmed"
-        artifact.confirmed_at = now_cn()
-        artifact.updated_at = now_cn()
-        await self._db.flush()
+        """P4.B.4: 物料确认冻结 — draft→confirmed，confirmed 后不可修改。
+
+        CON-01：使用带旧状态条件的 UPDATE，避免并发 update_content 与 confirm
+        都读到 draft 后互相覆盖。
+        """
+        now = now_cn()
+        result = await self._db.execute(
+            update(Artifact)
+            .where(Artifact.id == artifact.id, Artifact.status == "draft")
+            .values(status="confirmed", confirmed_at=now, updated_at=now)
+        )
+        if result.rowcount == 0:
+            await self._db.refresh(artifact)
+            raise ValueError(
+                f"Artifact status is '{artifact.status}', can only confirm from 'draft'"
+            )
         await self._db.refresh(artifact)
         return artifact
 
     async def unconfirm(self, artifact: Artifact) -> Artifact:
         """取消确认 — confirmed→draft，回到可编辑状态。"""
-        if artifact.status != "confirmed":
-            raise ValueError(f"Artifact status is '{artifact.status}', can only unconfirm from 'confirmed'")
-        artifact.status = "draft"
-        artifact.confirmed_at = None
-        artifact.updated_at = now_cn()
-        await self._db.flush()
+        now = now_cn()
+        result = await self._db.execute(
+            update(Artifact)
+            .where(Artifact.id == artifact.id, Artifact.status == "confirmed")
+            .values(status="draft", confirmed_at=None, updated_at=now)
+        )
+        if result.rowcount == 0:
+            await self._db.refresh(artifact)
+            raise ValueError(
+                f"Artifact status is '{artifact.status}', can only unconfirm from 'confirmed'"
+            )
         await self._db.refresh(artifact)
         return artifact
 
     async def update_content(self, artifact: Artifact, content_json: str) -> Artifact:
         """更新产物内容（仅 draft 状态可修改）。"""
-        if artifact.status != "draft":
+        result = await self._db.execute(
+            update(Artifact)
+            .where(Artifact.id == artifact.id, Artifact.status == "draft")
+            .values(content_json=content_json, updated_at=now_cn())
+        )
+        if result.rowcount == 0:
+            await self._db.refresh(artifact)
             raise ValueError("Cannot update confirmed artifact")
-        artifact.content_json = content_json
-        artifact.updated_at = now_cn()
-        await self._db.flush()
         await self._db.refresh(artifact)
         return artifact

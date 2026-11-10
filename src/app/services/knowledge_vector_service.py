@@ -67,6 +67,8 @@ class VectorChunk:
     text: str
     owner_id: int | None = None
     visibility: str = "team"
+    document_id: int | None = None
+    write_token: str = ""
 
 
 @dataclass
@@ -141,6 +143,7 @@ class KnowledgeVectorService:
                 "text": c.text,
                 "owner_id": c.owner_id or 0,
                 "visibility": c.visibility,
+                "write_token": c.write_token,
                 "vector": vectors[i],
             }
             for i, c in enumerate(chunks)
@@ -150,26 +153,82 @@ class KnowledgeVectorService:
 
         try:
             table = db.open_table(table_name)
-            # 删除已存在的同 chunk_id 记录后追加
-            chunk_ids = [c.chunk_id for c in chunks]
-            # LanceDB delete 使用 SQL 过滤表达式
-            ids_str = ",".join(str(cid) for cid in chunk_ids)
-            try:
-                table.delete(f"chunk_id IN ({ids_str})")
-            except Exception:
-                # 如果表为空或无匹配，忽略
-                pass
-            # 追加新数据
-            table.add(data)
-            self._table = table
         except (ValueError, FileNotFoundError, KeyError):
-            # 表不存在，创建新表
             table = db.create_table(table_name, data, mode="create")
-            self._table = table
+        else:
+            # 旧索引保留原有记录，新写入通过 token 区分补偿归属。
+            if "write_token" not in table.schema.names:
+                try:
+                    table.add_columns({"write_token": "''"})
+                except Exception:
+                    # 并发写入可能已经完成加列，只接受确认成功的迁移。
+                    table = db.open_table(table_name)
+                    if "write_token" not in table.schema.names:
+                        raise
+            # CON：优先使用 merge_insert 原子 upsert；不支持时回退到 delete+add。
+            # 避免 delete 成功、add 失败后旧向量已被删除。
+            try:
+                (
+                    table.merge_insert("chunk_id")
+                    .when_matched_update_all()
+                    .when_not_matched_insert_all()
+                    .execute(data)
+                )
+            except AttributeError:
+                chunk_ids = [c.chunk_id for c in chunks]
+                ids_str = ",".join(str(cid) for cid in chunk_ids)
+                try:
+                    table.delete(f"chunk_id IN ({ids_str})")
+                except Exception:
+                    pass
+                table.add(data)
+        self._table = table
 
         self._initialized = True
         logger.info(f"[VECTOR] upsert {len(chunks)} chunks to LanceDB")
         return len(chunks)
+
+    async def delete_by_chunk_ids(self, chunk_ids: list[int]) -> int:
+        """按 chunk_id 删除向量，用于 DB 提交失败后的补偿。"""
+        if not chunk_ids:
+            return 0
+        try:
+            table = self._get_db().open_table("knowledge_chunks")
+            ids_str = ",".join(str(int(cid)) for cid in chunk_ids)
+            table.delete(f"chunk_id IN ({ids_str})")
+            return len(chunk_ids)
+        except Exception:
+            return 0
+
+    async def delete_stale_vectors(
+        self, pairs: list[tuple[int, str]], *, write_token: str | None = None,
+    ) -> int:
+        """只删除 chunk_id 与旧正文同时匹配的向量（BUG-214）。
+
+        SQLite 可能复用被删除的 chunk_id；若新 worker 已写入相同 ID 的新正文，
+        仅按 ID 删除会误删新向量。这里用 (chunk_id, text) 双条件精确清理旧向量。
+        worker 补偿还必须提供 write_token，只删除该次写入拥有的记录。
+        """
+        if not pairs:
+            return 0
+
+        def quote(value: str) -> str:
+            return "'" + str(value).replace("'", "''") + "'"
+
+        conditions = " OR ".join(
+            f"(chunk_id = {int(entry[0])} AND text = {quote(entry[1])})"
+            for entry in pairs
+        )
+        try:
+            table = self._get_db().open_table("knowledge_chunks")
+            if write_token is not None:
+                if "write_token" not in table.schema.names:
+                    return 0
+                conditions = f"({conditions}) AND write_token = {quote(write_token)}"
+            table.delete(conditions)
+            return len(pairs)
+        except Exception:
+            return 0
 
     async def search(
         self,

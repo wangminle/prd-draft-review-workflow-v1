@@ -59,7 +59,8 @@ def test_mammoth_callback_never_rewrites_oversized_image(tmp_path):
 async def test_conversion_timeout_terminates_worker_without_delayed_write(tmp_path, monkeypatch):
     """超时必须终止工作进程，不能在返回后继续写入转换目录。"""
     marker_path = tmp_path / "late-write.txt"
-    source_path = tmp_path / "source.docx"
+    source_path = tmp_path / "uploads" / "source.docx"
+    source_path.parent.mkdir(parents=True)
     source_path.write_bytes(b"placeholder")
 
     worker_code = (
@@ -91,7 +92,8 @@ async def test_conversion_timeout_terminates_worker_without_delayed_write(tmp_pa
 async def test_conversion_cancellation_terminates_worker_without_delayed_write(tmp_path, monkeypatch):
     """调用方取消任务时也必须终止工作进程，不能留下孤儿转换。"""
     marker_path = tmp_path / "cancelled-late-write.txt"
-    source_path = tmp_path / "source.docx"
+    source_path = tmp_path / "uploads" / "source.docx"
+    source_path.parent.mkdir(parents=True)
     source_path.write_bytes(b"placeholder")
     worker_code = (
         "import pathlib,sys,time; "

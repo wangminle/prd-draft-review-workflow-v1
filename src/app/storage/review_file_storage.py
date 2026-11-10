@@ -72,13 +72,26 @@ class ReviewFileStorage:
             return cfg_dir
         return str(runtime_path("data", "review_uploads"))
 
+    def _is_within_trusted_roots(self, path: str | os.PathLike[str]) -> bool:
+        """SEC/FS-02：只允许 runtime 根或配置的 upload 根内的文件。"""
+        candidate = Path(path).resolve()
+        roots = [Path(runtime_path()).resolve(), Path(self._resolve_upload_root()).resolve()]
+        for root in roots:
+            try:
+                candidate.relative_to(root)
+                return True
+            except ValueError:
+                continue
+        return False
+
     def _resolve_stored_file_path(self, stored_path: str | os.PathLike[str] | None) -> str | None:
         if not stored_path:
             return None
 
         path = Path(str(stored_path))
         if path.is_absolute():
-            return str(path)
+            # BUG-217：读取/转换也只接受 runtime 或配置 upload 根内路径。
+            return str(path) if self._is_within_trusted_roots(path) else None
 
         parts = list(path.parts)
         while parts and parts[0] == ".":
@@ -86,12 +99,12 @@ class ReviewFileStorage:
 
         if "runtime" in parts:
             runtime_index = parts.index("runtime")
-            return str(runtime_path(*parts[runtime_index + 1:]))
-
-        if parts[:1] == ["data"]:
-            return str(runtime_path(*parts))
-
-        return str(path)
+            resolved = str(runtime_path(*parts[runtime_index + 1:]))
+        elif parts[:1] == ["data"]:
+            resolved = str(runtime_path(*parts))
+        else:
+            resolved = str(path)
+        return resolved if self._is_within_trusted_roots(resolved) else None
 
     def _docx_conversion_timeout_seconds(self) -> float:
         from app.config import get_settings
@@ -335,7 +348,8 @@ class ReviewFileStorage:
     async def delete_document_files(self, document_id: int, *, file_path: str | None = None, md_path: str | None = None) -> None:
         for stored_path in (file_path, md_path):
             resolved = self._resolve_stored_file_path(stored_path)
-            if resolved and os.path.exists(resolved):
+            # FS-02：删除是破坏性操作，只允许清理 runtime / upload 根内的文件。
+            if resolved and self._is_within_trusted_roots(resolved) and os.path.exists(resolved):
                 try:
                     os.remove(resolved)
                 except OSError:

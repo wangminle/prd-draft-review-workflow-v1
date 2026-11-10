@@ -176,6 +176,16 @@ async def test_submit_url_follows_relative_redirect_locations(auth_client, monke
 
     monkeypatch.setattr(httpx.AsyncClient, "stream", fake_stream)
 
+    import socket
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        if host == "example.com":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port or 0))]
+        return orig_getaddrinfo(host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
     resp = await auth_client.post("/api/upload/url", json={"url": "https://example.com/start"})
 
     assert resp.status_code == 200

@@ -20,7 +20,7 @@
 
 | 层级 Layer | 来源 Source | 作用 Purpose | 修改后是否需重启 |
 |------------|-------------|--------------|------------------|
-| ① 环境变量 | `.env`(由 `.env.example` 复制) | 密钥、端口、部署路径等部署相关 | 否(start.sh 启动时读取;改后下次重启生效) |
+| ① 环境变量 | `.env`(由 `.env.example` 复制) | 密钥、端口、部署路径等部署相关 | 是(start.sh 启动时读取) |
 | ② 应用配置 | `src/config.yaml` | 数据库、认证、模型、上传、评审流程参数 | 是 |
 | ③ 品牌配置 | `runtime/config/ui-branding.yaml` | 界面文案、主题色、Logo / favicon | 否(运行时读取) |
 
@@ -47,7 +47,7 @@
 | `SERVER_PORT` | 否 | — | 服务端口,默认 `17957` |
 | `SERVER_HOST` | 否 | — | 监听地址,默认 `127.0.0.1`(仅回环,经反代对外);直连部署设 `0.0.0.0` |
 | `ROOT_PATH` | 否 | — | 子路径反代部署前缀,如 `/prd-review`;根路径部署留空 |
-| `RUNTIME_ROOT` | 否 | — | 运行时数据目录,默认 `<项目目录>/runtime` |
+| `RUNTIME_ROOT` | 否 | — | 运行时数据目录,默认 `<项目目录>/runtime`。使用 `start.sh` / `update.sh` 时须在调用脚本前导出；脚本在加载 `.env` 前已确定此目录 |
 | `CONFIG_PATH` | 否 | — | 应用配置文件路径,默认 `src/config.yaml` |
 | `AGENT_API_BASE` | 否 | — | Agent 自回调基地址,默认 `http://127.0.0.1:<SERVER_PORT>` |
 
@@ -74,6 +74,12 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 **注意**:`start.sh` 在 `JWT_SECRET` 为空时会**自动生成随机密钥并写入项目根目录 `.env`**，之后重启复用，登录 token 不会因重启失效。示例占位值或不足 32 字符的密钥仍会被拒绝。生产环境也可以预先写入固定密钥。环境文件只认项目根目录 `.env`；若存在遗留的 `src/.env`，根目录已有文件时会忽略并告警，根目录没有时会复制过去并提示迁移。
+
+复制遗留环境文件或持久化生成的密钥时,写入器使用 `O_NOFOLLOW` 拒绝符号链接,并将目标文件权限设置为 `0600`。`start.sh` 通过环境变量向辅助 Python 进程传递生成的密钥。
+
+Pi 子进程采用环境白名单,显式传入当前 Provider Key、运行期授权参数与 `AGENT_API_BASE`,不会整体继承服务端的 `JWT_SECRET`、数据库配置或其他模型密钥。
+
+知识库向量索引位于 `RUNTIME_ROOT/vector/lancedb/`。旧 `knowledge_chunks` 表在首次写入时自动添加字符串列 `write_token`,旧行填充空字符串,加列保留现有记录。新 embedding 批次生成独立 token,补偿按本批 token 清理,并保护当前已完成切块和其他 worker 的向量。该字段由应用维护,无需手动配置。
 
 ---
 
@@ -243,9 +249,10 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 # 1) 至少配置一个 LLM Key
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
-# 2) 持久随机 JWT_SECRET(至少 32 字符,生产必填)
+# 2) 持久随机 JWT_SECRET(至少 32 字符,可预填)
+#    留空时 start.sh 自动生成并保存到根目录 .env
 #    生成: python3 -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET=<替换为上面命令生成的 64 字符随机串>
+JWT_SECRET="<替换为上面命令生成的 64 字符随机串>"
 
 # 3) 部署相关
 SERVER_HOST=127.0.0.1      # 经反向代理对外暴露(推荐);直连改为 0.0.0.0
@@ -272,7 +279,7 @@ ROOT_PATH=                 # 根路径部署留空;子路径如 /prd-review
 
 | Layer | Source | Purpose | Restart required? |
 |-------|--------|---------|-------------------|
-| ① Environment variables | `.env` (copied from `.env.example`) | Deployment-specific: keys, port, paths | No (read at start by `start.sh`; changes apply on next restart) |
+| ① Environment variables | `.env` (copied from `.env.example`) | Deployment-specific: keys, port, paths | Yes (read at startup by `start.sh`) |
 | ② Application config | `src/config.yaml` | Database, auth, models, upload, review pipeline | Yes |
 | ③ Branding config | `runtime/config/ui-branding.yaml` | UI copy, theme colors, Logo / favicon | No (read at runtime) |
 
@@ -299,7 +306,7 @@ Copy `.env.example` to `.env` and fill in real values. At least one `*`-marked L
 | `SERVER_PORT` | No | — | Service port, default `17957` |
 | `SERVER_HOST` | No | — | Listen address, default `127.0.0.1` (loopback only, exposed via reverse proxy); set `0.0.0.0` for direct deployment |
 | `ROOT_PATH` | No | — | Sub-path reverse-proxy prefix, e.g. `/prd-review`; leave empty for root-path deployment |
-| `RUNTIME_ROOT` | No | — | Runtime data directory, default `<project>/runtime` |
+| `RUNTIME_ROOT` | No | — | Runtime data directory, default `<project>/runtime`. Export before invoking `start.sh` / `update.sh`; the scripts determine this directory before loading `.env` |
 | `CONFIG_PATH` | No | — | Application config file path, default `src/config.yaml` |
 | `AGENT_API_BASE` | No | — | Agent self-callback base URL, default `http://127.0.0.1:<SERVER_PORT>` |
 
@@ -326,6 +333,12 @@ python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
 **Note**: When `JWT_SECRET` is empty, `start.sh` **generates a random secret and writes it to the project-root `.env`**, so later restarts reuse it and issued tokens stay valid. Example placeholders and secrets shorter than 32 characters are still rejected. You may also set a fixed secret yourself. The only env file is the project-root `.env`; a leftover `src/.env` is ignored (with a warning) when the root file exists, or copied to the root with a migration warning when it does not.
+
+When copying a legacy env file or persisting a generated secret, the writer uses `O_NOFOLLOW` to reject symlinks and sets the destination file to `0600`. `start.sh` passes the generated secret to its helper Python process through an environment variable.
+
+The Pi subprocess uses an environment allowlist. The bridge explicitly supplies the current Provider Key, runtime authorization parameters and `AGENT_API_BASE`, instead of inheriting the server's `JWT_SECRET`, database configuration and other model keys wholesale.
+
+The knowledge vector index lives under `RUNTIME_ROOT/vector/lancedb/`. On the first write to an old `knowledge_chunks` table, the application adds a string `write_token` column, fills existing rows with an empty string and preserves the existing records during that migration. Each new embedding batch receives a unique token. Compensation uses the batch token while protecting currently completed chunks and vectors from other workers. The application manages this field automatically.
 
 ---
 
@@ -495,9 +508,10 @@ DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 # 1) Configure at least one LLM Key
 DEEPSEEK_API_KEY=sk-your-deepseek-key-here
 
-# 2) Persistent random JWT_SECRET (>= 32 chars, required in production)
+# 2) Persistent random JWT_SECRET (>= 32 chars, optional preconfiguration)
+#    If empty, start.sh generates it and saves it to the root .env
 #    Generate: python3 -c "import secrets; print(secrets.token_hex(32))"
-JWT_SECRET=<paste the 64-char hex string from the command above>
+JWT_SECRET="<paste the 64-char hex string from the command above>"
 
 # 3) Deployment
 SERVER_HOST=127.0.0.1      # Exposed via reverse proxy (recommended); use 0.0.0.0 for direct

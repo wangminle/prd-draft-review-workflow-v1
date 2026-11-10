@@ -161,7 +161,8 @@ def test_sse_progress_uses_ephemeral_ticket_instead_of_main_jwt_query():
     assert "new EventSource(`${url}?ticket=${encodeURIComponent(data.ticket)}`)" in progress_block
 
     listen_progress_block = REVIEW_JS.split("async _listenProgress(taskId)", 1)[1].split("async _refreshRunningResult()", 1)[0]
-    assert "this.eventSource = await API.getReviewProgress(this.currentProjectId, taskId);" in listen_progress_block
+    assert "const newSource = await API.getReviewProgress(this.currentProjectId, taskId);" in listen_progress_block
+    assert "this.eventSource = newSource;" in listen_progress_block
 
 
 def test_review_state_is_reset_when_switching_authenticated_users():

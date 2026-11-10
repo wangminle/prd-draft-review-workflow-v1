@@ -368,7 +368,10 @@ def _write_admin_initial_secret(password: str) -> Path:
     path = _admin_initial_secret_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(path.parent, 0o700)
-    fd = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    # SEC/FS-01：拒绝跟随预置符号链接，避免把管理员初始密码写到任意目标。
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o600)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(password)
@@ -422,7 +425,9 @@ async def _ensure_default_admin():
                 role="admin",
             )
             session.add(admin)
-            await session.commit()
+            # SEC-01：必须先成功写出一次性密码文件再提交管理员行。
+            # 原顺序在写文件失败时会留下“管理员已存在但无人知道密码”的永久锁死状态。
+            secret_path = None
             if generated:
                 # BUG-194：初始密码只写入 0600 一次性文件，不进普通日志
                 try:
@@ -433,6 +438,17 @@ async def _ensure_default_admin():
                         "（且不允许记入普通日志）。请检查 runtime/ 目录权限，"
                         "或改用 ADMIN_INITIAL_PASSWORD 环境变量指定初始密码后重启。"
                     )
+            try:
+                await session.commit()
+            except Exception:
+                # 提交失败时清理已写出的密码文件，保证下次启动可重新初始化。
+                if secret_path is not None:
+                    try:
+                        secret_path.unlink()
+                    except OSError:
+                        logger.warning("回滚管理员初始化失败，无法删除初始密码文件: %s", secret_path)
+                raise
+            if generated:
                 logger.warning(
                     "[INIT] 管理员账号已创建：用户名 admin，初始密码已随机生成并写入 %s"
                     "（权限 0600，改密后自动删除）。请立即读取并修改密码；"
@@ -771,12 +787,31 @@ async def _ensure_default_workspace():
             await session.commit()
             logger.info("[INIT] 默认 workspace 已创建")
 
-        # 将所有无 workspace_id 的旧项目归入默认空间
-        await _migrate_projects_to_default_workspace(ws.id)
+        # 将所有无 workspace_id 的旧项目归入默认空间。
+        # CON-06：复用当前 session，避免在同一 SQLite 写事务未提交时再开一个
+        # session 写同一批数据造成 "database is locked"。
+        await _migrate_projects_to_default_workspace(ws.id, session=session)
+        await session.commit()
 
 
-async def _migrate_projects_to_default_workspace(default_workspace_id: int):
+async def _migrate_projects_to_default_workspace(
+    default_workspace_id: int,
+    *,
+    session=None,
+):
     """为所有现有 ReviewProject 自动归入默认 workspace。"""
+
+    if session is not None:
+        from sqlalchemy import update
+
+        result = await session.execute(
+            update(ReviewProject)
+            .where(ReviewProject.workspace_id.is_(None))
+            .values(workspace_id=default_workspace_id)
+        )
+        if result.rowcount:
+            logger.info("[INIT] %d 个旧项目已归入默认 workspace", result.rowcount)
+        return
 
     async with async_session() as session:
         result = await session.execute(

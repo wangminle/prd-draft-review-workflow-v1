@@ -51,12 +51,20 @@ async def _create_project(client, headers, name="AuthZ项目"):
 
 
 async def _create_request_with_artifact(client, headers, secret="owner-secret"):
+    import uuid
     project_id = await _create_project(client, headers)
-    me = await client.get("/api/auth/me", headers=headers)
-    user_id = me.json()["id"]
+    approver_name = f"b112_approver_{uuid.uuid4().hex[:8]}"
+    resp = await client.post(
+        "/api/auth/register",
+        json={"username": approver_name, "password": "test123456"},
+    )
+    assert resp.status_code == 200, resp.text
+    approver_headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    approver_me = await client.get("/api/auth/me", headers=approver_headers)
+    approver_id = approver_me.json()["id"]
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [user_id], "goal": "权限测试"},
+        json={"project_id": project_id, "approver_ids": [approver_id], "goal": "权限测试"},
         headers=headers,
     )
     assert req_resp.status_code == 200, req_resp.text
@@ -346,16 +354,22 @@ async def test_bug115_embedding_worker_processes_pending():
     source.title = "规范"
     source.owner_id = 3
     source.visibility = "private"
+    source.status = "active"
 
     mock_session = AsyncMock()
     # BUG-148: process_pending_embeddings 先执行 stale processing reset，
     # 需要让 mock_session.execute 返回带 rowcount 的 mock 对象
     stale_result_mock = MagicMock()
     stale_result_mock.rowcount = 0
-    mock_session.execute = AsyncMock(return_value=stale_result_mock)
+    current_rows_mock = MagicMock()
+    current_rows_mock.fetchall.return_value = [(chunk.id, chunk.text, "processing", source.id, "active")]
+    post_rows_mock = MagicMock()
+    post_rows_mock.fetchall.return_value = [(chunk.id, chunk.text, "processing", source.id, "active")]
+    mock_session.execute = AsyncMock(side_effect=[stale_result_mock, current_rows_mock, post_rows_mock])
     mock_chunk_repo = AsyncMock()
     mock_chunk_repo.list_pending_embedding.return_value = [chunk]
     mock_chunk_repo.update_embedding_status.return_value = 1
+    mock_chunk_repo.update_embedding_status_conditional.return_value = 1
 
     mock_embed = AsyncMock()
     mock_embed.embed_batch.return_value = [[0.1] * 8]

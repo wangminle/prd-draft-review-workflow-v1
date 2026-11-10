@@ -46,6 +46,14 @@ async def _register(client, username, password="testpass123"):
     return await _auth(client, username, password)
 
 
+async def _approver_id(client) -> int:
+    import uuid
+    headers = await _register(client, f"b84_approver_{uuid.uuid4().hex[:8]}")
+    resp = await client.get("/api/auth/me", headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()["id"]
+
+
 async def _create_project(client, headers, name="测试项目"):
     resp = await client.post(
         "/api/review/projects",
@@ -76,7 +84,7 @@ async def test_create_review_request_with_approver_succeeds(client):
 
     resp = await c.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "有审批人", "approver_ids": [1]},
+        json={"project_id": project_id, "goal": "有审批人", "approver_ids": [await _approver_id(c)]},
         headers=headers,
     )
     assert resp.status_code == 200

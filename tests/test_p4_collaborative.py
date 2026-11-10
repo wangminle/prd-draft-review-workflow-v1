@@ -38,6 +38,26 @@ async def _auth_header(client):
     return {"Authorization": f"Bearer {token}"}
 
 
+async def _approver(client, username=None):
+    if username is None:
+        import uuid
+        username = f"p4_approver_{uuid.uuid4().hex[:8]}"
+    resp = await client.post(
+        "/api/auth/register",
+        json={"username": username, "password": "test123456"},
+    )
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    me = await client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200, me.text
+    return me.json()["id"], headers
+
+
+async def _approver_id(client, username=None):
+    approver_id, _ = await _approver(client, username)
+    return approver_id
+
+
 async def _create_project(client, headers):
     """创建一个审查项目用于测试。"""
     resp = await client.post(
@@ -67,7 +87,7 @@ async def test_create_artifact(client):
     # 先创建 ReviewRequest
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "测试物料"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "测试物料"},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -98,7 +118,7 @@ async def test_confirm_artifact(client):
     # 创建 ReviewRequest
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -133,7 +153,7 @@ async def test_unconfirm_artifact(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -170,7 +190,7 @@ async def test_update_confirmed_artifact_fails(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -206,7 +226,7 @@ async def test_list_artifacts_by_object(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -325,7 +345,7 @@ async def test_notification_on_review_request(client):
     # 创建请求，指定 approver_ids
     await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "审查测试"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "审查测试"},
         headers=headers,
     )
 
@@ -361,7 +381,7 @@ async def test_create_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -389,7 +409,7 @@ async def test_reply_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -428,7 +448,7 @@ async def test_list_comments(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -459,7 +479,7 @@ async def test_delete_comment(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -531,9 +551,10 @@ async def test_full_review_notification_flow(client):
     project_id = await _create_project(client, headers)
 
     # 创建请求
+    approver_id, approver_headers = await _approver(client)
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "完整流程测试"},
+        json={"project_id": project_id, "approver_ids": [approver_id], "goal": "完整流程测试"},
         headers=headers,
     )
     request_id = create_resp.json()["id"]
@@ -549,7 +570,7 @@ async def test_full_review_notification_flow(client):
     decide_resp = await client.post(
         f"/api/review/rounds/{round_id}/decide",
         json={"decision": "approved", "comment": "LGTM"},
-        headers=headers,
+        headers=approver_headers,
     )
     assert decide_resp.status_code == 200
 
@@ -568,7 +589,7 @@ async def test_artifact_status_lifecycle(client):
 
     req_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)]},
         headers=headers,
     )
     request_id = req_resp.json()["id"]
@@ -628,7 +649,7 @@ async def test_notification_status_lifecycle(client):
     # 触发通知：创建协作审查
     await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "通知状态测试"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "通知状态测试"},
         headers=headers,
     )
 

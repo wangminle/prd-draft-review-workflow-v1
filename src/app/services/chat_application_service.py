@@ -115,6 +115,7 @@ class ChatApplicationService:
         urls: list[str] | None = None,
         url_texts: dict[str, str] | None = None,
         file_ids: list[str] | None = None,
+        user_id: int | None = None,
         max_text_len: int = 8000,
     ) -> list[str]:
         parts = []
@@ -128,7 +129,10 @@ class ChatApplicationService:
                     parts.append(f"URL: {u}")
         if file_ids:
             for fid in file_ids:
-                content = self._file_storage.read_text(str(fid))
+                # BUG-212：请求体中的 file_id 必须属于当前用户，否则忽略。
+                if user_id is None:
+                    continue
+                content = self._file_storage.read_text_for_user(str(fid), user_id)
                 if content:
                     parts.append(f"[文件 {fid}]\n{content[:max_text_len]}{'...(内容过长，已截断)' if len(content) > max_text_len else ''}")
         return parts
@@ -236,7 +240,7 @@ class ChatApplicationService:
         history = await self.load_conversation_history(conv_id)
 
         context_parts = self.build_file_url_context(
-            urls=urls, url_texts=url_texts, file_ids=file_ids,
+            urls=urls, url_texts=url_texts, file_ids=file_ids, user_id=user_id,
         )
         persisted = await self.build_persisted_context(
             conv_id, user_id=user_id,
@@ -367,9 +371,24 @@ class ChatApplicationService:
         if not project:
             return None
 
-        # 权限校验：用户必须是项目创建者
-        if user_id is not None and project.created_by != user_id:
+        # 权限校验：用户必须是项目创建者，且仍为启用用户及项目所属 workspace 的活跃成员（BUG-212）
+        effective_user_id = user_id if user_id is not None else project.created_by
+        if effective_user_id is None or project.created_by != effective_user_id:
             logger.warning(f"[PRESENTATION] 用户 {user_id} 不是项目 {project_id} 的创建者，拒绝注入上下文")
+            return None
+        from app.models.user import User
+        from app.services.object_access import assert_project_access
+
+        user_row = await self._db.execute(
+            select(User).where(User.id == effective_user_id, User.is_active == True)  # noqa: E712
+        )
+        if user_row.scalar_one_or_none() is None:
+            logger.warning(f"[PRESENTATION] 用户 {effective_user_id} 不存在或已停用，拒绝注入项目 {project_id} 上下文")
+            return None
+        try:
+            await assert_project_access(self._db, project_id, effective_user_id, action="read")
+        except Exception:
+            logger.warning(f"[PRESENTATION] 用户 {effective_user_id} 非项目 {project_id} 所属空间活跃成员，拒绝注入上下文")
             return None
 
         parts.append(f"项目名称: {project.name}")

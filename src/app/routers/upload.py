@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
+from app.services.upload_limits import read_upload_limited
 from app.storage.chat_file_storage import ChatFileStorage
 
 logger = logging.getLogger(__name__)
@@ -124,13 +125,7 @@ async def upload_file(
     max_size = config.get("max_file_size_mb", 20) * 1024 * 1024
     allowed_extensions = config.get("allowed_extensions", [])
 
-    content = await file.read()
-    file_size = len(content)
-    if file_size > max_size:
-        raise HTTPException(
-            status_code=413,
-            detail=f"文件过大，最大允许 {config.get('max_file_size_mb', 20)}MB",
-        )
+    content = await read_upload_limited(file, max_size)
 
     ext = Path(file.filename or "").suffix.lower()
     if allowed_extensions and ext not in allowed_extensions:
@@ -139,7 +134,9 @@ async def upload_file(
             detail=f"不支持的文件类型: {ext}，允许: {', '.join(allowed_extensions)}",
         )
 
-    stored = await _chat_file_storage.save_upload(filename=file.filename or "upload", content=content)
+    stored = await _chat_file_storage.save_upload(
+        filename=file.filename or "upload", content=content, owner_id=user.id,
+    )
 
     return {
         "file_id": stored.file_id,

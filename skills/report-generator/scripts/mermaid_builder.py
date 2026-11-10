@@ -9,7 +9,8 @@
 # Mermaid 节点标签和边标签中需要转义的字符。
 # HTML 实体形式可以安全地嵌入 Mermaid 的 ["..."] 和 |...| 上下文。
 _MERMAID_ESCAPE_MAP = {
-    '"': "&quot;",
+    "&": "&amp;",
+    '"': "'",
     "|": "&verbar;",
     "[": "&#91;",
     "]": "&#93;",
@@ -36,10 +37,9 @@ def _escape_mermaid_label(text: str) -> str:
     """
     if not text:
         return ""
-    result = text
-    for char, replacement in _MERMAID_ESCAPE_MAP.items():
-        result = result.replace(char, replacement)
-    return result
+    # 逐字符映射：不能在上一次替换结果上再次 replace，否则新生成的
+    # `&#91;` 里的 `#` 与 `&` 会被二次转义（SK-05）。
+    return "".join(_MERMAID_ESCAPE_MAP.get(char, char) for char in str(text))
 
 
 def _sanitize_node_id(raw: str) -> str:

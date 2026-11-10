@@ -66,6 +66,8 @@
 | 环境变量 `ADMIN_INITIAL_PASSWORD` | **推荐**。启动时读取,仅用于**首次创建** admin 账号。 |
 | 随机生成 | 未设置环境变量时使用 `secrets.token_urlsafe(24)`,初始密码写入一次性保密文件 `runtime/secrets/admin_initial_password.txt`（0600,改密后自动删除,不进任何日志）,要求立即保存并修改。 |
 
+随机密码文件成功写入后才提交管理员账号。文件写入失败会阻止初始化并回滚账号创建,提交失败时会尝试清理已写出的文件。写入器拒绝符号链接,密码目录权限为 `0700`,文件为 `0600`。
+
 启动时的安全检测:
 
 - 若检测到 admin 仍在使用历史默认口令 `admin@2026` 或弱口令 `admin123`,**默认拒绝启动**;`ADMIN_INITIAL_PASSWORD` 设为内置口令时同样拒绝。应急排障或内部部署快速体验可设 `ALLOW_DEFAULT_ADMIN_PASSWORD=1`——同时放行上述两类检查（如 `ADMIN_INITIAL_PASSWORD=admin@2026` 首次建号）,日志仍会输出 `[SECURITY]` 警告;对外/生产部署前必须移除该开关并改密。
@@ -217,6 +219,8 @@ pytest tests/test_skill_regression.py -v
 
 **业务价值:** 回答「哪个团队/哪个人/哪种调用模式(chat vs review vs agent)消耗了预算」,支撑成本分摊与模型选型决策。`mode` 在日志缺失时由 model 名推断(review/agent/pi-agent 等)。
 
+Embedding 调用以 `mode=embedding` 写入同一日志,其 `prompt_tokens` 单独计入 `embedding_tokens`。显式 `mode=chat` 的记录按聊天统计,模型名称中的 embedding 字样只参与缺少 mode 时的推断。当前 embedding 日志的 `workspace_id`、`user_id` 为空,因此只提供未分摊的 embedding 用量。工作空间预算硬限目前只累计该空间的 `input_tokens + output_tokens`。
+
 #### 7.2 质量统计
 
 由 `QualityStatsService` 提供,基于 `DocAnalysis` 的质量评分(`quality_score`),按**周**聚合与趋势查询。
@@ -249,10 +253,12 @@ pytest tests/test_skill_regression.py -v
 
 **防绕过:** 聊天(`/api/chat`)与审查启动(`POST /api/review/projects/{project_id}/reviews`)在调用 LLM 前都会:
 
-1. 校验调用者对该 `workspace_id` 的成员资格(`require_action(member, "read")`),**拒绝伪造 workspace_id 绕过配额**;
+1. 聊天校验目标知识空间的 `read` 权限,审查启动校验项目的 `write` 权限与活跃成员资格,**拒绝伪造 workspace_id 绕过配额**;
 2. 调用 `ensure_workspace_llm_allowed` 执行硬限。
 
 即使用户尝试传入他人 workspace_id,也会因成员校验失败而被拒。审查管线会触发数十次 LLM 调用,因此审查入口同样受硬限约束。
+
+历史项目的 `workspace_id` 为空时,审查启动回退到默认工作空间校验预算。
 
 **管理建议:** 对预算敏感的团队,默认用 `notify` 观察,稳定后对高消耗团队切到 `block`;阈值先设 80% 留缓冲。
 
@@ -310,7 +316,7 @@ Agent 配置分两层，不要混用：
 
 #### 8.2 高风险工具(安全重点)
 
-以下工具属于高风险,**普通用户不可自行启用**,必须由管理员配置,且调用时需**独立审批人**:
+以下工具属于高风险,**普通用户不可通过工具白名单自行启用**,执行时需**独立审批人**:
 
 | 高风险工具 | 风险 |
 | --- | --- |
@@ -321,8 +327,9 @@ Agent 配置分两层，不要混用：
 
 防护机制(代码强制):
 
-1. 非管理员更新 `allowed_tools` 时,系统**自动剔除**上述高风险工具;若剔除后为空,回落到 `["rag_search"]`。
-2. 高风险工具调用产生审批请求时,**申请人不得自行审批**,必须由另一名(指定)审批人决策,否则返回 `403 高风险工具不可由申请人自行审批`。
+1. 非管理员更新 `allowed_tools` 时,系统**自动剔除**上述高风险工具;若剔除后为空,回落到 `["rag_search"]`。Pi 启动时也会从常规白名单剔除高风险工具,由一次性审批放行。
+2. **申请人包括管理员均不得批准自己的 Agent 请求**,该限制覆盖所有 `action_type`,自批返回 `403 审批人不得批准自己发起的请求，请联系独立审批人`。
+3. Pi 拦截高风险工具时,自动选择另一名 active 管理员作为审批人。找不到独立审批人时返回 `approval_unavailable`,并跳过创建待审批记录。
 
 #### 8.3 工具调用审批
 
@@ -331,7 +338,7 @@ Agent 配置分两层，不要混用：
 | `GET /api/agent/approvals` | 查看待审批请求(仅返回当前用户作为审批人的) |
 | `POST /api/agent/approvals/{request_id}/decide` | 审批决策(`approved`/`rejected`) |
 
-审批通过后,系统通过 `grant_one_shot_approval` 发放**一次性放行**并恢复挂起的执行。
+审批通过后,系统通过 `grant_one_shot_approval` 登记**一次性放行**。对应 Pi 进程仍活跃时,桥接层尝试发送 `followUp` 继续执行,接口的 `resumed` 字段反馈是否成功发出。
 
 #### 8.4 运行历史
 
@@ -340,6 +347,10 @@ Agent 配置分两层，不要混用：
 | `GET /api/agent/runs` | 列出当前用户的运行历史(状态、步数、工具调用次数、耗时) |
 | `GET /api/agent/runs/{run_id}` | 运行详情(含 steps、traces) |
 
+Pi 在流结束或超时前未产生 `agent_end`,或结束事件报告错误（含最终 assistant 消息的 `stopReason=error/aborted/failed`）时,运行收口为 `failed`,详情中的 `error_message` 记录原因。进程退出后仍会读取尾部缓冲事件,不能仅凭退出码判断运行结果。正常文本增量会从 Pi SDK 的 `assistantMessageEvent.delta` 转发到聊天界面。
+
+审查任务的取消只接受 `pending/running` 状态,已结束任务返回 400。后台启动与终态提交都使用条件更新,已取消任务不会被后续启动、完成或失败回调覆盖。
+
 #### 8.5 MCP 外部工具服务
 
 | 端点 | 权限要求 |
@@ -347,7 +358,7 @@ Agent 配置分两层，不要混用：
 | `GET/POST /api/agent/mcp/servers` | 全局配置需 admin;workspace 级需该空间 `manage` 权限 |
 | `GET/POST /api/agent/mcp/servers/{server_id}/policies` | 工具级策略:`allowed_roles`、`requires_approval`、`risk_level` |
 
-管理员可定义每个 MCP 工具的 `risk_level` 与是否 `requires_approval`,统一管控外部工具风险敞口。
+管理员可保存每个 MCP 工具的 `risk_level`、`allowed_roles` 与 `requires_approval`。策略 helper `MCPAdapterManager.check_policy` 在缺少显式策略时返回 `allowed=false`、`requires_approval=true`、`risk_level=high`。当前工具执行入口尚未调用此 helper。
 
 **管理建议:** Agent 工具遵循最小授权原则;高风险工具仅在确有需要时为特定 Agent 开启,并指定可靠的独立审批人。
 
@@ -416,7 +427,7 @@ python3 tools/migrate_branding.py
 
 - [ ] `allow_public_registration` 生产环境设为 `false`,管理员离线初始化。
 - [ ] 通过 `ADMIN_INITIAL_PASSWORD` 注入强密码,首次登录即改密;确认日志无 `[SECURITY]` 弱口令警告。
-- [ ] `JWT_SECRET` 为高强度随机值(API Key、SSE 票据加密均依赖它)。
+- [ ] `JWT_SECRET` 为高强度随机值,用于 JWT 签名与 API Key 加密。SSE 短票据使用独立随机值与进程内映射。
 - [ ] 模型 API Key 已配置且 `test-connection` 通过;非必要模型 `enabled=false`。
 - [ ] 高风险工具(bash/write/edit/read)未对普通用户开放,审批人配置到位。
 - [ ] 高消耗 workspace 预算 `hard_limit_action=block`,阈值合理。
@@ -480,6 +491,8 @@ On first start, the platform **automatically ensures** the default admin account
 | --- | --- |
 | Env var `ADMIN_INITIAL_PASSWORD` | **Recommended.** Read at startup; used only when **creating** the first admin account. |
 | Random generation | If the env var is unset, `secrets.token_urlsafe(24)` is used; the password is written to the one-time secret file `runtime/secrets/admin_initial_password.txt` (0600, auto-deleted after a password change, never logged). Save it and change it immediately. |
+
+The admin account is committed after the random-password file has been written successfully. A file-write failure stops initialization and rolls back account creation. A commit failure triggers an attempt to remove the file. The writer rejects symlinks and uses `0700` for the secret directory and `0600` for the file.
 
 Startup security checks:
 
@@ -632,6 +645,8 @@ Provided by `CostStatsService`. Backed by LLM session logs (`llm_sessions.jsonl`
 
 **Business value:** Answers "which team/person/call mode (chat vs review vs agent) consumed the budget," supporting cost allocation and model-selection decisions. When `mode` is missing in the log, it is inferred from the model name (review/agent/pi-agent, etc.).
 
+Embedding calls write to the same log with `mode=embedding`, and their `prompt_tokens` are aggregated separately into `embedding_tokens`. Explicit `mode=chat` records retain chat accounting. A model name containing embedding is used for inference only when mode is absent. Embedding logs currently have empty `workspace_id` and `user_id` fields, so this usage is unallocated. Workspace hard-budget checks currently sum only that workspace's `input_tokens + output_tokens`.
+
 #### 7.2 Quality Statistics
 
 Provided by `QualityStatsService`, based on `DocAnalysis` quality scores (`quality_score`), aggregated **weekly** with trend queries.
@@ -664,10 +679,12 @@ Budget fields:
 
 **Anti-bypass:** Before calling the LLM, chat (`/api/chat`) and review start (`POST /api/review/projects/{project_id}/reviews`) both:
 
-1. Verifies the caller's membership of the target `workspace_id` (`require_action(member, "read")`), **rejecting forged workspace_id to bypass quota**;
+1. Chat checks `read` permission on the target knowledge workspace. Review start checks project `write` permission and active membership, **rejecting forged workspace_id attempts to bypass quota**;
 2. Calls `ensure_workspace_llm_allowed` to enforce the hard limit.
 
 Even if a user tries to pass someone else's workspace_id, the membership check fails and the request is rejected. The review pipeline triggers dozens of LLM calls, so the review entry point is also under the hard limit.
+
+For legacy projects with an empty `workspace_id`, review start checks the default workspace's budget.
 
 **Recommendation:** For budget-sensitive teams, start with `notify` to observe, then switch high-consumption teams to `block`; set the threshold at 80% to leave a buffer.
 
@@ -725,7 +742,7 @@ Choosing **authorized team files** does **not** grant access to every team space
 
 #### 8.2 High-Risk Tools (Security Focus)
 
-The following tools are high-risk; **ordinary users cannot enable them themselves**. They must be configured by an admin, and each invocation requires an **independent approver**:
+The following tools are high-risk. **Ordinary users cannot enable them through their allowlist**, and execution requires an **independent approver**:
 
 | High-risk tool | Risk |
 | --- | --- |
@@ -736,8 +753,9 @@ The following tools are high-risk; **ordinary users cannot enable them themselve
 
 Enforced safeguards (in code):
 
-1. When a non-admin updates `allowed_tools`, the system **automatically strips** the high-risk tools above; if the result is empty, it falls back to `["rag_search"]`.
-2. When a high-risk tool call generates an approval request, **the requester cannot self-approve** — another designated approver must decide, otherwise `403 high-risk tools cannot be self-approved` is returned.
+1. When a non-admin updates `allowed_tools`, the system **automatically strips** the high-risk tools above. If the result is empty, it falls back to `["rag_search"]`. Pi startup also strips high-risk tools from the regular allowlist and relies on one-shot approval grants.
+2. **Requesters, including admins, cannot approve their own Agent requests**. This applies to every `action_type` and returns HTTP 403 with `审批人不得批准自己发起的请求，请联系独立审批人` on self-approval.
+3. When Pi blocks a high-risk tool, it selects another active admin as approver. If none exists, it emits `approval_unavailable` and skips creating a pending approval record.
 
 #### 8.3 Tool-Call Approvals
 
@@ -746,7 +764,7 @@ Enforced safeguards (in code):
 | `GET /api/agent/approvals` | View pending approvals (only those where the current user is the approver) |
 | `POST /api/agent/approvals/{request_id}/decide` | Decision (`approved`/`rejected`) |
 
-On approval, the system issues a **one-shot pass** via `grant_one_shot_approval` and resumes the suspended execution.
+On approval, the system registers a **one-shot pass** via `grant_one_shot_approval`. If the corresponding Pi process is still active, the bridge attempts to send `followUp` to continue execution. The response's `resumed` field reports whether that command was sent successfully.
 
 #### 8.4 Run History
 
@@ -755,6 +773,10 @@ On approval, the system issues a **one-shot pass** via `grant_one_shot_approval`
 | `GET /api/agent/runs` | List the current user's run history (status, steps, tool-call count, duration) |
 | `GET /api/agent/runs/{run_id}` | Run detail (steps, traces) |
 
+If the stream ends or times out without `agent_end`, or the end event reports an error (including an assistant `stopReason` of `error/aborted/failed`), the run becomes `failed` and its `error_message` records the reason. Buffered tail events are still consumed after process exit; the exit code alone does not determine the run result. Text deltas from the Pi SDK's `assistantMessageEvent.delta` are forwarded to the chat UI.
+
+Review cancellation accepts only `pending/running` tasks and returns HTTP 400 for finished tasks. Conditional updates at background startup and terminal-state commit preserve cancellation against later start, completion or failure callbacks.
+
 #### 8.5 MCP External Tool Services
 
 | Endpoint | Permission |
@@ -762,7 +784,7 @@ On approval, the system issues a **one-shot pass** via `grant_one_shot_approval`
 | `GET/POST /api/agent/mcp/servers` | Global config requires admin; workspace-level requires `manage` permission on that space |
 | `GET/POST /api/agent/mcp/servers/{server_id}/policies` | Per-tool policy: `allowed_roles`, `requires_approval`, `risk_level` |
 
-Admins can define each MCP tool's `risk_level` and whether it `requires_approval`, centrally controlling the external-tool risk surface.
+Admins can persist each MCP tool's `risk_level`, `allowed_roles` and `requires_approval`. Without an explicit policy, the `MCPAdapterManager.check_policy` helper returns `allowed=false`, `requires_approval=true` and `risk_level=high`. Current tool-execution entry points do not call this helper.
 
 **Recommendation:** Follow least privilege for Agent tools; enable high-risk tools only for specific Agents when truly needed, and designate reliable independent approvers.
 
@@ -831,7 +853,7 @@ Review before go-live and periodically:
 
 - [ ] `allow_public_registration` set to `false` in production; first admin initialized offline.
 - [ ] Strong password injected via `ADMIN_INITIAL_PASSWORD`; changed on first login; no `[SECURITY]` weak-password warnings in logs.
-- [ ] `JWT_SECRET` is a high-entropy random value (API Key and SSE-ticket encryption depend on it).
+- [ ] `JWT_SECRET` is a high-entropy random value used for JWT signing and API Key encryption. SSE tickets use independent random values and an in-process mapping.
 - [ ] Model API Keys configured and `test-connection` passes; unnecessary models `enabled=false`.
 - [ ] High-risk tools (bash/write/edit/read) not exposed to ordinary users; approvers configured.
 - [ ] High-consumption workspaces have `hard_limit_action=block` with a sensible threshold.

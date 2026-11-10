@@ -99,6 +99,24 @@ async def _login_admin(client: AsyncClient) -> dict:
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
+async def _approver(client: AsyncClient):
+    import uuid
+    resp = await client.post(
+        "/api/auth/register",
+        json={"username": f"bug106_approver_{uuid.uuid4().hex[:8]}", "password": "test123456"},
+    )
+    assert resp.status_code == 200, resp.text
+    headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
+    me = await client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200, me.text
+    return me.json()["id"], headers
+
+
+async def _approver_id(client: AsyncClient) -> int:
+    approver_id, _ = await _approver(client)
+    return approver_id
+
+
 async def _create_project(client: AsyncClient, headers: dict, name: str = "bugfix project") -> int:
     resp = await client.post(
         "/api/review/projects",
@@ -165,9 +183,10 @@ async def test_resubmit_savepoint_rollback_leaves_no_ghost_sse(client_with_db, m
     headers = await _login_admin(client)
     project_id = await _create_project(client, headers, "BUG-106 project")
 
+    approver_id, approver_headers = await _approver(client)
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "ghost"},
+        json={"project_id": project_id, "approver_ids": [approver_id], "goal": "ghost"},
         headers=headers,
     )
     assert create_resp.status_code == 200, create_resp.text
@@ -179,12 +198,12 @@ async def test_resubmit_savepoint_rollback_leaves_no_ghost_sse(client_with_db, m
     reject_resp = await client.post(
         f"/api/review/rounds/{round_id}/decide",
         json={"decision": "rejected", "comment": "rework"},
-        headers=headers,
+        headers=approver_headers,
     )
     assert reject_resp.status_code == 200, reject_resp.text
 
-    # 注册 approver(user 1) 的 SSE channel，并清空历史合法通知建立 baseline
-    approver_channel = get_notification_channel(1)
+    # 注册 approver 的 SSE channel，并清空历史合法通知建立 baseline
+    approver_channel = get_notification_channel(approver_id)
     try:
         approver_channel.clear()  # 清掉 create/reject 的合法通知，建立干净 baseline
 
@@ -232,7 +251,7 @@ async def test_resubmit_savepoint_rollback_leaves_no_ghost_sse(client_with_db, m
         # SSE channel 无幽灵（discard_pending 在 savepoint 失败时丢弃了缓冲事件）
         assert len(approver_channel) == 0, "savepoint 回滚后不应残留幽灵 SSE 事件"
     finally:
-        clear_channel(1, approver_channel)
+        clear_channel(approver_id, approver_channel)
 
 
 # ─── BUG-107 测试：重复参与者去重 + 收敛 ────────────────────────────

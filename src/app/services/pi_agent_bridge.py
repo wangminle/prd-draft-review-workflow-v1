@@ -38,10 +38,23 @@ _BLOCKED_TOOL_RE = re.compile(
 
 logger = logging.getLogger(__name__)
 
+_STDOUT_EOF = object()
+
 # 使用项目本地 node_modules/.bin/pi (由 @earendil-works/pi-coding-agent 提供 CLI)
 _PROJECT_ROOT = Path(__file__).parent.parent.parent.parent
 PI_BIN = str(_PROJECT_ROOT / "node_modules" / ".bin" / "pi")
 EXT_DIR = str(_PROJECT_ROOT / "src" / "agent" / "extensions")
+
+# SEC-10：只向 Pi 子进程传递运行所必需的本机环境变量，避免 JWT_SECRET、
+# DATABASE_URL、模型密钥等服务端秘密被提示注入/替换的 Extension 读取。
+_AGENT_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "TZ", "TMPDIR", "TEMP", "TMP",
+    "SHELL", "USER", "LOGNAME",
+    "NODE_PATH", "NODE_EXTRA_CA_CERTS", "NVM_DIR", "NVM_BIN",
+    "SSL_CERT_FILE", "SSL_CERT_DIR",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY",
+    "http_proxy", "https_proxy", "no_proxy",
+})
 
 # 活动 bridge 注册表：审批通过后可恢复被拦截的工具调用
 _active_bridges: dict[int, "PiAgentBridge"] = {}
@@ -112,6 +125,75 @@ def consume_one_shot_approvals(run_id: int) -> list[str]:
     return list(_one_shot_approvals.pop(run_id, []))
 
 
+def _extract_message_delta(data: dict) -> str:
+    """提取 message_update 事件中的文本增量（兼容顶层 content 与 Pi SDK assistantMessageEvent.delta）。"""
+    for key in ("content", "delta", "text"):
+        val = data.get(key)
+        if isinstance(val, str) and val:
+            return val
+    ame = data.get("assistantMessageEvent")
+    if isinstance(ame, dict):
+        ame_type = ame.get("type")
+        if ame_type in (None, "text_delta"):
+            delta = ame.get("delta")
+            if isinstance(delta, str) and delta:
+                return delta
+            content = ame.get("content")
+            if isinstance(content, str) and content:
+                return content
+    return ""
+
+
+def _extract_message_obj_error(msg: object) -> str | None:
+    """从 Pi SDK Message 对象（如 AssistantMessage）提取错误原因。"""
+    if not isinstance(msg, dict):
+        return None
+    err_msg = msg.get("errorMessage") or msg.get("error_message") or msg.get("error")
+    if isinstance(err_msg, dict):
+        err_msg = (
+            err_msg.get("errorMessage")
+            or err_msg.get("error_message")
+            or err_msg.get("message")
+            or str(err_msg)
+        )
+    if err_msg:
+        return str(err_msg)
+    stop_reason = msg.get("stopReason") or msg.get("stop_reason")
+    if stop_reason in ("error", "aborted", "failed"):
+        return f"Assistant message stopped with stopReason={stop_reason}"
+    return None
+
+
+def _extract_agent_end_error(data: dict, last_stream_error: str | None = None) -> str | None:
+    """从 agent_end 事件（顶层字段、messages 列表及流内错误事件）提取失败信息。"""
+    top_err = data.get("error") or data.get("errorMessage") or data.get("error_message")
+    if isinstance(top_err, dict):
+        top_err = _extract_message_obj_error(top_err) or top_err.get("message") or str(top_err)
+    if top_err:
+        return str(top_err)
+    top_stop = data.get("stopReason") or data.get("stop_reason")
+    if top_stop in ("error", "aborted", "failed"):
+        return str(data.get("message") or f"agent_end stopReason={top_stop}")
+    if data.get("success") is False:
+        return str(data.get("message") or "agent_end reported failure")
+
+    messages = data.get("messages")
+    if isinstance(messages, list) and messages:
+        tail_err = _extract_message_obj_error(messages[-1])
+        if tail_err:
+            return tail_err
+        for msg in reversed(messages):
+            if isinstance(msg, dict) and msg.get("role") == "assistant":
+                assistant_err = _extract_message_obj_error(msg)
+                if assistant_err:
+                    return assistant_err
+                break
+
+    if last_stream_error:
+        return last_stream_error
+    return None
+
+
 # Pi RPC 事件类型 → 业务映射
 _KEY_EVENTS = frozenset({
     "agent_start", "agent_end", "turn_start", "turn_end",
@@ -139,6 +221,7 @@ class PiAgentBridge:
         self._approval_event: asyncio.Event | None = None
         self._pending_approved_tools: list[str] = []
         self._sandbox_dir: Path | None = None
+        self._stdout_buffer = b""
 
     @staticmethod
     def _build_extension_env(
@@ -220,8 +303,12 @@ class PiAgentBridge:
         ext_path = self._resolve_extension_path(pi_config.extension_path)
         system_prompt = profile.system_policy or pi_config.system_prompt
 
-        # 确定环境变量
-        env = dict(os.environ)
+        # 确定环境变量：最小白名单 + Provider 所需 Key，绝不继承 JWT_SECRET 等秘密。
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if key in _AGENT_ENV_ALLOWLIST
+        }
         if provider == "deepseek":
             env["DEEPSEEK_API_KEY"] = api_key
         else:
@@ -374,17 +461,19 @@ class PiAgentBridge:
         start = time.monotonic()
         step_no = 0
         tool_call_count = 0
+        agent_end_seen = False
+        last_stream_error: str | None = None
 
         # 更新 run 状态
         await self._run_repo.update_status(self._run, "running")
         yield {"type": "agent_start", "run_id": self._run.id, "goal": self._run.goal}
 
-        while time.monotonic() - start < timeout and self.is_alive:
-            # 非阻塞读取 stdout
-            readable, _, _ = select.select([self._proc.stdout], [], [], 1.0)
-            if readable:
-                line = self._proc.stdout.readline()
-                if not line:
+        while time.monotonic() - start < timeout:
+            # BUG-215：即使子进程刚退出，也要先把管道缓冲区/已产生的行读完，
+            # 不能在 is_alive 变 false 时丢弃尾部 agent_end。
+            line = await asyncio.to_thread(self._read_stdout_line, 1.0)
+            if line is not None:
+                if line is _STDOUT_EOF:
                     break
                 line = line.strip()
                 if not line:
@@ -405,20 +494,38 @@ class PiAgentBridge:
                             "max_steps": 10, "run_id": self._run.id}
 
                 elif evt_type == "turn_end":
+                    turn_err = _extract_message_obj_error(data.get("message"))
+                    if turn_err:
+                        last_stream_error = turn_err
+                    elif isinstance(data.get("message"), dict) and data["message"].get("role") == "assistant":
+                        last_stream_error = None
                     yield {"type": "turn_end", "step_no": step_no, "run_id": self._run.id}
                     # 更新 run 统计
                     self._run.total_steps = step_no
                     self._run.total_tool_calls = tool_call_count
 
                 elif evt_type == "message_update":
-                    content = data.get("content", "")
+                    ame = data.get("assistantMessageEvent")
+                    if isinstance(ame, dict) and ame.get("type") == "error":
+                        last_stream_error = (
+                            _extract_message_obj_error(ame.get("error"))
+                            or ame.get("errorMessage")
+                            or ame.get("reason")
+                            or "assistantMessageEvent reported error"
+                        )
+                    content = _extract_message_delta(data)
                     if content:
-                        yield {"type": "message_update", "text": content, "run_id": self._run.id}
+                        yield {"type": "message_update", "text": content, "delta": content, "run_id": self._run.id}
 
                 elif evt_type == "message_start":
                     yield {"type": "message_start", "run_id": self._run.id}
 
                 elif evt_type == "message_end":
+                    msg_err = _extract_message_obj_error(data.get("message"))
+                    if msg_err:
+                        last_stream_error = msg_err
+                    elif isinstance(data.get("message"), dict) and data["message"].get("role") == "assistant":
+                        last_stream_error = None
                     yield {"type": "message_end", "run_id": self._run.id}
 
                 elif evt_type == "tool_call" or evt_type == "tool_execution_start":
@@ -429,7 +536,7 @@ class PiAgentBridge:
                         run_id=self._run.id,
                         tool_name=tool_name,
                         input_json=json.dumps(data.get("input", data.get("arguments", {})), ensure_ascii=False)[:1000],
-                        risk_level="high" if tool_name in {"bash", "write", "edit"} else "low",
+                        risk_level="high" if tool_name in _HIGH_RISK_TOOLS else "low",
                     )
                     yield {"type": "tool_call", "tool_name": tool_name,
                             "trace_id": trace.id, "step_no": step_no, "run_id": self._run.id}
@@ -442,8 +549,18 @@ class PiAgentBridge:
 
                 elif evt_type == "agent_end":
                     # 收尾 — 更新 run
+                    agent_end_seen = True
                     self._run.total_steps = step_no
                     self._run.total_tool_calls = tool_call_count
+                    error_info = _extract_agent_end_error(data, last_stream_error)
+                    if error_info:
+                        await self._run_repo.update_status(
+                            self._run, "failed", error_message=str(error_info)[:1000],
+                        )
+                        yield {"type": "agent_end", "run_id": self._run.id,
+                                "steps": step_no, "tool_calls": tool_call_count,
+                                "error": str(error_info)}
+                        break
                     await self._run_repo.update_status(self._run, "completed")
                     yield {"type": "agent_end", "run_id": self._run.id,
                             "steps": step_no, "tool_calls": tool_call_count}
@@ -455,7 +572,10 @@ class PiAgentBridge:
 
                 elif evt_type == "response":
                     # Pi RPC 协议的 response 事件（命令执行确认）
-                    pass
+                    if data.get("success") is False:
+                        last_stream_error = str(
+                            data.get("error") or data.get("message") or "Pi RPC command failed"
+                        )
 
             # 非阻塞读取 stderr（Extension 日志 / 审批拦截）
             stderr_data = self._read_stderr()
@@ -480,33 +600,74 @@ class PiAgentBridge:
                                     sa_select(_User).where(
                                         _User.role == "admin",
                                         _User.is_active == True,  # noqa: E712
+                                        # SEC-11：审批人不得是申请人本人
+                                        _User.id != self._run.user_id,
                                     ).limit(1)
                                 )
                             ).scalar_one_or_none()
-                            approver_id = (
-                                admin_row.id
-                                if admin_row is not None
-                                else self._run.user_id
-                            )
+                            if admin_row is None:
+                                logger.error(
+                                    "[PiAgentBridge] 无独立管理员可审批 run=%s tool=%s，拒绝回退自批",
+                                    self._run.id, blocked_tool,
+                                )
+                                yield {
+                                    "type": "approval_unavailable",
+                                    "message": "没有独立审批人可处理高风险工具，请联系管理员",
+                                    "tool_name": blocked_tool,
+                                    "run_id": self._run.id,
+                                }
+                                continue
                             approval = await self._approval_repo.create(
                                 run_id=self._run.id,
                                 requester_id=self._run.user_id,
-                                approver_id=approver_id,
+                                approver_id=admin_row.id,
                                 action_type=f"tool_call:{blocked_tool}",
                                 payload_ref=line[:1000],
                             )
                             yield {"type": "approval_required", "approval_id": approval.id,
                                     "tool_name": blocked_tool, "run_id": self._run.id}
 
-        # 如果循环结束但未收到 agent_end
-        if self.is_alive and step_no > 0:
-            # 超时但进程仍在运行
+        # 如果循环结束但未收到 agent_end，必须按失败收口（BUG-215）。
+        if not agent_end_seen:
             self._run.total_steps = step_no
             self._run.total_tool_calls = tool_call_count
-            await self._run_repo.update_status(self._run, "completed",
-                                                error_message="Stream timeout, no agent_end received")
+            exit_code = self._proc.poll() if self._proc is not None else None
+            if self.is_alive:
+                reason = "Stream timeout, no agent_end received"
+            else:
+                reason = f"Pi process exited with code {exit_code} without agent_end"
+            logger.error("[PiAgentBridge] run=%s %s", self._run.id, reason)
+            await self._run_repo.update_status(self._run, "failed", error_message=reason)
             yield {"type": "agent_end", "run_id": self._run.id,
-                    "steps": step_no, "tool_calls": tool_call_count, "timeout": True}
+                    "steps": step_no, "tool_calls": tool_call_count,
+                    "error": reason, "exit_code": exit_code}
+
+    def _read_stdout_line(self, timeout: float):
+        """非阻塞读取一行 stdout；超时返回 None，EOF 返回 _STDOUT_EOF。"""
+        if self._proc is None or self._proc.stdout is None:
+            return _STDOUT_EOF
+        fd = self._proc.stdout.fileno()
+        deadline = time.monotonic() + max(timeout, 0.0)
+        while b"\n" not in self._stdout_buffer:
+            remaining = max(0.0, deadline - time.monotonic())
+            try:
+                ready, _, _ = select.select([fd], [], [], remaining)
+            except (OSError, ValueError):
+                return _STDOUT_EOF
+            if not ready:
+                return None
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                return _STDOUT_EOF
+            if not chunk:
+                if self._stdout_buffer:
+                    line, self._stdout_buffer = self._stdout_buffer, b""
+                    return line.decode("utf-8", errors="replace")
+                return _STDOUT_EOF
+            self._stdout_buffer += chunk
+        line, _, self._stdout_buffer = self._stdout_buffer.partition(b"\n")
+        return line.decode("utf-8", errors="replace")
 
     def _read_stderr(self) -> str:
         """非阻塞读取 stderr。"""

@@ -181,7 +181,9 @@ async def test_chat_injects_uploaded_string_file_ids_into_llm_context(auth_clien
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    saved_name = "abc123.txt"
+    me = await auth_client.get("/api/auth/me")
+    user_id = me.json()["id"]
+    saved_name = f"u{user_id}_abc123.txt"
     (upload_dir / saved_name).write_text("这是上传文档里的关键上下文", encoding="utf-8")
 
     from app.config import get_settings as original_get_settings
@@ -227,7 +229,9 @@ async def test_chat_injects_persisted_context_items_on_follow_up(auth_client, tm
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    saved_name = "persisted-doc.txt"
+    me = await auth_client.get("/api/auth/me")
+    user_id = me.json()["id"]
+    saved_name = f"u{user_id}_persisted-doc.txt"
     (upload_dir / saved_name).write_text("持久化文档中的产品背景", encoding="utf-8")
 
     from app.config import get_settings as original_get_settings

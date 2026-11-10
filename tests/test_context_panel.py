@@ -63,6 +63,11 @@ async def auth_client(client):
 # ── P0 Bug 1: 上下文按会话持久化 & 切换加载 ──
 
 
+async def _owned_name(client, base):
+    me = await client.get("/api/auth/me")
+    return f"u{me.json()['id']}_{base}"
+
+
 @pytest.mark.asyncio
 async def test_context_items_persisted_per_conversation(auth_client):
     """不同对话的上下文项应独立持久化，切换时加载各自的上下文。"""
@@ -310,7 +315,7 @@ async def test_disabled_context_item_not_injected(auth_client, tmp_path, monkeyp
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    saved_name = "disabled-doc.txt"
+    saved_name = await _owned_name(auth_client, "disabled-doc.txt")
     (upload_dir / saved_name).write_text("被禁用的文档内容", encoding="utf-8")
 
     from app.config import get_settings as original_get_settings
@@ -379,7 +384,7 @@ async def test_context_item_delete_removes_from_llm_context(auth_client, tmp_pat
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    saved_name = "to-delete-doc.txt"
+    saved_name = await _owned_name(auth_client, "to-delete-doc.txt")
     (upload_dir / saved_name).write_text("即将删除的文档内容", encoding="utf-8")
 
     from app.config import get_settings as original_get_settings
@@ -449,8 +454,8 @@ async def test_mention_context_item_ids_limit_persisted_doc_injection(auth_clien
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    doc_a = "mention-a.txt"
-    doc_b = "mention-b.txt"
+    doc_a = await _owned_name(auth_client, "mention-a.txt")
+    doc_b = await _owned_name(auth_client, "mention-b.txt")
     (upload_dir / doc_a).write_text("文档A核心信息", encoding="utf-8")
     (upload_dir / doc_b).write_text("文档B核心信息", encoding="utf-8")
 
@@ -530,7 +535,7 @@ async def test_docx_context_item_injects_extracted_text_not_zip_payload(auth_cli
 
     upload_dir = tmp_path / "uploads"
     upload_dir.mkdir()
-    saved_name = "context-doc.docx"
+    saved_name = await _owned_name(auth_client, "context-doc.docx")
     _write_minimal_docx(upload_dir / saved_name, "DOCX正文里的关键业务逻辑")
 
     from app.config import get_settings as original_get_settings

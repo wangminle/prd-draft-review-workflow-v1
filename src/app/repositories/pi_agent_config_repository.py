@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import insert, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,17 +33,31 @@ class PiAgentConfigRepository:
         """
         config = await self.get()
         if config is None:
-            config = PiAgentConfig(singleton_key="default")
-            self._db.add(config)
+            dialect = ""
             try:
-                await self._db.flush()
-            except IntegrityError:
-                # Another session created the row concurrently —
-                # roll back our failed insert and re-read.
-                await self._db.rollback()
+                bind = self._db.get_bind()
+                dialect = bind.dialect.name if bind is not None else ""
+            except Exception:
+                pass
+            if dialect == "sqlite":
+                # BUG-215：用 INSERT OR IGNORE 原子创建，避免 SQLite 的
+                # savepoint/隐式事务在外层回滚前提前提交。
+                await self._db.execute(
+                    insert(PiAgentConfig)
+                    .prefix_with("OR IGNORE")
+                    .values(singleton_key="default")
+                )
                 config = await self.get()
-                if config is None:
-                    raise
+            else:
+                config = PiAgentConfig(singleton_key="default")
+                try:
+                    async with self._db.begin_nested():
+                        self._db.add(config)
+                        await self._db.flush()
+                except IntegrityError:
+                    config = await self.get()
+            if config is None:
+                raise RuntimeError("无法创建或读取 Pi Agent 配置")
         return config
 
     async def update(

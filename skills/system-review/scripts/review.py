@@ -446,9 +446,14 @@ def read_original_docs(classify_data: dict) -> list[dict]:
     docs = []
     for doc in classify_data.get("documents", []):
         md_path = doc.get("md_path", "")
-        if md_path and Path(md_path).exists():
+        # SK：classify JSON 中的路径按不可信输入处理，只接受普通 Markdown 文件。
+        raw_path = Path(md_path) if md_path else None
+        if raw_path is not None and raw_path.is_symlink():
+            continue
+        md_file = raw_path.resolve() if raw_path is not None else None
+        if md_file and md_file.suffix.lower() in (".md", ".markdown") and md_file.is_file():
             try:
-                content = Path(md_path).read_text(encoding="utf-8")
+                content = md_file.read_text(encoding="utf-8")
                 docs.append({
                     "doc_id": doc.get("doc_id", ""),
                     "title": doc.get("title", ""),

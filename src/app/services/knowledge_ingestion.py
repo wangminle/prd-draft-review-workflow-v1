@@ -70,6 +70,36 @@ class KnowledgeIngestionService:
         self._db = db
         self._doc_repo = KnowledgeDocumentRepository(db)
         self._chunk_repo = KnowledgeChunkRepository(db)
+        self._pending_vector_cleanup: list[tuple[int, str]] = []
+
+    async def cleanup_pending_vectors(self) -> int:
+        """BUG-214：DB 提交成功后再删除旧向量，避免回滚后 LanceDB 已丢数据。
+
+        只删除“chunk_id + 旧正文”都匹配的向量：若 SQLite 复用了 chunk_id 且新
+        worker 已写入新正文，则不会被误删。
+        """
+        pending = self._pending_vector_cleanup
+        self._pending_vector_cleanup = []
+        if not pending:
+            return 0
+        try:
+            # 若 chunk_id 被复用且正文相同，旧向量可继续复用，不应删除。
+            from app.models.knowledge import KnowledgeChunk
+            ids = [cid for cid, _ in pending]
+            rows = await self._db.execute(
+                select(KnowledgeChunk.id, KnowledgeChunk.text).where(
+                    KnowledgeChunk.id.in_(ids)
+                )
+            )
+            current = {row[0]: row[1] for row in rows.fetchall()}
+            pending = [(cid, text) for cid, text in pending if current.get(cid) != text]
+            if not pending:
+                return 0
+            from app.services.knowledge_vector_service import get_knowledge_vector_service
+            return await get_knowledge_vector_service().delete_stale_vectors(pending)
+        except Exception as exc:
+            logger.warning("[INGEST] 清理旧向量失败（不影响已提交入库）: %s", exc)
+            return 0
 
     async def ingest_source(self, source_id: int) -> KnowledgeDocument | None:
         """对 KnowledgeSource 执行完整入库流程：解析→切块→FTS 索引→标记 pending embedding。
@@ -95,14 +125,16 @@ class KnowledgeIngestionService:
             return None
 
         # 2. 删除旧文档和 chunks（重新入库场景）
-        await self._doc_repo.delete_by_source_id(source_id)
+        old_chunk_rows = await self._db.execute(
+            select(KnowledgeChunk.id, KnowledgeChunk.text)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .where(KnowledgeDocument.source_id == source_id)
+        )
+        # BUG-214：旧向量延迟到 DB commit 成功后再删除；若本次入库失败回滚，
+        # SQLite 旧记录与 LanceDB 旧向量仍保持一致。
+        self._pending_vector_cleanup = [(row[0], row[1]) for row in old_chunk_rows.fetchall()]
 
-        # 2b. 清除旧向量索引和 FTS5 索引条目（防止重入库后召回旧内容）
-        try:
-            from app.services.knowledge_vector_service import get_knowledge_vector_service
-            await get_knowledge_vector_service().delete_by_source(source_id)
-        except Exception as e:
-            logger.warning(f"[INGEST] 清除旧向量索引失败（可忽略首次或 LanceDB 不可用）: {e}")
+        await self._doc_repo.delete_by_source_id(source_id)
 
         await self._cleanup_fts_entries(source_id)
 
@@ -211,12 +243,13 @@ class KnowledgeIngestionService:
         source_ids: list[int],
         user_id: int,
     ) -> set[int]:
-        """返回 user 可读的 source_id 集合（team 或本人 private）。"""
+        """返回 user 可读且仍处于 active 状态的 source_id 集合（team 或本人 private）。"""
         if not source_ids:
             return set()
         result = await self._db.execute(
             select(KnowledgeSource.id).where(
                 KnowledgeSource.id.in_(source_ids),
+                KnowledgeSource.status == "active",
                 or_(
                     KnowledgeSource.visibility == "team",
                     and_(
@@ -283,6 +316,22 @@ class KnowledgeIngestionService:
             source_ids = list({row[5] for row in rows})
             allowed = await self._allowed_source_ids_for_user(source_ids, user_id)
             rows = [row for row in rows if row[5] in allowed]
+        else:
+            # SEC-08：没有用户上下文时 fail-closed，只返回 team 可见资料，
+            # 不能把 workspace 内他人的 private 资料漏出。
+            source_ids = list({row[5] for row in rows})
+            if source_ids:
+                team_result = await self._db.execute(
+                    select(KnowledgeSource.id).where(
+                        KnowledgeSource.id.in_(source_ids),
+                        KnowledgeSource.status == "active",
+                        KnowledgeSource.visibility == "team",
+                    )
+                )
+                team_ids = {row[0] for row in team_result.fetchall()}
+                rows = [row for row in rows if row[5] in team_ids]
+            else:
+                rows = []
 
         return [
             {
@@ -335,6 +384,7 @@ class KnowledgeIngestionService:
         owned = await self._db.execute(
             select(KnowledgeSource.id).where(
                 KnowledgeSource.id.in_(source_ids),
+                KnowledgeSource.status == "active",
                 KnowledgeSource.owner_id == user_id,
                 or_(
                     KnowledgeSource.owner_type == "user",

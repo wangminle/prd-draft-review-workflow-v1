@@ -53,8 +53,8 @@ async def get_current_user(
             detail="登录状态已失效，请重新登录",
         )
 
-    await repo.update_last_active(user_id)
-    await db.commit()
+    if await repo.update_last_active(user_id):
+        await db.commit()
 
     return user
 

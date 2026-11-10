@@ -384,9 +384,12 @@ def _validate_asset_path_safe(path_str: str) -> str | None:
     if not path_str:
         return None
 
-    # 拒绝 URL
+    # 拒绝外部 URL / 任意 scheme（javascript:、data:、file: 等）
     if path_str.startswith(("http://", "https://", "ftp://", "//")):
         logger.warning("asset path rejected: external URL (%s)", path_str)
+        return None
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path_str):
+        logger.warning("asset path rejected: URL scheme (%s)", path_str)
         return None
 
     # 去掉 URL 前缀斜杠后再做路径校验
@@ -670,7 +673,7 @@ def copy_assets(project_dir: Path, static_dir: Path, runtime_dir: Path, target_d
     src_branding = runtime_dir / "assets" / "branding"
     if src_branding.exists():
         for f in src_branding.iterdir():
-            if f.is_file() and not f.name.startswith("."):
+            if f.is_file() and not f.is_symlink() and not f.name.startswith("."):
                 dest = target_branding / f.name
                 try:
                     dest.resolve().relative_to(branding_root)

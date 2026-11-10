@@ -2,10 +2,28 @@
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
 _JWT_ASSIGN_RE = re.compile(r"^JWT_SECRET=.*$", re.MULTILINE)
+
+
+def _write_env_file(path: Path, text: str) -> None:
+    """写入 .env 并强制 0600（SEC/FS-03：新文件不能按 umask 变成 0644）。"""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(str(path), flags, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(text)
+    finally:
+        try:
+            os.chmod(path, 0o600)
+        except OSError:
+            pass
 
 
 def canonical_env_path(project_dir: Path) -> Path:
@@ -27,7 +45,7 @@ def persist_jwt_secret(env_path: Path, secret: str) -> None:
         if text and not text.endswith("\n"):
             text += "\n"
         text += line + "\n"
-    path.write_text(text, encoding="utf-8")
+    _write_env_file(path, text)
 
 
 def ensure_canonical_env(project_dir: Path) -> tuple[Path, list[str]]:
@@ -49,7 +67,7 @@ def ensure_canonical_env(project_dir: Path) -> tuple[Path, list[str]]:
         return root, warnings
 
     if src_env.exists():
-        root.write_text(src_env.read_text(encoding="utf-8"), encoding="utf-8")
+        _write_env_file(root, src_env.read_text(encoding="utf-8"))
         warnings.append(
             f"Legacy {src_env} copied to {root}. "
             "Use the project-root .env going forward and delete src/.env."

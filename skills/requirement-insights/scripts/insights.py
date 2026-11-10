@@ -356,14 +356,34 @@ def run_evolution_tracking(client, doc_index: dict, version_chains: list[dict],
             "summary": summary}
 
 
+def _escape_mermaid_label(text: str) -> str:
+    """转义 Mermaid 节点/边标签，避免标题中的引号/换行破坏图语法。"""
+    if text is None:
+        return ""
+    mapping = {
+        "&": "&amp;",
+        '"': "'",
+        "[": "&#91;",
+        "]": "&#93;",
+        "{": "&#123;",
+        "}": "&#125;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "|": "&verbar;",
+        "\n": " ",
+        "\r": " ",
+    }
+    return "".join(mapping.get(ch, ch) for ch in str(text))
+
+
 def generate_mermaid(evolution_chains: list[dict]) -> str:
     lines = ["flowchart TD"]
     for ci, chain in enumerate(evolution_chains):
         versions = chain.get("versions", [])
         prev_node = None
         for i, v in enumerate(versions):
-            version_str = v.get("version", "").replace(".", "_")
-            title = v.get("title", "")
+            version_str = str(v.get("version", "")).replace(".", "_").replace("-", "_")
+            title = _escape_mermaid_label(v.get("title", ""))
             remaining = v.get("boundary_issues_remaining", [])
             resolved = v.get("boundary_issues_resolved", [])
 

@@ -15,7 +15,7 @@ from app.models.user import User
 from app.repositories.notification_repository import NotificationRepository, CommentRepository
 from app.services.notification_service import get_notification_channel, clear_channel
 from app.services.auth import is_session_alive, validate_sse_ticket
-from app.services.object_access import assert_object_access
+from app.services.object_access import assert_object_access, assert_object_write_access
 
 router = APIRouter()
 
@@ -227,7 +227,7 @@ async def create_comment(
     if req.object_type not in ("review_request", "review_round", "artifact", "knowledge_source"):
         raise HTTPException(422, "无效的 object_type")
 
-    await assert_object_access(db, req.object_type, req.object_id, user.id)
+    await assert_object_write_access(db, req.object_type, req.object_id, user.id)
 
     repo = CommentRepository(db)
     comment = await repo.create(
@@ -299,13 +299,15 @@ async def delete_comment(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """删除评论（仅作者可删除）。"""
+    """删除评论（仅作者可删除，且需具备当前对象的写权限）。"""
     repo = CommentRepository(db)
     comment = await repo.get_by_id(comment_id)
     if not comment:
         raise HTTPException(404, "评论不存在")
     if comment.author_id != user.id:
         raise HTTPException(403, "仅作者可删除评论")
+    # 校验当前用户仍对该对象保有写权限（被停用、移出空间或降为 Observer 则拒绝）
+    await assert_object_write_access(db, comment.object_type, comment.object_id, user.id)
     await repo.delete(comment)
     await db.commit()
     return {"status": "ok"}
@@ -324,7 +326,7 @@ async def resolve_comment(
     if not comment:
         raise HTTPException(404, "评论不存在")
 
-    await assert_object_access(db, comment.object_type, comment.object_id, user.id)
+    await assert_object_write_access(db, comment.object_type, comment.object_id, user.id)
 
     resolution = body.get("resolution", "resolved")
     if resolution not in ("resolved", "forced_pass"):

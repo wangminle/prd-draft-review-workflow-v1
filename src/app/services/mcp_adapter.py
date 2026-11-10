@@ -4,6 +4,7 @@
 工具调用前检查 MCPToolPolicy。
 """
 
+import asyncio
 import json
 import logging
 import subprocess
@@ -175,24 +176,26 @@ class MCPAdapterManager:
 
     def __init__(self):
         self._clients: dict[int, MCPClient] = {}
+        self._connect_lock = asyncio.Lock()
 
     async def get_or_connect(self, db: AsyncSession, server_id: int) -> Optional[MCPClient]:
-        """获取已连接的客户端，或建立新连接。"""
-        if server_id in self._clients and self._clients[server_id]._connected:
-            return self._clients[server_id]
+        """获取已连接的客户端，或建立新连接（SEC-19：串行化，避免并发泄漏子进程）。"""
+        async with self._connect_lock:
+            if server_id in self._clients and self._clients[server_id]._connected:
+                return self._clients[server_id]
 
-        result = await db.execute(
-            select(MCPServerConfig).where(MCPServerConfig.id == server_id)
-        )
-        config = result.scalar_one_or_none()
-        if not config:
+            result = await db.execute(
+                select(MCPServerConfig).where(MCPServerConfig.id == server_id)
+            )
+            config = result.scalar_one_or_none()
+            if not config:
+                return None
+
+            client = MCPClient(config)
+            if await client.connect():
+                self._clients[server_id] = client
+                return client
             return None
-
-        client = MCPClient(config)
-        if await client.connect():
-            self._clients[server_id] = client
-            return client
-        return None
 
     async def check_policy(self, db: AsyncSession, server_id: int,
                            tool_name: str, user_role: str = "member") -> dict:
@@ -205,7 +208,8 @@ class MCPAdapterManager:
         )
         policy = result.scalar_one_or_none()
         if not policy:
-            return {"allowed": True, "requires_approval": False, "risk_level": "low"}
+            # SEC-19：无显式策略时 fail-closed，而不是默认放行。
+            return {"allowed": False, "requires_approval": True, "risk_level": "high"}
 
         allowed_roles = []
         if policy.allowed_roles_json:

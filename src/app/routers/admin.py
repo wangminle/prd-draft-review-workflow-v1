@@ -449,7 +449,8 @@ async def create_model(
         thinking_payload=req.thinking_payload,
     )
     if req.api_key:
-        secret = get_settings().get("auth", {}).get("secret_key", "")
+        # SEC-02：与 update_api_key / 启动校验保持一致，拒绝空/弱/公开 secret。
+        secret = _get_jwt_secret()
         mc.encrypted_api_key = encrypt_key(req.api_key, secret)
     await repo.create(mc)
     await db.commit()

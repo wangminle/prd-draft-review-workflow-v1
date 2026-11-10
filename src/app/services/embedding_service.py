@@ -170,6 +170,15 @@ class EmbeddingService:
                     data = response.json()
                     # 按 index 排序确保顺序
                     embeddings = sorted(data["data"], key=lambda x: x["index"])
+                    # BUG-214：记录 embedding token 用量，供成本统计聚合。
+                    try:
+                        from app.logging_config import log_llm_session
+                        log_llm_session(
+                            self._model, [], f"embeddings:{len(texts)}",
+                            data.get("usage") or {}, mode="embedding",
+                        )
+                    except Exception:
+                        logger.exception("[EMBED] 写入 embedding 用量日志失败")
                     return [item["embedding"] for item in embeddings]
 
                 if response.status_code == 429:

@@ -108,13 +108,29 @@ class UserRepository:
         await self._db.refresh(user)
         return user
 
-    async def update_last_active(self, user_id: int) -> None:
+    async def update_last_active(self, user_id: int) -> bool:
+        """更新最近活跃时间；SEC-20：60 秒内重复请求不写库。
+
+        返回是否实际发生写入，调用方据此决定是否需要 commit。
+        """
         user = await self.get_by_id(user_id)
         if user is not None:
+            from datetime import timedelta
+
             from app.utils import now_cn
 
-            user.last_active_at = now_cn()
+            now = now_cn()
+            last = user.last_active_at
+            try:
+                recently_active = last is not None and (now - last) < timedelta(seconds=60)
+            except TypeError:
+                recently_active = False
+            if recently_active:
+                return False
+            user.last_active_at = now
             await self._db.flush()
+            return True
+        return False
 
     async def delete(self, user_id: int) -> bool:
         user = await self.get_by_id(user_id)

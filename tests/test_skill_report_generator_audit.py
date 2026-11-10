@@ -79,7 +79,9 @@ class TestMdCellEscape:
 
 class TestMermaidEscape:
     def test_escape_quote(self):
-        assert "&quot;" in mermaid_builder._escape_mermaid_label('a"b')
+        out = mermaid_builder._escape_mermaid_label('a"b')
+        assert '"' not in out
+        assert "'" in out
 
     def test_escape_pipe(self):
         assert "&verbar;" in mermaid_builder._escape_mermaid_label("a|b")

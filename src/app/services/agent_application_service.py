@@ -86,6 +86,12 @@ class AgentApplicationService:
             logger.exception("[AgentAppSvc] Pi 事件流异常")
             await self._run_repo.update_status(run, "failed", error_message=str(e))
             yield {"type": "error", "message": str(e)}
+        else:
+            # CON-05：事件流正常结束但未收到 agent_end 时，run 必须收敛为终态，
+            # 不能遗留在 running/executing。
+            await self._db.refresh(run)
+            if run.status in ("running", "executing", "planning"):
+                await self._run_repo.update_status(run, "completed")
         finally:
             await bridge.cleanup()
 

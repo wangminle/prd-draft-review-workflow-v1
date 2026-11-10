@@ -13,13 +13,15 @@ import pytest
 
 
 @pytest.fixture
-def tmp_md_file():
-    """Create a temporary markdown file simulating a previously-converted doc."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as f:
-        f.write("# Test Document\n\nSome content here.")
-        path = f.name
-    yield path
-    os.unlink(path)
+def tmp_md_file(tmp_path, monkeypatch):
+    """Create a runtime-contained markdown file simulating a converted doc."""
+    runtime_root = tmp_path / "runtime"
+    converted = runtime_root / "data" / "converted" / "99"
+    converted.mkdir(parents=True)
+    path = converted / "test.md"
+    path.write_text("# Test Document\n\nSome content here.", encoding="utf-8")
+    monkeypatch.setenv("RUNTIME_ROOT", str(runtime_root))
+    return str(path)
 
 
 class TestDocxFallback:

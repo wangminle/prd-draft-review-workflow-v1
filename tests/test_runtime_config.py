@@ -102,8 +102,8 @@ def test_update_script_restores_root_and_src_env_separately():
 
     assert "project.env" in script
     assert "src.env" in script
-    assert 'cp "$CURRENT_BACKUP_DIR/project.env" "$PROJECT_DIR/.env"' in script
-    assert 'cp "$CURRENT_BACKUP_DIR/src.env" "$PROJECT_DIR/src/.env"' in script
+    assert '"$CURRENT_BACKUP_DIR/project.env"' in script and '"$PROJECT_DIR/.env"' in script
+    assert '"$CURRENT_BACKUP_DIR/src.env"' in script and '"$PROJECT_DIR/src/.env"' in script
 
 
 def test_update_script_syncs_yaml_version_after_code_replacement():

@@ -38,6 +38,11 @@ async def _auth_header(client):
 
 
 async def _register_user_id(client, username: str) -> int:
+    user_id, _ = await _register_user_with_token(client, username)
+    return user_id
+
+
+async def _register_user_with_token(client, username: str) -> tuple[int, dict]:
     resp = await client.post(
         "/api/auth/register",
         json={"username": username, "password": "test123456"},
@@ -46,7 +51,7 @@ async def _register_user_id(client, username: str) -> int:
     headers = {"Authorization": f"Bearer {resp.json()['access_token']}"}
     me_resp = await client.get("/api/auth/me", headers=headers)
     assert me_resp.status_code == 200, me_resp.text
-    return me_resp.json()["id"]
+    return me_resp.json()["id"], headers
 
 
 async def _create_project(client, headers):
@@ -71,10 +76,11 @@ async def test_create_review_request(client):
     """P4.A.4: 发起协作审查请求"""
     headers = await _auth_header(client)
     project_id = await _create_project(client, headers)
+    approver_id = await _register_user_id(client, "create_req_approver")
 
     resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "goal": "协作审查测试", "approver_ids": [1]},
+        json={"project_id": project_id, "goal": "协作审查测试", "approver_ids": [approver_id]},
         headers=headers,
     )
     assert resp.status_code == 200
@@ -99,11 +105,12 @@ async def test_list_review_requests_by_project(client):
     """按项目列出审查请求"""
     headers = await _auth_header(client)
     project_id = await _create_project(client, headers)
+    approver_id = await _register_user_id(client, "list_req_approver")
 
     # 创建请求
     await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [approver_id]},
         headers=headers,
     )
 
@@ -123,11 +130,12 @@ async def test_decide_round_approved(client):
     """P4.A.5: 审查员通过审查"""
     headers = await _auth_header(client)
     project_id = await _create_project(client, headers)
+    approver_id, approver_headers = await _register_user_with_token(client, "decide_approved")
 
     # 创建请求
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [approver_id]},
         headers=headers,
     )
     request_id = create_resp.json()["id"]
@@ -145,7 +153,7 @@ async def test_decide_round_approved(client):
     decide_resp = await client.post(
         f"/api/review/rounds/{round_id}/decide",
         json={"decision": "approved", "comment": "LGTM"},
-        headers=headers,
+        headers=approver_headers,
     )
     assert decide_resp.status_code == 200
     assert decide_resp.json()["decision"] == "approved"
@@ -155,11 +163,12 @@ async def test_decide_round_rejected_and_resubmit(client):
     """P4.A.5: 驳回后重新提交"""
     headers = await _auth_header(client)
     project_id = await _create_project(client, headers)
+    approver_id, approver_headers = await _register_user_with_token(client, "decide_rejected")
 
     # 创建请求
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [approver_id]},
         headers=headers,
     )
     request_id = create_resp.json()["id"]
@@ -174,7 +183,7 @@ async def test_decide_round_rejected_and_resubmit(client):
     await client.post(
         f"/api/review/rounds/{round_id}/decide",
         json={"decision": "rejected", "comment": "需要修改"},
-        headers=headers,
+        headers=approver_headers,
     )
 
     # 重新提交
@@ -191,10 +200,11 @@ async def test_resubmit_only_for_rejected(client):
     """只有被驳回的请求可以重新提交"""
     headers = await _auth_header(client)
     project_id = await _create_project(client, headers)
+    approver_id = await _register_user_id(client, "resubmit_approver")
 
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1]},
+        json={"project_id": project_id, "approver_ids": [approver_id]},
         headers=headers,
     )
     request_id = create_resp.json()["id"]

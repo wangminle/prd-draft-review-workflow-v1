@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
@@ -18,6 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.review import ReviewContext
 
 logger = logging.getLogger(__name__)
+
+_ACTIVATION_LOCKS: dict[int, asyncio.Lock] = {}
+
+
+def project_activation_lock(project_id: int) -> asyncio.Lock:
+    """返回项目级上下文激活锁；调用方需持有到 commit 完成（BUG-213）。"""
+    return _ACTIVATION_LOCKS.setdefault(project_id, asyncio.Lock())
 
 
 @dataclass
@@ -70,6 +78,7 @@ class ReviewContextRepository:
         await self._db.flush()
 
     async def activate_new_version(self, project_id: int, *, data: dict, change_log: str | None = None, updated_by: int | None = None) -> ReviewContext:
+        # 调用方（router）必须持有 project_activation_lock 直到 commit 完成。
         await self.deactivate_old_version(project_id)
         result = await self._db.execute(
             select(ReviewContext.version)

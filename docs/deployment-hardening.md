@@ -70,7 +70,7 @@ flowchart LR
 
 ### 3. Uvicorn 运行方式
 
-Uvicorn 只监听本机回环，保持单 worker（依赖 SQLite）：
+Uvicorn 只监听本机回环，保持单实例、单应用进程（`--workers 1`）。上下文激活锁、审查启动锁和后台任务在进程内维护，多个 worker 或多个实例共享 SQLite/LanceDB 尚未支持：
 
 ```bash
 /opt/prd-review/venv/bin/uvicorn src.main:app \
@@ -115,12 +115,124 @@ WantedBy=multi-user.target
 ```
 
 要点：
-- `EnvironmentFile` 存放 `JWT_SECRET` 等敏感变量，避免密钥落在命令行参数中
+- `EnvironmentFile` 存放 `JWT_SECRET` 等敏感变量，避免密钥落在命令行参数中。直接运行 uvicorn 时应在该文件显式设置至少 32 字符的稳定随机密钥；`start.sh` 的首次生成及持久化步骤不会在此执行
 - `UMask=0027` 控制新建文件默认权限
-- `ReadWritePaths` 只放开 runtime 目录写权限
+- `ReadWritePaths` 声明 runtime 可写路径；`ProtectSystem=full` 不会把 `/opt` 整体设为只读，代码目录仍需通过属主和文件权限限制服务用户写入（见 [systemd 官方说明](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml)）
 - `NoNewPrivileges=true` 减少提权面
 
 启用：`sudo systemctl daemon-reload && sudo systemctl enable --now prd-review`
+
+
+
+### 4.1 systemd 实例更新与回滚
+
+该 unit 直接运行 uvicorn，所有启停均由 `systemctl` 管理。`start.sh` 使用自己的 PID 文件并后台启动进程，`update.sh` 会自行调用它；两套托管方式不能混用。即便已执行 `systemctl stop`，随后直接运行 `update.sh` 也会另外启动脚本实例。
+
+按下面流程手动发布。先执行 `sudo -i` 进入具有 root 权限的 Bash 会话；以下命令在该会话中执行，路径与上方 unit 一致；若部署目录、用户、端口或环境文件不同，先同步修改命令。维护窗口内暂停外部业务写入，直至健康检查和业务验收完成。准备足够空间保存应用、虚拟环境及完整运行时数据。只使用经 `package.sh` 自检、来自可信发布渠道的平铺 tar.gz 包。
+
+1. 先解包检查，再停服和备份。备份失败时重新启动原 unit，保留错误输出。
+
+```bash
+set -euo pipefail
+release_package=/tmp/prd-draft-review-workflow-v1-code-config-v0.3.19-buildXXXX.tar.gz
+# 将上面的包路径替换为实际文件；Pi Agent 已启用时设为 true。
+use_pi_agent=false
+deploy_root=/opt/prd-review
+app_dir="$deploy_root/app"
+service_env=/etc/prd-review/prd-review.env
+release_stage=$(mktemp -d "$deploy_root/.systemd-release.XXXXXX")
+backup_dir=$(mktemp -d "$deploy_root/systemd-backup.XXXXXX")
+printf 'Backup directory: %s\n' "$backup_dir"
+tar -xzf "$release_package" -C "$release_stage"
+test -f "$release_stage/src/main.py"
+test -f "$release_stage/VERSION"
+test -f "$release_stage/requirements.txt"
+test ! -e "$release_stage/.env"
+test ! -e "$release_stage/src/.env"
+expected_version=$(cat "$release_stage/VERSION")
+systemctl stop prd-review
+test "$(systemctl show prd-review -p MainPID --value)" = 0
+if ! (umask 077
+  tar -czf "$backup_dir/deployment.tar.gz" -C "$deploy_root" app venv runtime &&
+  cp -p "$service_env" "$backup_dir/service.env"
+); then
+  systemctl start prd-review
+  exit 1
+fi
+```
+
+2. 构建候选代码目录，保留本机文件和环境配置，再替换代码。整个步骤保持停服；任何命令失败时停止执行，转到下方恢复流程。备份目录保留原代码和依赖，供失败时恢复。
+
+```bash
+candidate_app=$(mktemp -d "$deploy_root/.systemd-candidate.XXXXXX")
+cp -a "$app_dir/." "$candidate_app/"
+python3 - "$app_dir" "$candidate_app" <<'PY_PERMISSIONS'
+import os
+import stat
+import sys
+metadata = os.stat(sys.argv[1])
+os.chown(sys.argv[2], metadata.st_uid, metadata.st_gid)
+os.chmod(sys.argv[2], stat.S_IMODE(metadata.st_mode))
+PY_PERMISSIONS
+for item in src tools tests docs skills; do
+  if [ -d "$release_stage/$item" ]; then
+    rm -rf "$candidate_app/$item"
+    cp -a "$release_stage/$item" "$candidate_app/$item"
+  fi
+done
+for item in VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+  if [ -f "$release_stage/$item" ]; then
+    cp -p "$release_stage/$item" "$candidate_app/$item"
+  fi
+done
+mv "$app_dir" "$backup_dir/app-before-update"
+mv "$candidate_app" "$app_dir"
+/opt/prd-review/venv/bin/python -m pip install -r "$app_dir/requirements.txt"
+if [ "$use_pi_agent" = true ]; then
+  (cd "$app_dir" && npm ci)
+fi
+systemctl start prd-review
+systemctl is-active --quiet prd-review
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5   http://127.0.0.1:17957/api/health | /opt/prd-review/venv/bin/python -c   'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="ok" and d.get("version")==sys.argv[1] else 1)' "$expected_version"
+```
+
+systemd 继续使用 unit 中的 `RUNTIME_ROOT=/opt/prd-review/runtime` 和 `EnvironmentFile=/etc/prd-review/prd-review.env`。本流程不复制包内 runtime 模板覆盖现有配置，也不自动执行品牌迁移 apply；如需迁移，先在旧代码尚在时生成 scan/plan 报告，再按发布说明处理。Pi Agent 要求 Node.js 24.x（至少 24.22.1）；服务用户的 `PATH` 必须能找到该 Node，Pi CLI 由桥接优先从 `app/node_modules/.bin/pi` 读取。nvm 的交互式 shell 初始化不会自动进入 systemd，可在 unit 中显式配置安装位置对应的 `Environment=PATH=...`。
+
+3. 替换、依赖安装、启动或健康检查失败时，保持维护窗口，按下面步骤恢复。新开 `sudo -i` root Bash 会话后，将 `backup_dir` 填为第 1 步实际打印的目录。先完整解包校验，再移动现有目录，失败材料保留在 `failed_dir`。若任何恢复命令失败，保持停服，保留备份、恢复目录和失败材料，检查错误后人工继续。
+
+```bash
+set -euo pipefail
+deploy_root=/opt/prd-review
+backup_dir=/opt/prd-review/systemd-backup.XXXXXX
+service_env=/etc/prd-review/prd-review.env
+recovery_stage=$(mktemp -d "$deploy_root/.systemd-recovery.XXXXXX")
+tar -xzf "$backup_dir/deployment.tar.gz" -C "$recovery_stage"
+test -f "$recovery_stage/app/src/main.py"
+test -f "$recovery_stage/app/VERSION"
+test -d "$recovery_stage/venv"
+test -d "$recovery_stage/runtime"
+test -f "$backup_dir/service.env"
+systemctl stop prd-review
+test "$(systemctl show prd-review -p MainPID --value)" = 0
+failed_dir=$(mktemp -d "$deploy_root/systemd-failed.XXXXXX")
+printf 'Retained deployment: %s\n' "$failed_dir"
+for item in app venv runtime; do
+  if [ -e "$deploy_root/$item" ]; then
+    mv "$deploy_root/$item" "$failed_dir/$item"
+  fi
+  mv "$recovery_stage/$item" "$deploy_root/$item"
+done
+env_tmp=$(mktemp /etc/prd-review/.restore-env.XXXXXX)
+install -m 600 "$backup_dir/service.env" "$env_tmp"
+cmp -s "$backup_dir/service.env" "$env_tmp"
+mv "$env_tmp" "$service_env"
+expected_version=$(cat "$deploy_root/app/VERSION")
+systemctl start prd-review
+systemctl is-active --quiet prd-review
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5   http://127.0.0.1:17957/api/health | /opt/prd-review/venv/bin/python -c   'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="ok" and d.get("version")==sys.argv[1] else 1)' "$expected_version"
+```
+
+运行时数据会恢复到停服备份时刻。恢复成功后完成业务验收，再恢复外部流量。`start.sh` 自动更新流程的退出码 `0/2/3` 不适用于这套手动 systemd 流程，应以命令返回值、unit 状态和目标版本健康检查共同判断结果。
 
 ### 5. Nginx 反向代理配置
 
@@ -266,7 +378,7 @@ Goal: only the service user can write runtime data; other local users cannot rea
 
 ### 3. Uvicorn Runtime
 
-Uvicorn listens only on loopback, single worker (SQLite dependency):
+Uvicorn listens only on loopback, with one instance and one application process (`--workers 1`). Context activation locks, review-start locks, and background tasks are maintained in memory. Multiple workers or instances sharing SQLite/LanceDB are not supported yet:
 
 ```bash
 /opt/prd-review/venv/bin/uvicorn src.main:app \
@@ -311,12 +423,124 @@ WantedBy=multi-user.target
 ```
 
 Key points:
-- `EnvironmentFile` stores `JWT_SECRET` and other sensitive variables, keeping secrets out of command-line arguments
+- `EnvironmentFile` stores `JWT_SECRET` and other sensitive variables, keeping secrets out of command-line arguments. Set a stable random secret of at least 32 characters there when running uvicorn directly; this path does not execute the first-start generation and persistence performed by `start.sh`
 - `UMask=0027` controls default permissions of new files
-- `ReadWritePaths` opens write access only to the runtime directory
+- `ReadWritePaths` declares the runtime write path. `ProtectSystem=full` does not make all of `/opt` read-only; use ownership and file permissions to restrict service-user writes to code (see the [official systemd documentation](https://github.com/systemd/systemd/blob/main/man/systemd.exec.xml))
 - `NoNewPrivileges=true` reduces privilege-escalation surface
 
 Enable: `sudo systemctl daemon-reload && sudo systemctl enable --now prd-review`
+
+
+
+### 4.1 systemd Updates and Rollback
+
+This unit runs uvicorn directly, and `systemctl` owns its lifecycle. `start.sh` tracks its own PID and starts a background process; `update.sh` invokes that script. Use one supervisor per instance. Running `update.sh` after `systemctl stop` would still launch a separate script-managed process.
+
+Deploy manually using the procedure below. Run `sudo -i` to enter a root Bash session, then execute the commands there. Paths match the unit above; adjust them first if your deployment directory, service user, port, or environment file differs. Pause external business writes throughout the maintenance window until health checks and acceptance finish. Allow enough space for the application, virtual environment, and complete runtime snapshot. Use only a trusted, flat tar.gz release that passed `package.sh` self-checks.
+
+1. Extract and check the release before stopping the service and taking a backup. If backup fails, restart the original unit and retain the error output.
+
+```bash
+set -euo pipefail
+release_package=/tmp/prd-draft-review-workflow-v1-code-config-v0.3.19-buildXXXX.tar.gz
+# Replace the package path; set this to true when Pi Agent is enabled.
+use_pi_agent=false
+deploy_root=/opt/prd-review
+app_dir="$deploy_root/app"
+service_env=/etc/prd-review/prd-review.env
+release_stage=$(mktemp -d "$deploy_root/.systemd-release.XXXXXX")
+backup_dir=$(mktemp -d "$deploy_root/systemd-backup.XXXXXX")
+printf 'Backup directory: %s\n' "$backup_dir"
+tar -xzf "$release_package" -C "$release_stage"
+test -f "$release_stage/src/main.py"
+test -f "$release_stage/VERSION"
+test -f "$release_stage/requirements.txt"
+test ! -e "$release_stage/.env"
+test ! -e "$release_stage/src/.env"
+expected_version=$(cat "$release_stage/VERSION")
+systemctl stop prd-review
+test "$(systemctl show prd-review -p MainPID --value)" = 0
+if ! (umask 077
+  tar -czf "$backup_dir/deployment.tar.gz" -C "$deploy_root" app venv runtime &&
+  cp -p "$service_env" "$backup_dir/service.env"
+); then
+  systemctl start prd-review
+  exit 1
+fi
+```
+
+2. Build a candidate application directory, retaining local files and environment configuration, then replace the code. Keep the unit stopped throughout this step. If any command fails, stop and use the recovery procedure below. The backup directory retains the original code and dependencies.
+
+```bash
+candidate_app=$(mktemp -d "$deploy_root/.systemd-candidate.XXXXXX")
+cp -a "$app_dir/." "$candidate_app/"
+python3 - "$app_dir" "$candidate_app" <<'PY_PERMISSIONS'
+import os
+import stat
+import sys
+metadata = os.stat(sys.argv[1])
+os.chown(sys.argv[2], metadata.st_uid, metadata.st_gid)
+os.chmod(sys.argv[2], stat.S_IMODE(metadata.st_mode))
+PY_PERMISSIONS
+for item in src tools tests docs skills; do
+  if [ -d "$release_stage/$item" ]; then
+    rm -rf "$candidate_app/$item"
+    cp -a "$release_stage/$item" "$candidate_app/$item"
+  fi
+done
+for item in VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+  if [ -f "$release_stage/$item" ]; then
+    cp -p "$release_stage/$item" "$candidate_app/$item"
+  fi
+done
+mv "$app_dir" "$backup_dir/app-before-update"
+mv "$candidate_app" "$app_dir"
+/opt/prd-review/venv/bin/python -m pip install -r "$app_dir/requirements.txt"
+if [ "$use_pi_agent" = true ]; then
+  (cd "$app_dir" && npm ci)
+fi
+systemctl start prd-review
+systemctl is-active --quiet prd-review
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5   http://127.0.0.1:17957/api/health | /opt/prd-review/venv/bin/python -c   'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="ok" and d.get("version")==sys.argv[1] else 1)' "$expected_version"
+```
+
+systemd keeps using `RUNTIME_ROOT=/opt/prd-review/runtime` and `EnvironmentFile=/etc/prd-review/prd-review.env` from the unit. This procedure preserves existing runtime configuration and leaves branding migration apply as a separate action. If migration is needed, generate scan/plan reports while the old code is still available, then follow the release instructions. Pi Agent requires Node.js 24.x, at least 24.22.1; the service user's `PATH` must resolve that Node installation. The bridge prefers the local CLI at `app/node_modules/.bin/pi`. Interactive nvm initialization is not inherited by systemd; explicitly set `Environment=PATH=...` in the unit for your installation when needed.
+
+3. If replacement, dependency installation, startup, or health checks fail, keep the maintenance window in place and restore as follows. In a fresh root Bash session opened with `sudo -i`, set `backup_dir` to the directory printed in step 1. Extract and check the full backup before moving current directories. `failed_dir` retains the failed deployment. If any recovery command fails, keep the unit stopped and retain the backup, recovery directory, and failed deployment while resolving the error manually.
+
+```bash
+set -euo pipefail
+deploy_root=/opt/prd-review
+backup_dir=/opt/prd-review/systemd-backup.XXXXXX
+service_env=/etc/prd-review/prd-review.env
+recovery_stage=$(mktemp -d "$deploy_root/.systemd-recovery.XXXXXX")
+tar -xzf "$backup_dir/deployment.tar.gz" -C "$recovery_stage"
+test -f "$recovery_stage/app/src/main.py"
+test -f "$recovery_stage/app/VERSION"
+test -d "$recovery_stage/venv"
+test -d "$recovery_stage/runtime"
+test -f "$backup_dir/service.env"
+systemctl stop prd-review
+test "$(systemctl show prd-review -p MainPID --value)" = 0
+failed_dir=$(mktemp -d "$deploy_root/systemd-failed.XXXXXX")
+printf 'Retained deployment: %s\n' "$failed_dir"
+for item in app venv runtime; do
+  if [ -e "$deploy_root/$item" ]; then
+    mv "$deploy_root/$item" "$failed_dir/$item"
+  fi
+  mv "$recovery_stage/$item" "$deploy_root/$item"
+done
+env_tmp=$(mktemp /etc/prd-review/.restore-env.XXXXXX)
+install -m 600 "$backup_dir/service.env" "$env_tmp"
+cmp -s "$backup_dir/service.env" "$env_tmp"
+mv "$env_tmp" "$service_env"
+expected_version=$(cat "$deploy_root/app/VERSION")
+systemctl start prd-review
+systemctl is-active --quiet prd-review
+curl -fsS --retry 10 --retry-connrefused --retry-delay 1 --max-time 5   http://127.0.0.1:17957/api/health | /opt/prd-review/venv/bin/python -c   'import json,sys; d=json.load(sys.stdin); sys.exit(0 if d.get("status")=="ok" and d.get("version")==sys.argv[1] else 1)' "$expected_version"
+```
+
+Runtime data returns to the stopped-service backup snapshot. Complete business acceptance before restoring external traffic. Exit codes `0/2/3` from the `start.sh`-managed automated updater do not apply to this manual systemd procedure; assess command results, unit state, and the target-version health check together.
 
 ### 5. Nginx Reverse Proxy
 

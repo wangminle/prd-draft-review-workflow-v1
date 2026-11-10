@@ -59,7 +59,7 @@
 1. 在项目内点击"上传文档"。
 2. 选择 `.docx` 格式的 Word 文档。
 3. **限制**:仅支持 `.docx` 格式,单文件最大 **50MB**。
-4. 上传后系统会自动把 Word 转成 Markdown(含图片提取、嵌入 Excel 转表格),为后续评审做准备。
+4. 上传后文档进入待处理状态。开始评审时，系统先把 Word 转成 Markdown（含图片提取、嵌入 Excel 转表格），再执行后续分析。
 
 可以一次上传多篇文档,也可以分批补充。
 
@@ -118,11 +118,11 @@
 
 #### 2.6 模式的递进关系与缓存复用(重要)
 
-这是平台一个很省时的设计:**6 种模式是递进的**,而且**已完成的步骤结果会被缓存复用**。
+这是平台一个很省时的设计:**6 种模式是递进的**。缓存匹配且未选择强制重跑时，系统可复用已有的转换、分类、逐篇分析和体系评审结果。
 
 - 模式的递进链路:`quick` < `review`/`pm` < `insight`/`full` < `draft`
-- **举例**:你先跑了 `quick`(完成 预处理→分类→逐篇分析),之后再跑 `review`,系统只会执行后续步骤(体系 Review → 报告生成),前面三步直接复用缓存,**不再重复跑**。
-- **再举例**:先跑了 `review`,再跑 `draft`,只需补"需求洞察 + PRD 草稿生成"两步。
+- **举例**:你先跑了 `quick`（完成预处理→分类→逐篇分析），之后在缓存仍有效时跑 `review`，可复用前面三步的结果，继续执行体系 Review 和报告生成。
+- **再举例**:先跑了 `review`，再跑 `draft`，在复用有效缓存的基础上执行需求洞察、PRD 草稿生成，并重新生成报告。
 - 一旦某个 Skill 被触发,它就**执行完整流程**(例如体系 Review 永远跑完整 7 个维度,不会因为是复用而打折扣)。
 
 **实际收益**:按从轻到重的顺序逐步深入,可以显著缩短后续模式的等待时间。
@@ -178,7 +178,7 @@
 
 - **共享协作**:团队成员共享上传、检索、下载资料。
 - **角色权限**:四层角色,权限从高到低为 **owner(拥有者) → admin(管理员) → member(成员) → viewer(只读)**,不同角色能做的操作不同(如上传、管理、仅查看)。
-- 项目可引用团队资料,引用时会自动冻结一个版本快照,保证可追溯。
+- 项目可引用团队公开资料。引用可指定 `snapshot_version`；未指定时，评审管线启动阶段会记录当时的资料版本，供后续追溯。
 
 #### 4.2 个人空间 (Mine)
 
@@ -188,7 +188,7 @@
 #### 4.3 检索机制
 
 - 上传资料后,系统会在后台**异步向量化**(由 Embedding Worker 处理),支持**向量检索**。
-- 个人空间额外提供 **FTS(全文检索)兜底**,确保即使向量化未完成也能检索到内容。
+- 团队空间与个人空间均提供 **FTS（全文检索）回退**。向量服务不可用、嵌入失败或向量结果为空等情况下，可检索已入库的全文内容，并按团队可见性或个人归属过滤。
 
 ---
 
@@ -310,7 +310,7 @@ This is the most important capability of the platform and the focus of this guid
 1. Click "Upload Document" inside the project.
 2. Select a Word document in `.docx` format.
 3. **Limits**: Only `.docx` is supported, with a maximum file size of **50MB** per file.
-4. After upload, the system automatically converts Word to Markdown (including image extraction and embedded Excel → table conversion) to prepare for review.
+4. Uploaded documents enter the pending-processing state. When you start a review, the system first converts Word to Markdown (including image extraction and embedded Excel → table conversion), then runs the analysis steps.
 
 You can upload multiple documents at once or add them in batches.
 
@@ -369,11 +369,11 @@ After running the full analysis pipeline, it additionally runs **PRD draft gener
 
 #### 2.6 Mode Progression and Cache Reuse (Important)
 
-The platform has a time-saving design: **the 6 modes are progressive**, and **results of completed steps are cached and reused**.
+The platform has a time-saving design: **the 6 modes are progressive**. When the cache matches and forced reanalysis is off, existing conversion, classification, per-document analysis, and System Review results can be reused.
 
 - The progression chain: `quick` < `review`/`pm` < `insight`/`full` < `draft`
-- **Example**: If you first run `quick` (completing preprocess → classify → per-analysis) and then run `review`, the system only executes the later steps (System Review → report). The first three steps are reused from cache and **not run again**.
-- **Another example**: After running `review`, running `draft` only adds "insights + PRD draft generation."
+- **Example**: After `quick` completes preprocess → classify → per-analysis, a later `review` can reuse those results while the cache remains valid, then run System Review and report generation.
+- **Another example**: After `review`, a `draft` run reuses valid cached results, runs insights and PRD draft generation, and generates a fresh report.
 - Once a Skill is triggered, it **runs the complete flow** (e.g., System Review always runs all 7 dimensions — reuse never means a watered-down result).
 
 **Practical benefit**: Going from light to heavy modes progressively can significantly shorten the wait for subsequent modes.
@@ -429,7 +429,7 @@ The knowledge base stores team and personal materials. It can be referenced duri
 
 - **Shared collaboration**: team members share uploading, retrieval, and downloading of materials.
 - **Role permissions**: four roles, from highest to lowest — **owner → admin → member → viewer** — with different allowed actions (e.g., upload, manage, view-only).
-- Projects can reference team materials; a version snapshot is automatically frozen at reference time for traceability.
+- Projects can reference team-visible materials. A reference can specify `snapshot_version`; when omitted, the review pipeline records the source version at startup for later tracing.
 
 #### 4.2 Personal Space (Mine)
 
@@ -439,7 +439,7 @@ The knowledge base stores team and personal materials. It can be referenced duri
 #### 4.3 Retrieval
 
 - After upload, the system **asynchronously vectorizes** materials in the background (via the Embedding Worker), enabling **vector retrieval**.
-- The personal space additionally provides an **FTS (full-text search) fallback**, ensuring content is retrievable even before vectorization completes.
+- Both team and personal spaces provide an **FTS (full-text search) fallback**. If the vector service is unavailable, embedding fails, or vector results are empty, the system can search ingested text, filtering results by team visibility or personal ownership.
 
 ---
 

@@ -595,6 +595,16 @@ def _get_cjk_font_name() -> str:
         return "Helvetica"
 
 
+def _xml_escape(text: str) -> str:
+    """转义 reportlab Paragraph 的 XML 特殊字符。"""
+    return (
+        str(text)
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
 def markdown_to_pdf(content: str, pdf_path: Path) -> bool:
     """把 Markdown 文本渲染为 PDF。
 
@@ -633,9 +643,9 @@ def markdown_to_pdf(content: str, pdf_path: Path) -> bool:
         if not stripped:
             story.append(Spacer(1, 6))
         elif stripped.startswith("# "):
-            story.append(Paragraph(stripped[2:], cn_h1))
+            story.append(Paragraph(_xml_escape(stripped[2:]), cn_h1))
         elif stripped.startswith("## "):
-            story.append(Paragraph(stripped[3:], cn_h2))
+            story.append(Paragraph(_xml_escape(stripped[3:]), cn_h2))
         else:
             # 清洗 Markdown 特殊标记：竖线转全角、加粗标记移除，
             # 并对 XML 特殊字符做最小转义以避免 reportlab 解析异常。

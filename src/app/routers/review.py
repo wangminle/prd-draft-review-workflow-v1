@@ -6,9 +6,10 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Request
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from sqlalchemy import func, not_, select
+from sqlalchemy import func, not_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.config import get_settings
 from app.database import async_session, get_db
@@ -30,6 +31,7 @@ from app.models.review import (
 )
 from app.models.user import ModelConfig, User
 from app.runtime_paths import runtime_path  # noqa: F401  # used via monkeypatch in tests
+from app.services.upload_limits import read_upload_limited
 from app.storage.review_file_storage import ReviewFileStorage
 from app.schemas.review import (
     AnalysisInfo,
@@ -187,10 +189,13 @@ async def _load_project_knowledge_context(db: AsyncSession, project_id: int, sna
                 snapshot_version_map[ref.source_id] = ref.snapshot_version
 
     # 2. 仅使用仍处于 active 状态的引用资料，避免已归档资料继续影响审查结果。
+    # BUG-212：存量私有/个人资料引用不得再注入正文（历史数据也要 fail-closed）。
     source_result = await db.execute(
         select(KnowledgeSource).where(
             KnowledgeSource.id.in_(source_ids),
             KnowledgeSource.status == "active",
+            KnowledgeSource.visibility == "team",
+            KnowledgeSource.owner_type != "user",
         )
     )
     active_source_map = {s.id: s.title for s in source_result.scalars().all()}
@@ -301,6 +306,8 @@ def _unsubscribe_progress(task_id: int, queue: asyncio.Queue) -> None:
     if not subscribers:
         return
     subscribers.discard(queue)
+    if not subscribers:
+        progress_queues.pop(task_id, None)
 
 
 async def _publish_progress(task_id: int, event: dict) -> None:
@@ -475,9 +482,9 @@ async def _save_project_documents(
             skipped.append({"filename": f.filename, "reason": "同名文件已存在"})
             continue
 
-        content = await f.read()
-        if len(content) > max_size_mb * 1024 * 1024:
-            raise HTTPException(status_code=413, detail=f"文件过大: {f.filename}")
+        content = await read_upload_limited(
+            f, max_size_mb * 1024 * 1024, filename=f.filename,
+        )
 
         stored = await _review_file_storage.save_uploaded_docx(
             project_id=project_id, document_type=document_type,
@@ -516,7 +523,12 @@ async def _save_project_documents(
 
 # ── Projects ──
 
-async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int) -> ReviewProject:
+async def _verify_project_owner(
+    db: AsyncSession,
+    project_id: int,
+    user_id: int,
+    action: str = "read",
+) -> ReviewProject:
     repo = ReviewProjectRepository(db)
     project = await repo.get_project(project_id)
     if project is None:
@@ -535,7 +547,8 @@ async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int)
         workspace_id = default_ws.id
 
     member = await ws_repo.get_member(workspace_id, user_id)
-    require_action(member, "read", "访问项目")
+    # SEC-03：写操作必须要求 write/manage，不能再复用 read 权限。
+    require_action(member, action, "访问项目" if action == "read" else "修改项目")
 
     # BUG-085: 与 list_projects 可见性规则对齐
     member_role = member.role if member else None
@@ -545,9 +558,9 @@ async def _verify_project_owner(db: AsyncSession, project_id: int, user_id: int)
     return project
 
 
-async def _verify_review_task_owner(db: AsyncSession, project_id: int, review_id: int, user_id: int) -> ReviewTask:
+async def _verify_review_task_owner(db: AsyncSession, project_id: int, review_id: int, user_id: int, action: str = "read") -> ReviewTask:
     """Verify user owns the project AND the review task belongs to the project."""
-    await _verify_project_owner(db, project_id, user_id)
+    await _verify_project_owner(db, project_id, user_id, action=action)
     result = await db.execute(
         select(ReviewTask).where(ReviewTask.id == review_id, ReviewTask.project_id == project_id)
     )
@@ -653,7 +666,7 @@ async def get_project(project_id: int, user: User = Depends(get_current_user), d
 
 @router.delete("/projects/{project_id}")
 async def delete_project(project_id: int, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    p = await _verify_project_owner(db, project_id, user.id)
+    p = await _verify_project_owner(db, project_id, user.id, action="write")
     project_name = p.name
 
     active_task_result = await db.execute(
@@ -680,11 +693,7 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
 
     doc_result = await db.execute(select(ReviewDocument).where(ReviewDocument.project_id == project_id))
     docs = doc_result.scalars().all()
-
-    await _review_file_storage.delete_project_files(project_id)
-
-    for doc in docs:
-        await _review_file_storage.delete_document_files(doc.id, file_path=doc.file_path, md_path=doc.md_path)
+    doc_files = [(doc.id, doc.file_path, doc.md_path) for doc in docs]
 
     # P4: 删除关联的协作审查子记录（review_requests 级联删除）
     # SQLAlchemy 不会自动执行 ON DELETE CASCADE，需手动删除子记录
@@ -744,6 +753,17 @@ async def delete_project(project_id: int, request: Request, user: User = Depends
 
     await db.delete(p)
     await db.commit()
+
+    # CON-07：数据库提交成功后再删除磁盘文件，避免提交失败时文件已不可恢复。
+    try:
+        await _review_file_storage.delete_project_files(project_id)
+        for doc_id, file_path, md_path in doc_files:
+            await _review_file_storage.delete_document_files(
+                doc_id, file_path=file_path, md_path=md_path,
+            )
+    except Exception:
+        logger.exception("项目已删除，但清理磁盘文件失败: project_id=%s", project_id)
+
     _audit_log_writer.write(
         "project.delete",
         actor=user,
@@ -765,7 +785,7 @@ async def add_project_source_ref(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    p = await _verify_project_owner(db, project_id, user.id)
+    p = await _verify_project_owner(db, project_id, user.id, action="write")
 
     source_id = body.get("source_id")
     if not source_id or not isinstance(source_id, int):
@@ -783,6 +803,11 @@ async def add_project_source_ref(
     source = await ks_repo.get_by_id(source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="资料不存在")
+
+    # BUG-212 / 数据与管线一致性：项目引用资料面向团队共享审查，
+    # 审查管线中私有资料一律不予注入；此处统一限制仅允许引用团队公开资料。
+    if source.owner_type == "user" or source.visibility == "private":
+        raise HTTPException(status_code=400, detail="私有资料不能作为项目共享资料引用，请先将资料发布到团队空间")
 
     # P0 验收补：source 必须属于项目所在 workspace 且状态 active
     if source.status != "active":
@@ -863,7 +888,7 @@ async def upload_docs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_project_owner(db, project_id, user.id)
+    await _verify_project_owner(db, project_id, user.id, action="write")
 
     result = await _save_project_documents(project_id, files, db, "requirement")
     _audit_log_writer.write(
@@ -885,7 +910,7 @@ async def upload_historical_docs(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_project_owner(db, project_id, user.id)
+    await _verify_project_owner(db, project_id, user.id, action="write")
 
     result = await _save_project_documents(project_id, files, db, "historical")
     _audit_log_writer.write(
@@ -908,15 +933,17 @@ async def list_docs(project_id: int, user: User = Depends(get_current_user), db:
 
 @router.delete("/projects/{project_id}/documents/{doc_id}")
 async def delete_doc(project_id: int, doc_id: int, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await _verify_project_owner(db, project_id, user.id)
+    await _verify_project_owner(db, project_id, user.id, action="write")
     result = await db.execute(select(ReviewDocument).where(ReviewDocument.id == doc_id, ReviewDocument.project_id == project_id))
     doc = result.scalar_one_or_none()
     if doc is None:
         raise HTTPException(status_code=404, detail="文档不存在")
     filename = doc.filename
-    await _review_file_storage.delete_document_files(doc.id, file_path=doc.file_path, md_path=doc.md_path)
+    file_path, md_path = doc.file_path, doc.md_path
     await db.delete(doc)
+    # CON-07：先提交删除，成功后再清理磁盘文件；提交失败时保留可恢复的原文件。
     await db.commit()
+    await _review_file_storage.delete_document_files(doc_id, file_path=file_path, md_path=md_path)
     _audit_log_writer.write(
         "document.delete",
         actor=user,
@@ -957,16 +984,23 @@ async def start_review(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    await _verify_project_owner(db, project_id, user.id)
+    await _verify_project_owner(db, project_id, user.id, action="write")
 
     # BUG-144: 审查管线会触发数十次 LLM 调用，必须在启动前校验 Workspace 配额，
     # 与 chat.py / agent.py 保持一致，否则 hard_limit_action=block 的 Workspace
     # 仍可消耗大量 token，导致多租户成本泄漏。
     from app.services.budget_guard import ensure_workspace_llm_allowed
+    from app.repositories.workspace_repository import WorkspaceRepository
     _p_row = await db.execute(select(ReviewProject).where(ReviewProject.id == project_id))
     _p_obj = _p_row.scalar_one_or_none()
-    if _p_obj and _p_obj.workspace_id:
-        await ensure_workspace_llm_allowed(db, _p_obj.workspace_id)
+    if _p_obj:
+        # SEC-17：legacy 项目 workspace_id=NULL 时也要回退到默认 workspace 校验配额。
+        _budget_ws_id = _p_obj.workspace_id
+        if _budget_ws_id is None:
+            _default_ws = await WorkspaceRepository(db).get_default()
+            _budget_ws_id = _default_ws.id if _default_ws else None
+        if _budget_ws_id is not None:
+            await ensure_workspace_llm_allowed(db, _budget_ws_id)
 
     doc_result = await db.execute(select(ReviewDocument).where(ReviewDocument.project_id == project_id))
     all_docs = doc_result.scalars().all()
@@ -1214,7 +1248,7 @@ async def review_task_status(project_id: int, review_id: int, user: User = Depen
 
 @router.post("/projects/{project_id}/reviews/{review_id}/cancel")
 async def cancel_review(project_id: int, review_id: int, request: Request, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    task = await _verify_review_task_owner(db, project_id, review_id, user.id)
+    task = await _verify_review_task_owner(db, project_id, review_id, user.id, action="write")
     if task.status not in ("pending", "running"):
         _audit_log_writer.write(
             "review.cancel",
@@ -1227,8 +1261,20 @@ async def cancel_review(project_id: int, review_id: int, request: Request, user:
             level="warning",
         )
         raise HTTPException(status_code=400, detail="任务已结束")
-    task.status = "cancelled"
+    # CON-03：条件更新消除“读到 running → 另一请求完成 → 写 cancelled”的 TOCTOU。
+    result = await db.execute(
+        update(ReviewTask)
+        .where(
+            ReviewTask.id == review_id,
+            ReviewTask.status.in_(("pending", "running")),
+        )
+        .values(status="cancelled")
+    )
+    if result.rowcount == 0:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail="任务已结束")
     await db.commit()
+    await db.refresh(task)
     await _publish_progress(review_id, {"task_status": "cancelled"})
     _audit_log_writer.write(
         "review.cancel",
@@ -1349,6 +1395,31 @@ def _finalize_task_failed(task: ReviewTask) -> dict:
     task.status = "failed"
     task.completed_at = now_cn()
     return _mark_current_step_failed(task)
+
+
+async def _commit_terminal_status(db: AsyncSession, task: ReviewTask) -> bool:
+    """写入任务终态，但绝不覆盖已并发提交的 cancelled（BUG-213）。
+
+    返回 False 表示任务已被取消，调用方应停止发布终态事件。
+    """
+    values = {
+        "status": task.status,
+        "step_statuses": task.step_statuses,
+        "step_details": task.step_details,
+        "completed_at": task.completed_at or now_cn(),
+    }
+    # BUG-213：先把 ORM 上的终态变更标记为已提交，阻止 autoflush 在条件 UPDATE
+    # 之前发出无条件的 status 更新（否则 cancelled 会先被改成 failed）。
+    for field in ("status", "step_statuses", "step_details", "completed_at"):
+        set_committed_value(task, field, getattr(task, field))
+    result = await db.execute(
+        update(ReviewTask)
+        .where(ReviewTask.id == task.id, ReviewTask.status != "cancelled")
+        .values(**values)
+    )
+    await db.commit()
+    await db.refresh(task)
+    return result.rowcount > 0
 
 
 def _raise_if_step_failed(step_name: str, result):
@@ -1489,25 +1560,29 @@ async def get_context(project_id: int, user: User = Depends(get_current_user), d
 
 @router.put("/projects/{project_id}/context", response_model=ContextInfo)
 async def update_context(project_id: int, req: ContextUpdate, user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    await _verify_project_owner(db, project_id, user.id)
+    await _verify_project_owner(db, project_id, user.id, action="write")
+    from app.repositories.review_context_repository import project_activation_lock
+
     ctx_repo = ReviewContextRepository(db)
-    # Load old context for merge
-    old_ctx = await ctx_repo.get_active_context(project_id)
-    data = merge_review_context_defaults(json.loads(old_ctx.context_data)) if old_ctx and old_ctx.context_data else default_review_context()
+    # BUG-213：锁必须覆盖“读取当前版本→合并→插入→commit”全过程，
+    # 否则两个 SQLite 会话仍可各自插入 active 版本。
+    async with project_activation_lock(project_id):
+        old_ctx = await ctx_repo.get_active_context(project_id)
+        data = merge_review_context_defaults(json.loads(old_ctx.context_data)) if old_ctx and old_ctx.context_data else default_review_context()
 
-    if req.specifications is not None:
-        data["specifications"] = req.specifications
-    if req.required_sections is not None:
-        data["required_sections"] = req.required_sections
-    if req.scoring_overrides is not None:
-        data["scoring_overrides"] = req.scoring_overrides
-    if req.category_overrides is not None:
-        data["category_overrides"] = req.category_overrides
-    if req.professional_guidance is not None:
-        data["professional_guidance"] = req.professional_guidance
+        if req.specifications is not None:
+            data["specifications"] = req.specifications
+        if req.required_sections is not None:
+            data["required_sections"] = req.required_sections
+        if req.scoring_overrides is not None:
+            data["scoring_overrides"] = req.scoring_overrides
+        if req.category_overrides is not None:
+            data["category_overrides"] = req.category_overrides
+        if req.professional_guidance is not None:
+            data["professional_guidance"] = req.professional_guidance
 
-    ctx = await ctx_repo.activate_new_version(project_id, data=data, change_log=req.change_log, updated_by=user.id)
-    await db.commit()
+        ctx = await ctx_repo.activate_new_version(project_id, data=data, change_log=req.change_log, updated_by=user.id)
+        await db.commit()
     return ContextInfo(context_id=ctx.id, version=ctx.version, is_active=True, updated_at=ctx.updated_at, context_data=data)
 
 
@@ -1619,7 +1694,8 @@ async def _run_pipeline(
             task.completed_at = now_cn()
             _early_step_statuses = {str(i): "skipped" for i in range(len(steps))}
             task.step_statuses = json.dumps(_early_step_statuses, ensure_ascii=False)
-            await db.commit()
+            if not await _commit_terminal_status(db, task):
+                return
             await _publish_progress(task_id, {
                 "task_status": "failed",
                 "error": err_msg,
@@ -1633,9 +1709,23 @@ async def _run_pipeline(
         await ref_repo.freeze_snapshot(project_id)
         await db.flush()
 
-        task.status = "running"
+        # CON-04：条件更新，避免路由创建任务后、管线真正启动前用户已取消，
+        # 此处又把 cancelled 覆盖回 running。
+        claimed = await db.execute(
+            update(ReviewTask)
+            .where(ReviewTask.id == task_id, ReviewTask.status == "pending")
+            .values(status="running")
+        )
+        if claimed.rowcount == 0:
+            await db.rollback()
+            await db.refresh(task)
+            if task.status == "cancelled":
+                logger.info("Pipeline start skipped: task %d already cancelled", task_id)
+                return
+            raise RuntimeError(f"任务 {task_id} 当前状态为 {task.status}，无法启动")
         step_statuses = json.loads(task.step_statuses) if task.step_statuses else {}
         await db.commit()
+        await db.refresh(task)
 
         repo = ReviewTaskRepository(db)
         # BUG-201：发布/订阅广播句柄，向全部订阅连接投递（无订阅者时静默丢弃）
@@ -1710,7 +1800,8 @@ async def _run_pipeline(
             converted_docs = [d for d in docs if d.status == "converted"]
             if not converted_docs:
                 step_statuses = _finalize_task_failed(task)
-                await db.commit()
+                if not await _commit_terminal_status(db, task):
+                    return
                 if queue:
                     await queue.put({"task_status": "failed", "current_step": step_idx, "step_statuses": step_statuses, "error": "所有文档转换失败，无法继续审查"})
                 logger.error("All docx conversions failed for task %d", task_id)
@@ -2041,7 +2132,8 @@ async def _run_pipeline(
             total_docs_count = len(converted_docs)
             if completed == 0 and total_docs_count > 0:
                 step_statuses = _finalize_task_failed(task)
-                await db.commit()
+                if not await _commit_terminal_status(db, task):
+                    return
                 if queue:
                     await queue.put({"task_status": "failed", "current_step": step_idx, "step_statuses": step_statuses, "error": "所有文档分析失败"})
                 logger.error("All analyses failed for task %d", task_id)
@@ -2055,12 +2147,28 @@ async def _run_pipeline(
 
             # Remaining steps depend on mode
             if mode == "quick":
-                task.status = "completed_with_warnings" if completed < total_docs_count else "completed"
-                task.completed_at = now_cn()
+                # SEC-04：写入最终状态前再次检查取消；并用条件更新保证不会覆盖
+                # 并发提交的 cancelled。
+                if await _check_cancelled():
+                    return
+                final_status = "completed_with_warnings" if completed < total_docs_count else "completed"
+                finished = await db.execute(
+                    update(ReviewTask)
+                    .where(ReviewTask.id == task_id, ReviewTask.status == "running")
+                    .values(status=final_status, completed_at=now_cn())
+                )
+                if finished.rowcount == 0:
+                    await db.rollback()
+                    await db.refresh(task)
+                    if task.status == "cancelled":
+                        if queue:
+                            await queue.put({"task_status": "cancelled", "current_step": len(steps)})
+                        return
+                    raise RuntimeError(f"任务 {task_id} 状态已变为 {task.status}，拒绝覆盖")
                 await db.commit()
+                await db.refresh(task)
                 if queue:
-                    final_status = task.status
-                    await queue.put({"task_status": final_status, "current_step": len(steps)})
+                    await queue.put({"task_status": task.status, "current_step": len(steps)})
                 return
 
             # Steps 3+: SkillRunner-driven review steps with retry
@@ -2112,7 +2220,8 @@ async def _run_pipeline(
                         # ReviewTask 无 error_message 列 — 失败原因持久化到 step_details
                         _merge_task_step_details(task, error=err_msg)
                         task.completed_at = now_cn()
-                        await db.commit()
+                        if not await _commit_terminal_status(db, task):
+                            return
                         if queue:
                             await queue.put({"task_status": "failed", "current_step": step_idx, "step_statuses": step_statuses, "error": err_msg})
                         return
@@ -2306,7 +2415,8 @@ async def _run_pipeline(
                     logger.error("Step %d (%s) exhausted %d retries", si, step_name, step_max_retries)
                     # Abort pipeline: subsequent steps depend on this step's output
                     step_statuses = _finalize_task_failed(task)
-                    await db.commit()
+                    if not await _commit_terminal_status(db, task):
+                        return
                     if queue:
                         await queue.put({"task_status": "failed", "current_step": step_idx, "step_statuses": step_statuses})
                     return
@@ -2334,7 +2444,8 @@ async def _run_pipeline(
             if _has_degraded:
                 _merge_task_step_details(task, degraded_steps=runner.state.get("degraded_steps", []))
             task.completed_at = now_cn()
-            await db.commit()
+            if not await _commit_terminal_status(db, task):
+                return
             if queue:
                 final_status = task.status
                 await queue.put({"task_status": final_status, "current_step": len(steps)})
@@ -2342,7 +2453,8 @@ async def _run_pipeline(
         except Exception as e:
             logger.error("Pipeline failed: %s", e)
             step_statuses = _finalize_task_failed(task)
-            await db.commit()
+            if not await _commit_terminal_status(db, task):
+                return
             if queue:
                 await queue.put({
                     "task_status": "failed",

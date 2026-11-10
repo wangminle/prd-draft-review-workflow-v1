@@ -81,6 +81,19 @@ async def _login_admin(client: AsyncClient) -> dict:
     return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
+async def _approver_id(client: AsyncClient) -> int:
+    approver_id, _ = await _approver(client)
+    return approver_id
+
+
+async def _approver(client: AsyncClient) -> tuple[int, dict]:
+    import uuid
+    headers = await _register(client, f"b99_approver_{uuid.uuid4().hex[:8]}")
+    me = await client.get("/api/auth/me", headers=headers)
+    assert me.status_code == 200, me.text
+    return me.json()["id"], headers
+
+
 async def _create_sse_ticket(client: AsyncClient, headers: dict) -> str:
     resp = await client.post("/api/auth/sse-ticket", headers=headers)
     assert resp.status_code == 200, resp.text
@@ -262,9 +275,10 @@ async def test_resubmit_notification_failure_does_not_commit_partial_notificatio
     headers = await _login_admin(client)
     project_id = await _create_project(client, headers, "BUG-103 project")
 
+    approver_id, approver_headers = await _approver(client)
     create_resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "resubmit"},
+        json={"project_id": project_id, "approver_ids": [approver_id], "goal": "resubmit"},
         headers=headers,
     )
     assert create_resp.status_code == 200, create_resp.text
@@ -275,7 +289,7 @@ async def test_resubmit_notification_failure_does_not_commit_partial_notificatio
     reject_resp = await client.post(
         f"/api/review/rounds/{round_id}/decide",
         json={"decision": "rejected", "comment": "needs changes"},
-        headers=headers,
+        headers=approver_headers,
     )
     assert reject_resp.status_code == 200, reject_resp.text
 
@@ -324,7 +338,7 @@ async def test_create_review_request_deduplicates_initiator_when_also_approver(c
 
     resp = await client.post(
         "/api/review/requests",
-        json={"project_id": project_id, "approver_ids": [1], "goal": "dedupe"},
+        json={"project_id": project_id, "approver_ids": [await _approver_id(client)], "goal": "dedupe"},
         headers=headers,
     )
     assert resp.status_code == 200, resp.text

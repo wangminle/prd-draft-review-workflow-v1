@@ -16,7 +16,7 @@
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.18"}
+# 预期返回: {"status":"ok","version":"0.3.19"}
 ```
 
 ---
@@ -29,7 +29,7 @@ curl http://localhost:17957/api/health
   2. **长度不足 32 字符**。
   空值本身不会拒绝启动：`./start.sh` 会生成随机密钥并写入项目根目录 `.env`，之后重启复用；不走 `start.sh`、直接跑 uvicorn 时，`config.py` 会生成进程内临时密钥（不落盘，重启后已签发 token 失效）。
 - **解决**:
-  1. 推荐用 `./start.sh` 启动：若项目根目录 `.env` 中 `JWT_SECRET` 为空，脚本会生成并写入该文件，之后重启复用。
+  1. `start.sh` 托管实例中，根目录 `.env` 的 `JWT_SECRET` 为空时，`./start.sh` 会生成并写入该文件。systemd 实例应在 unit 的 `EnvironmentFile`（加固示例为 `/etc/prd-review/prd-review.env`）中设置稳定密钥，再执行 `sudo systemctl restart prd-review`。
   2. 或自行生成随机密钥（`token_hex(32)` 输出 64 个十六进制字符）:
      ```bash
      python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -131,9 +131,10 @@ curl http://localhost:17957/api/health
   - SQLite 文件锁冲突,通常由**多进程并发写入**或上一个实例未正常关闭引起;
   - `aiosqlite` 对文件锁较为敏感。
 - **解决**:
-  1. 确保**仅运行单实例**(`./start.sh status` 确认进程数)。
-  2. 进行数据迁移或备份前,**务必先停服**:`./start.sh stop`。
-  3. 迁移完成后重启服务。
+  1. 确保**仅运行单实例、单应用进程**。`./start.sh status` 只检查脚本记录的一个 PID；用 `pgrep -af uvicorn`、`lsof -i:17957` 排查额外实例。systemd 实例还应检查 `systemctl status prd-review` 和 unit 中的 `--workers 1`。
+  2. 上下文激活锁、审查启动锁和后台任务为进程内状态，共享 SQLite/LanceDB 的多 worker 或多副本部署尚未支持。
+  3. 迁移或备份前先停服。`start.sh` 实例执行 `./start.sh stop`，systemd 实例执行 `sudo systemctl stop prd-review`；确认进程退出后再处理实际 `RUNTIME_ROOT`。
+  4. 迁移完成后使用同一托管方式重启。systemd 实例的更新与恢复按[部署加固指南 §4.1](deployment-hardening.md#41-systemd-实例更新与回滚)执行。
 
 ---
 
@@ -146,7 +147,7 @@ curl http://localhost:17957/api/health
 - **解决**:
   1. **版本号相同**时,使用 `./update.sh --force` 强制更新。
   2. 打包务必使用 `package.sh`(不含 `runtime/` 业务数据),避免覆盖目标机的真实数据。
-  3. **健康检查失败会自动回滚**(除非显式加 `--no-rollback`)。
+  3. `start.sh` 托管实例中，备份完成后的替换、启动或健康检查失败会尝试自动回滚，前提是未指定 `--no-rollback` 或 `--skip-backup`。退出码 `2` 表示回滚及健康检查成功；`3` 表示恢复失败或被禁用，须保留备份及日志列出的 `.restore-txn.*`、`.restore-code.*` 等目录并人工恢复。备份前失败会返回对应非零码并尝试拉起旧服务。systemd 实例使用[部署加固指南 §4.1](deployment-hardening.md#41-systemd-实例更新与回滚)的手动流程，避免 `update.sh` 另起脚本实例。
   4. **Pi Agent 更新后需手动执行 `npm install`**:`update.sh` 会同步 `package.json` 和 `package-lock.json`，但不会自动执行 `npm install`；需在目标服务器手动运行 `npm install`。
 
 ---
@@ -200,7 +201,7 @@ curl http://localhost:17957/api/health
 - **健康检查端点**:`GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # 预期返回: {"status":"ok","version":"0.3.18"}
+  # 预期返回: {"status":"ok","version":"0.3.19"}
   ```
   - `status` 不为 `ok` 或请求失败,说明服务未正常启动或端口不可达。
   - `version` 用于确认是否为目标版本(更新失败排查)。
@@ -216,7 +217,7 @@ curl http://localhost:17957/api/health
 
 1. **健康检查**:确认服务是否在线 → `GET /api/health`。
 2. **查阅日志**:重点看 `runtime/logs/app.log`。
-3. **重启服务**:多数瞬时问题可通过 `./start.sh restart` 解决。
+3. **重启服务**:按当前托管方式执行 `./start.sh restart` 或 `sudo systemctl restart prd-review`，然后复查健康检查。
 4. **查阅相关文档**:
    - [configuration.md](configuration.md) — 完整配置项(模型、Prompt、品牌、端口、反代、Agent 授权等)
    - [packaging-and-deployment.md](packaging-and-deployment.md) — 生产环境打包与部署、`update.sh` / `package.sh`
@@ -236,7 +237,7 @@ Before troubleshooting, verify the service is up via the health check:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.18"}
+# Expected: {"status":"ok","version":"0.3.19"}
 ```
 
 ---
@@ -249,7 +250,7 @@ curl http://localhost:17957/api/health
   2. **Shorter than 32 characters**.
   An empty value does not refuse startup: `./start.sh` generates a random secret and writes it to the project-root `.env` for later restarts; if you run uvicorn directly, `config.py` generates an in-process ephemeral secret (not persisted; issued tokens die after restart).
 - **Fix**:
-  1. Prefer `./start.sh`: if project-root `.env` has an empty `JWT_SECRET`, the script generates one and writes it there for later restarts.
+  1. For an instance managed by `start.sh`, an empty `JWT_SECRET` in the project-root `.env` is generated and persisted by that script. For systemd, set a stable secret in the unit's `EnvironmentFile` (`/etc/prd-review/prd-review.env` in the hardening example), then run `sudo systemctl restart prd-review`.
   2. Or generate a random secret yourself (`token_hex(32)` yields 64 hex characters):
      ```bash
      python3 -c "import secrets; print(secrets.token_hex(32))"
@@ -351,9 +352,10 @@ curl http://localhost:17957/api/health
   - SQLite file-lock contention, usually from **multiple processes writing concurrently** or a previous instance not exiting cleanly;
   - `aiosqlite` is sensitive to file locks.
 - **Fix**:
-  1. Ensure **only a single instance** is running (`./start.sh status` to confirm process count).
-  2. Before any data migration or backup, **always stop the service first**: `./start.sh stop`.
-  3. Restart after migration completes.
+  1. Ensure **one instance and one application process**. `./start.sh status` checks only its recorded PID; use `pgrep -af uvicorn` and `lsof -i:17957` to find extra instances. For systemd, also inspect `systemctl status prd-review` and `--workers 1` in the unit.
+  2. Context activation locks, review-start locks, and background tasks are process-local. Multiple workers or replicas sharing SQLite/LanceDB are not supported yet.
+  3. Stop the service before migration or backup. Use `./start.sh stop` for script-managed instances or `sudo systemctl stop prd-review` for systemd, then confirm it has exited before handling the actual `RUNTIME_ROOT`.
+  4. Restart with the same supervisor after migration. For systemd updates and recovery, follow [Deployment Hardening §4.1](deployment-hardening.md#41-systemd-updates-and-rollback).
 
 ---
 
@@ -366,7 +368,7 @@ curl http://localhost:17957/api/health
 - **Fix**:
   1. If the **version is identical**, force the update with `./update.sh --force`.
   2. Always build packages with `package.sh` (it excludes `runtime/` business data) to avoid overwriting real data on the target host.
-  3. A **failed health check triggers automatic rollback** (unless `--no-rollback` is passed).
+  3. For instances managed by `start.sh`, replacement, startup, or health-check failures after backup trigger attempted rollback unless `--no-rollback` or `--skip-backup` was used. Exit code `2` means rollback and its health check succeeded; `3` means recovery failed or was disabled. Retain the backup and `.restore-txn.*`, `.restore-code.*`, or other directories named in the logs for manual recovery. A pre-backup failure returns its corresponding nonzero code and attempts to restart the old service. For systemd, follow the manual procedure in [Deployment Hardening §4.1](deployment-hardening.md#41-systemd-updates-and-rollback), avoiding a second process launched by `update.sh`.
   4. **After updating Pi Agent, run `npm install` manually**: `update.sh` syncs `package.json` and `package-lock.json` but does not run `npm install` automatically; run `npm install` manually on the target server.
 
 ---
@@ -420,7 +422,7 @@ curl http://localhost:17957/api/health
 - **Health endpoint**: `GET /api/health`
   ```bash
   curl http://localhost:17957/api/health
-  # Expected: {"status":"ok","version":"0.3.18"}
+  # Expected: {"status":"ok","version":"0.3.19"}
   ```
   - If `status` is not `ok` or the request fails, the service is not started or the port is unreachable.
   - `version` confirms whether you're on the target version (useful for diagnosing failed updates).
@@ -436,7 +438,7 @@ Self-diagnose in this order:
 
 1. **Health check**: confirm the service is up → `GET /api/health`.
 2. **Read the logs**: focus on `runtime/logs/app.log`.
-3. **Restart the service**: most transient issues resolve with `./start.sh restart`.
+3. **Restart the service**: use `./start.sh restart` or `sudo systemctl restart prd-review` for the active supervisor, then recheck health.
 4. **Consult related docs**:
    - [configuration.md](configuration.md) — full configuration reference (models, prompts, branding, ports, reverse proxy, Agent authorization, etc.)
    - [packaging-and-deployment.md](packaging-and-deployment.md) — production packaging and deployment, `update.sh` / `package.sh`

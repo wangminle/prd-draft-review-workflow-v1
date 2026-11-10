@@ -79,11 +79,14 @@ class ChatFileStorage:
             return None
         return str(candidate)
 
-    async def save_upload(self, *, filename: str, content: bytes) -> StoredChatFile:
+    async def save_upload(self, *, filename: str, content: bytes, owner_id: int | None = None) -> StoredChatFile:
         ext = Path(filename).suffix.lower()
         if ext and not re.match(r"^\.[A-Za-z0-9]{1,16}$", ext):
             ext = ""
-        file_id = f"{uuid.uuid4().hex}{ext}"
+        # BUG-212：把 owner_id 编入 file_id，读取/引用时可校验归属；
+        # 兼容旧无前缀文件（仅能通过已归属的会话上下文读取）。
+        prefix = f"u{int(owner_id)}_" if owner_id is not None else ""
+        file_id = f"{prefix}{uuid.uuid4().hex}{ext}"
         upload_dir = self._resolve_upload_dir()
         saved_path = self._resolve_safe_path(file_id)
         if saved_path is None:
@@ -105,6 +108,18 @@ class ChatFileStorage:
         if not file_path or not os.path.isfile(file_path):
             return None
         return extract_text_from_path(file_path, file_id)
+
+    def is_owned_by(self, file_id: str, owner_id: int) -> bool:
+        """判断 file_id 是否属于指定用户（新格式带 u<id>_ 前缀）。"""
+        if not file_id or owner_id is None:
+            return False
+        return str(file_id).startswith(f"u{int(owner_id)}_")
+
+    def read_text_for_user(self, file_id: str, owner_id: int) -> str | None:
+        """按归属读取；非本人文件返回 None（旧无前缀文件 fail-closed）。"""
+        if not self.is_owned_by(file_id, owner_id):
+            return None
+        return self.read_text(file_id)
 
     def delete(self, file_id: str) -> None:
         file_path = self._resolve_safe_path(file_id)

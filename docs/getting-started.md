@@ -17,13 +17,15 @@
 ### 环境要求
 
 - **Python 3.10+**(必需)
-- 若要使用 **Pi Agent**(自主工具调用对话)功能:还需 **Node.js 22.19+ 和 npm**。不用 Agent 可不装 Node,主应用照常运行。
+- 若要使用 **Pi Agent**(自主工具调用对话)功能:还需 **Node.js 24.x（至少 24.22.1）和 npm**，与 `package.json` 的 `^24.22.1` 一致。仓库 `.nvmrc` 固定为 `24.22.1`。不用 Agent 可不装 Node,主应用照常运行。
 - Python 依赖见 [`requirements.txt`](../requirements.txt)。
+
+当前部署限定为**单实例、单应用进程**。上下文激活锁、审查启动锁和后台任务在进程内维护；多个 Uvicorn worker 或多个实例共享同一 SQLite/LanceDB 目录不在支持范围内。
 
 ### 1. 克隆项目
 
 ```bash
-git clone <项目仓库地址>
+git clone '<项目仓库地址>'
 cd prd-draft-review-workflow-v1
 ```
 
@@ -63,7 +65,11 @@ DEEPSEEK_API_KEY=sk-your-key-here
 ./start.sh
 ```
 
-默认前台启动(等价于 `./start.sh start`)。脚本会:加载 `.env` → 检测可选的 Node/pi CLI → 启动 uvicorn → 自动执行健康检查。
+默认后台启动(等价于 `./start.sh start`)。脚本加载 `.env`、检测可选的 Node/pi CLI，通过 `nohup` 启动 uvicorn，将 PID 写入 `runtime/server.pid`、日志写入 `runtime/logs/app.log`，完成一次健康检查后返回终端。用 `./start.sh status` 和健康检查结果确认服务是否可用。
+
+脚本托管使用自定义运行时目录时，必须在调用 `start.sh` 和 `update.sh` 前执行 `export RUNTIME_ROOT=/实际/运行时目录`，并在后续启停、状态和更新命令中保持一致。仅把 `RUNTIME_ROOT` 写进 `.env` 不会改变脚本启动前已确定的 PID、日志和应用运行时目录。
+
+本节适用于 `start.sh` 托管的实例。若按部署加固指南使用 systemd，则由 `systemctl` 管理启停，并使用该指南中的 systemd 更新流程。两种托管方式应择一使用。详见[部署加固指南](deployment-hardening.md)。
 
 启动成功后访问:**http://localhost:17957**
 
@@ -84,7 +90,7 @@ DEEPSEEK_API_KEY=sk-your-key-here
 
 ```bash
 curl http://localhost:17957/api/health
-# 预期返回: {"status":"ok","version":"0.3.18"}
+# 预期返回: {"status":"ok","version":"0.3.19"}
 ```
 
 ### 常用启停命令
@@ -100,7 +106,7 @@ curl http://localhost:17957/api/health
 
 - **启动即退出**:大概率是 `JWT_SECRET` 使用了示例占位值或过短。留空时 `./start.sh` 会写入根目录 `.env`；请勿填 `change-me-in-production` 等占位值。
 - **健康检查失败**:确认 17957 端口未被占用,查看 `runtime/logs/app.log`。
-- **Agent 功能不可用**:日志出现 `pi CLI not found` 时,运行 `npm install` 安装 Pi Agent,并确保 Node.js 22.19+ 已安装。
+- **Agent 功能不可用**:日志出现 `pi CLI not found` 时,运行 `npm install` 安装 Pi Agent,并确保 Node.js 24.x（至少 24.22.1）已安装。
 
 ## 下一步
 
@@ -123,13 +129,15 @@ The platform replaces the traditional offline flow (PM writes a PRD → mass-ema
 ### Prerequisites
 
 - **Python 3.10+** (required)
-- To use the **Pi Agent** (autonomous tool-calling conversation) feature you also need **Node.js 22.19+ and npm**. If you don't use the Agent, Node is not required; the main app runs fine without it.
+- To use the **Pi Agent** (autonomous tool-calling conversation) feature you also need **Node.js 24.x, at least 24.22.1, and npm**, matching `^24.22.1` in `package.json`. The repository `.nvmrc` pins `24.22.1`. If you don't use the Agent, Node is not required; the main app runs fine without it.
 - Python dependencies are listed in [`requirements.txt`](../requirements.txt).
+
+The supported deployment uses **one instance and one application process**. Context activation locks, review-start locks, and background tasks are maintained in memory. Multiple Uvicorn workers or instances sharing the same SQLite/LanceDB directories are outside the supported deployment model.
 
 ### 1. Clone the project
 
 ```bash
-git clone <repository-url>
+git clone '<repository-url>'
 cd prd-draft-review-workflow-v1
 ```
 
@@ -169,7 +177,11 @@ Optional: `ADMIN_INITIAL_PASSWORD` overrides the initial password of the first a
 ./start.sh
 ```
 
-This runs in the foreground by default (equivalent to `./start.sh start`). The script will: load `.env` → detect optional Node/pi CLI → start uvicorn → run a health check automatically.
+This starts the service in the background by default (equivalent to `./start.sh start`). The script loads `.env`, detects optional Node/pi CLI, launches uvicorn with `nohup`, writes its PID to `runtime/server.pid` and logs to `runtime/logs/app.log`, then returns to the terminal after one health check. Check `./start.sh status` and the health response to confirm availability.
+
+For a custom runtime directory, run `export RUNTIME_ROOT=/actual/runtime/path` before invoking `start.sh` or `update.sh` and keep it consistent for later lifecycle and update commands. Setting `RUNTIME_ROOT` only in `.env` does not change the PID, log, or application runtime directory already selected when the script starts.
+
+This section applies to instances managed by `start.sh`. With the systemd configuration, use `systemctl` for lifecycle management and follow the systemd update procedure in the hardening guide. Choose one supervisor for each instance. See [Deployment Hardening](deployment-hardening.md).
 
 Once started, open: **http://localhost:17957**
 
@@ -190,7 +202,7 @@ A health endpoint is exposed to verify the service is up at any time:
 
 ```bash
 curl http://localhost:17957/api/health
-# Expected: {"status":"ok","version":"0.3.18"}
+# Expected: {"status":"ok","version":"0.3.19"}
 ```
 
 ### Common start / stop commands
@@ -206,7 +218,7 @@ curl http://localhost:17957/api/health
 
 - **Service exits immediately**: most likely `JWT_SECRET` is an example placeholder or too short. Leaving it empty is fine with `./start.sh` (it writes the project-root `.env`); do not use values like `change-me-in-production`.
 - **Health check failed**: make sure port 17957 is free, and inspect `runtime/logs/app.log`.
-- **Agent features unavailable**: if logs show `pi CLI not found`, run `npm install` to install Pi Agent and ensure Node.js 22.19+ is installed.
+- **Agent features unavailable**: if logs show `pi CLI not found`, run `npm install` to install Pi Agent and ensure Node.js 24.x, at least 24.22.1, is installed.
 
 ## Next steps
 

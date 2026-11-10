@@ -171,17 +171,21 @@ async def retryable_chat(
                     raise ValueError(f"LLM returned empty content (finish_reason={finish_reason})")
                 usage = data.get("usage")
                 elapsed_ms = int((time.time() - start_time) * 1000)
-                log_llm_session(
-                    llm_model,
-                    messages,
-                    text,
-                    usage,
-                    elapsed_ms=elapsed_ms,
-                    reasoning_content=reasoning_content,
-                    workspace_id=workspace_id,
-                    user_id=user_id,
-                    mode=mode,
-                )
+                # SEC-21：日志落盘失败不得让已成功的模型响应进入重试。
+                try:
+                    log_llm_session(
+                        llm_model,
+                        messages,
+                        text,
+                        usage,
+                        elapsed_ms=elapsed_ms,
+                        reasoning_content=reasoning_content,
+                        workspace_id=workspace_id,
+                        user_id=user_id,
+                        mode=mode,
+                    )
+                except Exception:
+                    logger.exception("LLM 调用成功但会话日志写入失败，忽略日志错误")
                 return text, usage
 
             error_text = resp.text[:500]

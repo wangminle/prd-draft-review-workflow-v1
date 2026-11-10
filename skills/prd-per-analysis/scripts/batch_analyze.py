@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 import sys
 from pathlib import Path
 from typing import Optional
@@ -155,7 +156,11 @@ async def analyze_single(doc: dict, context: dict, output_dir: Path, skill_root:
                           force: bool = False,
                           review_context_version: str = "") -> Optional[dict]:
     md_path_str = doc.get("md_path", "")
-    doc_id = doc.get("doc_id", "unknown")
+    raw_doc_id = str(doc.get("doc_id", "unknown"))
+    # SK-01：doc_id 会拼进输出文件名，必须限制为安全 basename，禁止路径穿越。
+    doc_id = re.sub(r"[^A-Za-z0-9._-]", "_", raw_doc_id).strip(".")
+    if not doc_id or doc_id in (".", ".."):
+        doc_id = "unknown"
 
     md_path = Path(md_path_str)
     if not md_path.exists():
@@ -199,7 +204,14 @@ async def analyze_single(doc: dict, context: dict, output_dir: Path, skill_root:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await proc.communicate()
+        try:
+            # SK-02：子进程必须有硬超时，避免 LLM/CLI 挂住占满批处理并发槽。
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=600)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            print(f"  [失败] {doc_id}：分析超时（600s）", file=sys.stderr)
+            return None
         if proc.returncode != 0:
             print(f"  [失败] {doc_id}：{stderr.decode()[:200]}", file=sys.stderr)
             return None

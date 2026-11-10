@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -72,6 +73,11 @@ def _validate_asset_path(path_str: str) -> str | None:
     # 拒绝 URL
     if path_str.startswith(("http://", "https://", "ftp://", "//")):
         logger.warning("branding asset path rejected: external URL not allowed (%s)", path_str)
+        return None
+
+    # 拒绝 javascript:/data:/file: 等任意 scheme（M-34 同类加固）
+    if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path_str):
+        logger.warning("branding asset path rejected: URL scheme not allowed (%s)", path_str)
         return None
 
     p = Path(path_str)

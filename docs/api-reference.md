@@ -10,7 +10,9 @@
 
 本文件为「AI 需求评审工作流平台」的 API 参考，面向集成方与二次开发者。所有业务接口均以 `/api` 为前缀,后端基于 FastAPI。
 
-> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.18`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
+> 版本号对应根目录 `VERSION` 文件（当前为 `0.3.19`，运行时由 `src/app/version.py` 读取为 `APP_VERSION`）。以下端点均来自源码 `src/main.py` 与 `src/app/routers/`，如发现与代码不一致，以代码为准。
+>
+> **0.3.19 权限行为**：协作审查 `approver_ids` 必须是项目 workspace 的活跃 `write` 成员且不能是发起人。轮次决策通常要求 active `Approver` 参与者，存量请求缺少该用户参与者行时兼容指定 `approver_id`，两种情况均校验 workspace 写权限并禁止发起人自批。评论的创建/删除/解决要求对象写权限（删除还要求作者）。新聊天附件 ID 带上传者 `u<owner_id>_` 前缀。聊天请求中的跨账号或旧无前缀 `file_ids` 会被忽略，聊天仍可继续；创建上下文项引用跨账号或旧无前缀附件则返回 `404`。项目资料引用只允许团队公开资料。
 
 ---
 
@@ -26,7 +28,7 @@
 
 ### 认证机制
 
-平台采用两套并行的鉴权机制,请按端点类型正确选择。
+用户侧接口采用以下两套鉴权机制。Extension 内部 RAG 接口另使用 `X-Agent-Run-Token` 运行令牌，见 Agent 端点表。
 
 #### 1. 普通请求 — Bearer JWT
 
@@ -72,7 +74,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 
 | 方法 | 路径 | 用途 | 鉴权 |
 | --- | --- | --- | --- |
-| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.18"}` | 公开 |
+| GET | `/api/health` | 健康检查,返回 `{"status":"ok","version":"0.3.19"}` | 公开 |
 | GET | `/api/app/branding` | 品牌配置(登录页 logo、顶栏 logo、favicon 等) | 公开 |
 | GET | `/assets/branding/{path}` | 静态品牌资产文件(防目录穿越) | 公开 |
 | POST | `/api/log` | 前端日志上报(写入 `runtime/logs/frontend.jsonl` 并记审计) | 用户(可选) |
@@ -182,7 +184,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 | PUT | `/artifacts/{artifact_id}/content` | 更新产物内容 | 用户 |
 | POST | `/artifacts/{artifact_id}/confirm` | 确认(冻结)产物 | 用户 |
 | POST | `/artifacts/{artifact_id}/unconfirm` | 解除确认 | 用户 |
-| POST | `/snapshots` | 创建快照 | 用户 |
+| POST | `/snapshots` | 显式创建快照，workspace 取项目真实归属，可选 `request_id` 如有提供必须属于该项目（不匹配返回 `400`） | 用户 |
 | GET | `/snapshots` | 快照列表 | 用户 |
 | GET | `/snapshots/{snapshot_id}` | 快照详情 | 用户 |
 
@@ -226,7 +228,7 @@ SSE(Server-Sent Events)流式端点(如通知流、审查进度流)的浏览器 
 | GET | `/runs/{run_id}` | 运行详情 | 用户 |
 | POST | `/runs/{run_id}/stream` | Agent 流式对话(SSE,**POST 故用 Bearer**) | 用户 |
 | POST | `/runs/{run_id}/execute` | 执行工具调用 | 用户 |
-| POST | `/runs/{run_id}/rag` | RAG 检索 | 用户 |
+| POST | `/runs/{run_id}/rag` | Extension 内部 RAG 检索 | `X-Agent-Run-Token`（运行令牌） |
 | GET | `/approvals` | 待审批的工具调用(仅当前用户作为审批人) | 用户 |
 | POST | `/approvals/{request_id}/decide` | 审批决定 | 用户 |
 | GET | `/mcp/servers` | MCP 服务器列表 | 用户 |
@@ -366,9 +368,11 @@ This platform is a requirements-review workflow service deployed on a department
 
 For detailed request/response field definitions, see the Pydantic schemas under `src/app/schemas/` and the ORM models under `src/app/models/`. This reference does not expand every field; it focuses on each endpoint's purpose and authentication requirements.
 
+> **0.3.19 permission behavior**: collaborative-review `approver_ids` must be active `write` members of the project workspace and cannot be the initiator. Round decisions normally require an active `Approver` participant. Legacy requests without a participant row for that user also accept the designated `approver_id`; both paths require workspace write access and prohibit initiator self-approval. Comment create/delete/resolve requires object write access (delete also requires authorship). New chat attachment IDs have a `u<owner_id>_` prefix. Cross-account or legacy unprefixed `file_ids` in chat requests are ignored while the chat continues; using them to create context items returns `404`. Project knowledge references accept team-visible sources only.
+
 ### Authentication
 
-The platform uses two parallel mechanisms. Pick the correct one based on endpoint type.
+User-facing endpoints use the two mechanisms below. The internal Extension RAG endpoint separately uses an `X-Agent-Run-Token` run token, as shown in the Agent endpoint table.
 
 #### 1. Normal requests — Bearer JWT
 
@@ -414,7 +418,7 @@ The "Auth" column in the tables below uses these markers:
 
 | Method | Path | Purpose | Auth |
 | --- | --- | --- | --- |
-| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.18"}` | Public |
+| GET | `/api/health` | Health check, returns `{"status":"ok","version":"0.3.19"}` | Public |
 | GET | `/api/app/branding` | Branding config (login logo, topbar logo, favicon, etc.) | Public |
 | GET | `/assets/branding/{path}` | Static branding assets (path-traversal protected) | Public |
 | POST | `/api/log` | Frontend log ingestion (writes `runtime/logs/frontend.jsonl` + audit) | User (optional) |
@@ -524,7 +528,7 @@ Chat attachment upload and URL content fetching.
 | PUT | `/artifacts/{artifact_id}/content` | Update artifact content | User |
 | POST | `/artifacts/{artifact_id}/confirm` | Confirm (freeze) an artifact | User |
 | POST | `/artifacts/{artifact_id}/unconfirm` | Unconfirm an artifact | User |
-| POST | `/snapshots` | Create a snapshot | User |
+| POST | `/snapshots` | Explicitly create a snapshot using the project's actual workspace; optional `request_id`, when supplied, must belong to that project (mismatch returns `400`) | User |
 | GET | `/snapshots` | List snapshots | User |
 | GET | `/snapshots/{snapshot_id}` | Snapshot detail | User |
 
@@ -568,7 +572,7 @@ Chat attachment upload and URL content fetching.
 | GET | `/runs/{run_id}` | Run detail | User |
 | POST | `/runs/{run_id}/stream` | Agent streaming chat (SSE, **POST so it uses Bearer**) | User |
 | POST | `/runs/{run_id}/execute` | Execute a tool call | User |
-| POST | `/runs/{run_id}/rag` | RAG retrieval | User |
+| POST | `/runs/{run_id}/rag` | Internal RAG retrieval for the Extension | `X-Agent-Run-Token` (run token) |
 | GET | `/approvals` | Pending tool calls awaiting approval (only those where the current user is the approver) | User |
 | POST | `/approvals/{request_id}/decide` | Approval decision | User |
 | GET | `/mcp/servers` | List MCP servers | User |

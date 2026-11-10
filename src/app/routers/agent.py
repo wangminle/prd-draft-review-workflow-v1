@@ -545,18 +545,23 @@ async def decide_approval(
     if approval.approver_id != user.id:
         raise HTTPException(403, "只有指定的审批人可以决策")
 
+    # BUG-212：存量审批记录可能把申请人自己设为 approver；任何“自己批准自己”
+    # 都必须拒绝，不能依赖 action_type/工具名是否在集合内。
+    if req.decision == "approved" and approval.requester_id == user.id:
+        raise HTTPException(403, "审批人不得批准自己发起的请求，请联系独立审批人")
+
     # 审批通过：恢复活动 bridge 或登记一次性放行供下次执行
     resumed = False
     tool_name = None
     if req.decision == "approved" and approval.action_type.startswith("tool_call:"):
         tool_name = approval.action_type.split(":", 1)[1]
-        # 非管理员不得自行批准自己的高风险工具调用
+        # SEC-15：高风险工具必须由独立审批人批准，管理员也不能自批
+        # （docs/security.md 的独立审批约束）。
         if (
             tool_name in _HIGH_RISK_TOOLS
             and approval.requester_id == user.id
-            and user.role != "admin"
         ):
-            raise HTTPException(403, "高风险工具不可由申请人自行审批，请联系管理员")
+            raise HTTPException(403, "高风险工具不可由申请人自行审批，请联系其他管理员")
         from app.services.pi_agent_bridge import (
             get_active_bridge,
             grant_one_shot_approval,

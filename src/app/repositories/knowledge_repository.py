@@ -4,6 +4,7 @@ from sqlalchemy import select, func, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.knowledge import KnowledgeDocument, KnowledgeChunk, VALID_EMBEDDING_STATUSES
+from app.models.workspace import KnowledgeSource
 
 
 class KnowledgeDocumentRepository:
@@ -168,6 +169,46 @@ class KnowledgeChunkRepository:
         )
         await self._db.flush()
         return result.rowcount
+
+    async def update_embedding_status_conditional(
+        self,
+        updates: list[tuple[int, str]],
+        new_status: str,
+        expected_status: str | None = None,
+        disallowed_statuses: tuple[str, ...] | None = None,
+    ) -> int:
+        """带正文身份与状态条件约束的批量状态更新，防止并发覆盖新切块或破坏已完成状态（BUG-214）。"""
+        if new_status not in VALID_EMBEDDING_STATUSES:
+            raise ValueError(f"Invalid embedding_status: {new_status}, expected {VALID_EMBEDDING_STATUSES}")
+        if not updates:
+            return 0
+        total_updated = 0
+        active_doc_ids = select(KnowledgeDocument.id).join(
+            KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id
+        ).where(KnowledgeSource.status == "active")
+        for entry in updates:
+            chunk_id, text = entry[0], entry[1]
+            conditions = [
+                KnowledgeChunk.id == chunk_id,
+                KnowledgeChunk.text == text,
+            ]
+            if len(entry) >= 3:
+                # 身份条件：重入库后 document_id 变化，旧 worker 不能更新新切块；
+                # 同时要求来源仍 active，与状态更新在同一条 SQL 中原子判断。
+                conditions.append(KnowledgeChunk.document_id == entry[2])
+                conditions.append(KnowledgeChunk.document_id.in_(active_doc_ids))
+            if expected_status is not None:
+                conditions.append(KnowledgeChunk.embedding_status == expected_status)
+            if disallowed_statuses:
+                conditions.append(KnowledgeChunk.embedding_status.notin_(disallowed_statuses))
+            res = await self._db.execute(
+                update(KnowledgeChunk)
+                .where(*conditions)
+                .values(embedding_status=new_status)
+            )
+            total_updated += res.rowcount
+        await self._db.flush()
+        return total_updated
 
     async def delete_by_document(self, document_id: int) -> int:
         """删除文档下所有 chunks，返回删除条数。"""

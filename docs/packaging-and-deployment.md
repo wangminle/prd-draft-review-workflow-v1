@@ -10,7 +10,7 @@
 
 ## 中文
 
-> 适用版本：V0.3.18（2026-10-10）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
+> 适用版本：V0.3.19（2026-11-10）。本文讲「代码如何从开发机分发到目标服务器」，与 [部署加固指南](deployment-hardening.md) 互补——那篇讲目标服务器的网络拓扑、守护进程与安全加固，本文讲打包产物与分发安装流程。
 
 ## 1. 目标与范围
 
@@ -33,7 +33,7 @@
 | --- | --- | --- |
 | `package.sh` | 开发机 | 把当前代码与配置模板打成 `*-code-config*.tar.gz` 分发包 |
 | `start.sh` | 目标服务器 | 服务的 `start / stop / restart / status`，管理 PID 与日志 |
-| `update.sh` | 目标服务器 | 接收分发包，执行 校验 → 备份 → 替换 → 品牌迁移 scan/plan → 健康检查 → 失败回滚 |
+| `update.sh` | 目标服务器 | 对 `start.sh` 托管实例执行 包校验/版本比对 → 停服/备份 → 品牌迁移 scan/plan → 替换 → 启动/健康检查 → 失败时尝试回滚 |
 
 总体流程：
 
@@ -94,7 +94,9 @@
 
 ### 4.1 环境前置
 
-目标服务器需具备：Python 3.10+、Node.js 22.19+、npm（Pi Agent 功能需要；不用 Agent 可不装 Node）。
+目标服务器需具备 Python 3.10+；Pi Agent 功能还需要 Node.js 24.x（至少 24.22.1）和 npm。该范围与 `package.json` 的 `^24.22.1` 一致，仓库 `.nvmrc` 固定为 `24.22.1`。不用 Agent 可不装 Node。
+
+当前支持单实例、单应用进程运行。上下文激活锁、审查启动锁和后台任务在进程内维护，共享同一 SQLite/LanceDB 的多 worker 或多副本部署尚未支持。
 
 ### 4.2 步骤
 
@@ -102,8 +104,8 @@
 # 1) 传输并解压（部署目录可自定，下例为 /opt/ai-review）
 mkdir -p /opt/ai-review
 #    默认 zip 分发包：
-unzip prd-draft-review-workflow-v1-code-config-v0.3.18-build*.zip -d /opt/ai-review
-#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.18-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.19-build*.zip -d /opt/ai-review
+#    若是 tar.gz 分发包：tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.19-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) 配置密钥（包内只有 .env.example，不含真实密钥）
@@ -129,9 +131,9 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # 查看运行状态并做健康检查
 ```
 
-健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.18"}`。
+健康检查端点：`GET http://<host>:<port>/api/health`，正常返回 `{"status":"ok","version":"0.3.19"}`。
 
-> 生产环境建议用 Nginx 反向代理 + systemd 守护，详见 [部署加固指南](deployment-hardening.md)。systemd 的 `EnvironmentFile` 应指向 `.env`，避免 `JWT_SECRET` 落在命令行参数中。应用停机时会先取消审查后台任务与 Embedding Worker，再释放数据库引擎。
+> 生产环境建议用 Nginx 反向代理 + systemd 守护。systemd 的 `EnvironmentFile` 指向管理员配置的密钥文件（加固指南示例为 `/etc/prd-review/prd-review.env`），其中应显式设置稳定的 `JWT_SECRET`。systemd 实例的启停、更新和回滚按[部署加固指南 §4.1](deployment-hardening.md#41-systemd-实例更新与回滚)执行。应用停机时会先取消审查后台任务与 Embedding Worker，再释放数据库引擎。
 
 ### 4.3 子路径前缀部署（可选）
 
@@ -175,11 +177,15 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 
 ### 5.1 用法
 
+脚本托管使用自定义目录时，在所有 `start.sh` / `update.sh` 调用前显式 `export RUNTIME_ROOT=/实际/运行时目录`；脚本在加载 `.env` 前已确定该目录，单写 `.env` 不会改变 PID、日志或应用运行时目录。更新环境还应与原实例保持相同的 `SERVER_PORT`。
+
+以下自动更新流程适用于 **`start.sh` 托管实例**。`update.sh` 会自行调用 `start.sh stop/start`；它不能管理直接运行 uvicorn 的 systemd unit。systemd 实例使用[部署加固指南 §4.1](deployment-hardening.md#41-systemd-实例更新与回滚)，保持停机、更新及重启均由同一套服务管理方式控制。
+
 ```bash
 # 把新包放到项目根目录，直接执行（脚本会自动在当前目录查找 *code-config*.tar.gz）
 ./update.sh
 # 或显式指定包路径
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.18-build*.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.19-build*.tar.gz
 ```
 
 常用选项：
@@ -190,21 +196,23 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 | `--force` | 当前版本与目标版本相同时仍强制更新 |
 | `--skip-migrate` | 跳过品牌迁移 scan/plan 检查 |
 | `--skip-backup` | 跳过备份（失败时将无法自动回滚，慎用） |
-| `--no-rollback` | 健康检查失败时不自动回滚 |
+| `--no-rollback` | 关闭代码替换、启动、健康检查等失败后的自动备份恢复；备份前失败的旧服务重新启动不受此开关控制 |
 
 ### 5.2 更新流程
 
 `update.sh` 依次执行：
 
-1. **版本比对**：解包后优先读取更新包内根目录 `VERSION` 文件（记为 `PACKAGE_VERSION`；缺失时回退 `src/app/version.py` / `src/main.py` 的 `APP_VERSION`），与目标机当前版本比较；相同且未 `--force` 则退出。
-2. **包校验**：路径安全、无业务数据目录、含 `src/main.py`。
+1. **包校验**：路径安全、无符号链接或特殊文件、无业务数据目录、含 `src/main.py`。
+2. **解包与版本比对**：解包后优先读取更新包内根目录 `VERSION` 文件（记为 `PACKAGE_VERSION`；缺失时回退 `src/app/version.py` / `src/main.py` 的 `APP_VERSION`），与目标机当前版本比较；相同且未 `--force` 则退出。
 3. **停止服务**：调用 `start.sh stop`。
 4. **备份**：把当前代码、`runtime/config`、`runtime/assets`、`.env` 备份到 `runtime/update_backups/backup-<版本>-<时间戳>/`。
 5. **品牌迁移 scan/plan**（替换代码**之前**）：读取旧 HTML 中的文本配置，生成 `runtime/config/ui-branding.scan-report.md` 差异报告。**只生成报告，不自动 apply**——避免覆盖目标机已有的品牌配置。
 6. **替换代码**：覆盖 `src tools tests docs skills` 与根文件。
 7. **同步版本号**：把 `runtime/config/ui-branding.yaml` 的 `app_version` 对齐到新版本。
 8. **启动 + 健康检查**：`start.sh start` 后轮询 `/api/health`。
-9. **失败回滚**：健康检查不过则从第 4 步的备份还原并重启。
+9. **失败处理**：备份完成后的替换、启动或健康检查失败会尝试从第 4 步备份恢复并重启，前提是未跳过备份且未指定 `--no-rollback`。代码换入失败时尝试整体还原旧条目；备份先解包到临时目录，解包失败保留现有 `src`。恢复 `.env`/`src.env` 使用临时文件、内容完整性校验及原子重命名。备份或准备阶段失败且代码尚未修改时，脚本重新执行 `start.sh start` 拉起旧服务。
+
+退出码 `0` 表示更新成功，`2` 表示更新失败但回滚及健康检查成功，`3` 表示自动恢复未完成或被禁用，需要人工处理；校验、备份等前置失败会返回相应非零码。恢复中途失败时，保留原备份和日志中列出的 `.restore-txn.*`、`.restore-code.*` 等恢复目录，检查代码、配置和进程状态后再恢复服务；不要在人工恢复前清理这些目录。
 
 ### 5.3 版本号一致性
 
@@ -213,6 +221,8 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ## 6. 运行时数据迁移（跨服务器搬家，可选）
 
 分发包不含运行时数据。若要把现有业务数据迁到新服务器：
+
+以下命令适用于 `start.sh` 托管实例。systemd 实例先执行 `sudo systemctl stop prd-review`，确认退出后备份其实际 `RUNTIME_ROOT`，迁移完成再执行 `sudo systemctl start prd-review`；加固指南示例目录为 `/opt/prd-review/runtime`。
 
 ```bash
 # 源服务器：打包运行时数据（停服后操作，避免数据库写竞争）
@@ -258,7 +268,7 @@ tar -xzf runtime-backup-*.tar.gz -C /opt/ai-review/runtime
 
 ## English
 
-> Applies to V0.3.18 (2026-10-10). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
+> Applies to V0.3.19 (2026-11-10). This guide covers "how code is distributed from the dev machine to the target server". It complements [Deployment Hardening](deployment-hardening.md) — that one covers the target server's network topology, daemon, and security hardening, while this one covers packaging artifacts and the distribution/install flow.
 
 ## 1. Scope
 
@@ -281,7 +291,7 @@ Core constraints (consistent with `CLAUDE.md`):
 | --- | --- | --- |
 | `package.sh` | Dev machine | Packages current code and config templates into a `*-code-config*.tar.gz` release |
 | `start.sh` | Target server | `start / stop / restart / status` for the service; manages PID and logs |
-| `update.sh` | Target server | Takes the release package and runs validate → backup → replace → branding scan/plan → health check → rollback on failure |
+| `update.sh` | Target server | For instances managed by `start.sh`, runs package validation/version comparison → stop/backup → branding scan/plan → replacement → start/health check → attempted rollback on failure |
 
 Overall flow:
 
@@ -342,7 +352,9 @@ After packaging, the script runs a built-in self-check (mirroring `update.sh`'s 
 
 ### 4.1 Prerequisites
 
-The target server needs: Python 3.10+, Node.js 22.19+, npm (required for Pi Agent; skip Node if you don't use Agent).
+The target server needs Python 3.10+. Pi Agent additionally requires Node.js 24.x, at least 24.22.1, and npm. This matches `^24.22.1` in `package.json`; the repository `.nvmrc` pins `24.22.1`. Skip Node if you do not use Agent.
+
+The supported deployment uses one instance and one application process. Context activation locks, review-start locks, and background tasks are maintained in memory. Multiple workers or replicas sharing the same SQLite/LanceDB directories are not supported yet.
 
 ### 4.2 Steps
 
@@ -350,8 +362,8 @@ The target server needs: Python 3.10+, Node.js 22.19+, npm (required for Pi Agen
 # 1) Transfer and extract (deploy dir is customizable; example uses /opt/ai-review)
 mkdir -p /opt/ai-review
 #    Default zip package:
-unzip prd-draft-review-workflow-v1-code-config-v0.3.18-build*.zip -d /opt/ai-review
-#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.18-build*.tar.gz -C /opt/ai-review
+unzip prd-draft-review-workflow-v1-code-config-v0.3.19-build*.zip -d /opt/ai-review
+#    Or tar.gz: tar -xzf prd-draft-review-workflow-v1-code-config-v0.3.19-build*.tar.gz -C /opt/ai-review
 cd /opt/ai-review
 
 # 2) Configure secrets (package only has .env.example, no real secrets)
@@ -377,9 +389,9 @@ cp runtime/config/ui-branding.example.yaml runtime/config/ui-branding.yaml
 ./start.sh status      # show status and run a health check
 ```
 
-Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.18"}`.
+Health check endpoint: `GET http://<host>:<port>/api/health`; a healthy response is `{"status":"ok","version":"0.3.19"}`.
 
-> For production, prefer Nginx reverse proxy + systemd supervision — see [Deployment Hardening](deployment-hardening.md). systemd's `EnvironmentFile` should point to `.env` to keep `JWT_SECRET` out of command-line args. On shutdown the app cancels background review tasks and the Embedding Worker before disposing of the database engine.
+> For production, prefer Nginx reverse proxy + systemd supervision. Set `EnvironmentFile` to the administrator-managed secret file (`/etc/prd-review/prd-review.env` in the hardening example), with an explicit, stable `JWT_SECRET`. Use [Deployment Hardening §4.1](deployment-hardening.md#41-systemd-updates-and-rollback) for lifecycle management, updates, and rollback of systemd instances. On shutdown the app cancels background review tasks and the Embedding Worker before disposing of the database engine.
 
 ### 4.3 Sub-path Deployment (optional)
 
@@ -423,11 +435,15 @@ By default the app assumes it owns the site root (`https://host/`). To mount it 
 
 ### 5.1 Usage
 
+For a custom script-managed runtime directory, explicitly `export RUNTIME_ROOT=/actual/runtime/path` before every `start.sh` / `update.sh` invocation. The scripts select that directory before loading `.env`; setting it only in `.env` does not change the PID, log, or application runtime directory. Keep `SERVER_PORT` consistent with the existing instance too.
+
+The automated update procedure below applies to **instances managed by `start.sh`**. `update.sh` calls `start.sh stop/start` itself and cannot control a systemd unit that runs uvicorn directly. For systemd instances, use [Deployment Hardening §4.1](deployment-hardening.md#41-systemd-updates-and-rollback), keeping shutdown, deployment, and restart under the same supervisor.
+
 ```bash
 # Put the new package in the project root and run (auto-discovers *code-config*.tar.gz in the current dir)
 ./update.sh
 # Or specify the package path explicitly
-./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.18-build*.tar.gz
+./update.sh --package ./prd-draft-review-workflow-v1-code-config-v0.3.19-build*.tar.gz
 ```
 
 Common options:
@@ -438,21 +454,23 @@ Common options:
 | `--force` | Force update even when current and target versions match |
 | `--skip-migrate` | Skip branding migration scan/plan |
 | `--skip-backup` | Skip backup (disables auto-rollback on failure; use with caution) |
-| `--no-rollback` | Do not auto-rollback on health-check failure |
+| `--no-rollback` | Disable automatic backup restoration after replacement, startup, or health-check failures; restarting the old service after a pre-backup failure remains enabled |
 
 ### 5.2 Update Flow
 
 `update.sh` runs in order:
 
-1. **Version compare**: after unpacking, reads the package's root `VERSION` file first (`PACKAGE_VERSION`; falls back to `APP_VERSION` in `src/app/version.py` / `src/main.py`) and compares it with the current version on the target host; exits if equal and `--force` is not set.
-2. **Package validation**: path safety, no business-data dirs, contains `src/main.py`.
+1. **Package validation**: safe paths, no symbolic links or special files, no business-data directories, and `src/main.py` present.
+2. **Unpack and compare versions**: after unpacking, reads the package's root `VERSION` file first (`PACKAGE_VERSION`; falls back to `APP_VERSION` in `src/app/version.py` / `src/main.py`) and compares it with the current version on the target host; exits if equal and `--force` is not set.
 3. **Stop service**: calls `start.sh stop`.
 4. **Backup**: backs up current code, `runtime/config`, `runtime/assets`, and `.env` to `runtime/update_backups/backup-<version>-<timestamp>/`.
 5. **Branding migration scan/plan** (**before** replacing code): reads text config from the old HTML and generates `runtime/config/ui-branding.scan-report.md` diff report. **Only generates the report, does not auto-apply** — to avoid overwriting the target's existing branding.
 6. **Replace code**: overwrites `src tools tests docs skills` and root files.
 7. **Sync version**: aligns `app_version` in `runtime/config/ui-branding.yaml` to the new version.
 8. **Start + health check**: `start.sh start`, then polls `/api/health`.
-9. **Rollback on failure**: if the health check fails, restores from the step-4 backup and restarts.
+9. **Failure handling**: replacement, startup, or health-check failures after backup trigger attempted restoration and restart from the step-4 backup, provided backup was enabled and `--no-rollback` was not passed. A failed code swap attempts to restore all old entries. Backup extraction happens in a temporary directory, so extraction failure preserves the current `src`. Restoring `.env`/`src.env` uses a temporary file, a content-integrity check, and an atomic rename. If backup or preparation fails before code changes, the script runs `start.sh start` to bring the old service back.
+
+Exit code `0` means the update succeeded, `2` means the update failed but rollback and its health check succeeded, and `3` means automatic recovery failed or was disabled and requires manual handling. Validation, backup, and other pre-update failures return their corresponding nonzero code. If recovery fails midway, retain the original backup and the `.restore-txn.*`, `.restore-code.*`, or other recovery directories named in the logs. Inspect code, configuration, and process state before bringing the service back; keep those directories until manual recovery is complete.
 
 ### 5.3 Version Consistency
 
@@ -461,6 +479,8 @@ Common options:
 ## 6. Runtime Data Migration (moving across servers, optional)
 
 The release package does not contain runtime data. To migrate existing business data to a new server:
+
+The commands below apply to instances managed by `start.sh`. For a systemd instance, run `sudo systemctl stop prd-review`, confirm it has stopped, back up its actual `RUNTIME_ROOT`, and run `sudo systemctl start prd-review` after migration. The hardening guide uses `/opt/prd-review/runtime`.
 
 ```bash
 # Source server: pack runtime data (do this after stopping the service to avoid DB write contention)

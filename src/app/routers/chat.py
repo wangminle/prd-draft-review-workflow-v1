@@ -279,8 +279,12 @@ async def create_context_item(
     ctx_repo = ContextItemRepository(db)
 
     extracted_text = data.extracted_text
-    if data.file_id and not extracted_text:
-        extracted_text = _chat_file_storage.read_text(data.file_id)
+    if data.file_id:
+        # BUG-212：上下文项只能引用当前用户自己的附件。
+        if not _chat_file_storage.is_owned_by(data.file_id, user.id):
+            raise HTTPException(status_code=404, detail="附件不存在或无权访问")
+        if not extracted_text:
+            extracted_text = _chat_file_storage.read_text_for_user(data.file_id, user.id)
 
     create_data = ContextItemCreateData(
         context_type=data.context_type,

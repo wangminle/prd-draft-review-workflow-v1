@@ -116,10 +116,13 @@ async def test_upload_source_size_limit_code_exists():
             upload_func = node
             break
     assert upload_func is not None, "upload_source 函数不存在"
-    # Verify the function contains a size check (413 HTTPException)
+    # 上传大小检查已收口到 read_upload_limited，由该 helper 抛 413
     source_text = src.read_text()
-    assert "413" in source_text
-    assert "文件过大" in source_text
+    assert "read_upload_limited" in source_text
+    helper = Path(__file__).parent.parent / "src/app/services/upload_limits.py"
+    helper_text = helper.read_text()
+    assert "413" in helper_text
+    assert "文件过大" in helper_text
 
 
 @pytest.mark.asyncio

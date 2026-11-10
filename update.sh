@@ -9,6 +9,7 @@
 #   - 失败时优先从本次备份回滚代码与本地配置
 
 set -e
+set -E
 
 SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,7 +18,7 @@ PID_FILE="$RUNTIME_DIR/server.pid"
 BACKUP_DIR="$RUNTIME_DIR/update_backups"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-15}"
 HEALTH_RETRIES="${HEALTH_RETRIES:-5}"
-NEW_VERSION="0.3.18"
+NEW_VERSION="0.3.19"
 
 SKIP_MIGRATE=false
 SKIP_BACKUP=false
@@ -75,6 +76,37 @@ done
 log() { echo "[UPDATE] $1"; }
 warn() { echo "[WARN] $1"; }
 fail() { echo "[FAIL] $1"; }
+
+# BUG-211：备份完成后任何一步失败都必须回滚，不能留下“新版代码 + 停机”。
+UPDATE_STARTED=false
+SERVICE_STOPPED=false
+ROLLBACK_IN_PROGRESS=false
+handle_update_error() {
+  local code=$?
+  if [ "$UPDATE_STARTED" = true ] && [ "$ROLLBACK_IN_PROGRESS" != true ]; then
+    ROLLBACK_IN_PROGRESS=true
+    trap - ERR
+    fail "更新过程中发生错误（exit=$code），开始自动回滚"
+    if restore_backup && wait_for_health; then
+      ROLLBACK_VERSION="$(get_running_version)"
+      log "========== 回滚成功 =========="
+      log "回滚到版本: $ROLLBACK_VERSION"
+      exit 2
+    fi
+    fail "回滚后服务也无法启动 — 请手动检查"
+    exit 3
+  elif [ "$SERVICE_STOPPED" = true ] && [ "$UPDATE_STARTED" != true ]; then
+    trap - ERR
+    warn "更新前备份或准备阶段失败（exit=$code），旧代码未修改，正在重新启动现有服务..."
+    if "$PROJECT_DIR/start.sh" start; then
+      SERVICE_STOPPED=false
+    else
+      fail "旧服务恢复启动失败 — 请手动检查"
+    fi
+  fi
+  exit "$code"
+}
+trap 'handle_update_error' ERR
 
 read_version_from_main() {
   local project_dir="$1"
@@ -197,6 +229,14 @@ validate_update_package() {
     return 1
   fi
 
+  # FS-07：拒绝符号链接及设备/管道等特殊条目，避免解压时写到包外。
+  local verbose_listing
+  verbose_listing="$(tar -tvzf "$package" 2>/dev/null || true)"
+  if echo "$verbose_listing" | grep -Eq '^[lhbcps]'; then
+    fail "更新包包含符号链接或特殊文件条目，拒绝更新"
+    return 1
+  fi
+
   if echo "$listing" | grep -Eq '(^|/)runtime/(data|uploads|logs|results|storage|vector)(/|$)'; then
     fail "更新包包含 runtime 业务数据目录，拒绝更新"
     return 1
@@ -267,26 +307,50 @@ create_backup() {
   log "创建备份: $CURRENT_BACKUP_DIR"
   mkdir -p "$CURRENT_BACKUP_DIR"
 
-  tar -czf "$CURRENT_BACKUP_DIR/code.tar.gz" \
+  # BUG-211：旧版本可能缺少可选受管文件（如 CLAUDE.md），只打包实际存在的条目。
+  local backup_items=""
+  for item in src tools tests docs skills VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+    [ -e "$PROJECT_DIR/$item" ] && backup_items="$backup_items $item"
+  done
+  if [ -z "$backup_items" ]; then
+    fail "没有可备份的受管文件，终止更新"
+    return 1
+  fi
+
+  if ! tar -czf "$CURRENT_BACKUP_DIR/code.tar.gz" \
     --exclude='runtime' \
     --exclude='.git' \
     --exclude='__pycache__' \
     --exclude='*.pyc' \
     --exclude='*.tar.gz' \
-    -C "$PROJECT_DIR" \
-    src tools tests docs skills VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE 2>/dev/null || true
+    -C "$PROJECT_DIR" $backup_items; then
+    fail "代码备份失败，终止更新（避免无回滚点）"
+    return 1
+  fi
 
   if [ -d "$RUNTIME_DIR/config" ]; then
-    cp -R "$RUNTIME_DIR/config" "$CURRENT_BACKUP_DIR/runtime_config" 2>/dev/null || true
+    if ! cp -R "$RUNTIME_DIR/config" "$CURRENT_BACKUP_DIR/runtime_config"; then
+      fail "runtime/config 备份失败，终止更新"
+      return 1
+    fi
   fi
   if [ -d "$RUNTIME_DIR/assets" ]; then
-    cp -R "$RUNTIME_DIR/assets" "$CURRENT_BACKUP_DIR/runtime_assets" 2>/dev/null || true
+    if ! cp -R "$RUNTIME_DIR/assets" "$CURRENT_BACKUP_DIR/runtime_assets"; then
+      fail "runtime/assets 备份失败，终止更新"
+      return 1
+    fi
   fi
   if [ -f "$PROJECT_DIR/.env" ]; then
-    cp "$PROJECT_DIR/.env" "$CURRENT_BACKUP_DIR/project.env"
+    if ! cp "$PROJECT_DIR/.env" "$CURRENT_BACKUP_DIR/project.env"; then
+      fail "项目 .env 备份失败，终止更新"
+      return 1
+    fi
   fi
   if [ -f "$PROJECT_DIR/src/.env" ]; then
-    cp "$PROJECT_DIR/src/.env" "$CURRENT_BACKUP_DIR/src.env"
+    if ! cp "$PROJECT_DIR/src/.env" "$CURRENT_BACKUP_DIR/src.env"; then
+      fail "src/.env 备份失败，终止更新"
+      return 1
+    fi
   fi
 
   log "备份完成: $CURRENT_BACKUP_DIR"
@@ -294,22 +358,115 @@ create_backup() {
 
 copy_versioned_files() {
   local extracted_dir="$1"
+  local stage_dir
+  stage_dir="$(mktemp -d "$PROJECT_DIR/.update-stage.XXXXXX")"
+  local stage_items=""
+  local stage_files=""
 
   log "更新代码文件..."
+  log "暂存新版本代码..."
   for item in src tools tests docs skills; do
     if [ -d "$extracted_dir/$item" ]; then
-      rm -rf "$PROJECT_DIR/$item"
-      cp -R "$extracted_dir/$item" "$PROJECT_DIR/$item"
-      log "  更新 $item/"
+      if ! cp -R "$extracted_dir/$item" "$stage_dir/$item"; then
+        fail "暂存 $item/ 失败，旧版本保持不变"
+        rm -rf "$stage_dir"
+        return 1
+      fi
+      stage_items="$stage_items $item"
     fi
   done
 
   for file in VERSION start.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
     if [ -f "$extracted_dir/$file" ]; then
-      cp "$extracted_dir/$file" "$PROJECT_DIR/$file"
-      log "  更新 $file"
+      if ! cp "$extracted_dir/$file" "$stage_dir/$file"; then
+        fail "暂存 $file 失败，旧版本保持不变"
+        rm -rf "$stage_dir"
+        return 1
+      fi
+      stage_files="$stage_files $file"
     fi
   done
+
+  log "原子替换代码目录..."
+  local txn_dir="$stage_dir/.txn"
+  mkdir -p "$txn_dir"
+  local moved_items=""
+  local moved_files=""
+
+  # 第一阶段：把所有旧目录/旧文件移入事务目录；任一失败则整体还原。
+  for item in src tools tests docs skills; do
+    [ -e "$stage_dir/$item" ] || continue
+    if [ -e "$PROJECT_DIR/$item" ]; then
+      if ! mv "$PROJECT_DIR/$item" "$txn_dir/old-$item"; then
+        fail "移出旧 $item/ 失败，开始还原"
+        for done_item in $moved_items; do
+          [ -e "$txn_dir/old-$done_item" ] && mv "$txn_dir/old-$done_item" "$PROJECT_DIR/$done_item"
+        done
+        rm -rf "$stage_dir"
+        return 1
+      fi
+      moved_items="$moved_items $item"
+    fi
+  done
+  for file in VERSION start.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+    [ -f "$stage_dir/$file" ] || continue
+    if [ -f "$PROJECT_DIR/$file" ]; then
+      if ! mv "$PROJECT_DIR/$file" "$txn_dir/old-$file"; then
+        fail "移出旧 $file 失败，开始还原"
+        for done_item in $moved_items; do
+          [ -e "$txn_dir/old-$done_item" ] && mv "$txn_dir/old-$done_item" "$PROJECT_DIR/$done_item"
+        done
+        for done_file in $moved_files; do
+          [ -e "$txn_dir/old-$done_file" ] && mv "$txn_dir/old-$done_file" "$PROJECT_DIR/$done_file"
+        done
+        rm -rf "$stage_dir"
+        return 1
+      fi
+      moved_files="$moved_files $file"
+    fi
+  done
+
+  # 第二阶段：把新目录/新文件移入；任一失败则删除已放入的新内容并还原全部旧内容。
+  for item in src tools tests docs skills; do
+    [ -e "$stage_dir/$item" ] || continue
+    if ! mv "$stage_dir/$item" "$PROJECT_DIR/$item"; then
+      fail "替换 $item/ 失败，开始整体还原"
+      for done_item in $stage_items; do
+        [ -e "$PROJECT_DIR/$done_item" ] && rm -rf "$PROJECT_DIR/$done_item"
+      done
+      for done_item in $moved_items; do
+        [ -e "$txn_dir/old-$done_item" ] && mv "$txn_dir/old-$done_item" "$PROJECT_DIR/$done_item"
+      done
+      for done_file in $moved_files; do
+        [ -e "$txn_dir/old-$done_file" ] && mv "$txn_dir/old-$done_file" "$PROJECT_DIR/$done_file"
+      done
+      rm -rf "$stage_dir"
+      return 1
+    fi
+    log "  更新 $item/"
+  done
+  for file in VERSION start.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+    [ -f "$stage_dir/$file" ] || continue
+    if ! mv -f "$stage_dir/$file" "$PROJECT_DIR/$file"; then
+      fail "替换 $file 失败，开始整体还原"
+      for done_item in $stage_items; do
+        [ -e "$PROJECT_DIR/$done_item" ] && rm -rf "$PROJECT_DIR/$done_item"
+      done
+      for done_file in $stage_files; do
+        [ -e "$PROJECT_DIR/$done_file" ] && rm -f "$PROJECT_DIR/$done_file"
+      done
+      for done_item in $moved_items; do
+        [ -e "$txn_dir/old-$done_item" ] && mv "$txn_dir/old-$done_item" "$PROJECT_DIR/$done_item"
+      done
+      for done_file in $moved_files; do
+        [ -e "$txn_dir/old-$done_file" ] && mv "$txn_dir/old-$done_file" "$PROJECT_DIR/$done_file"
+      done
+      rm -rf "$stage_dir"
+      return 1
+    fi
+    log "  更新 $file"
+  done
+  rm -rf "$stage_dir"
 
   if [ -d "$extracted_dir/runtime/config" ]; then
     mkdir -p "$RUNTIME_DIR/config"
@@ -420,6 +577,8 @@ run_migration_plan() {
 }
 
 restore_backup() {
+  ROLLBACK_IN_PROGRESS=true
+  trap - ERR
   if [ "$ROLLBACK_ON_FAILURE" != true ] || [ "$SKIP_BACKUP" = true ] || [ ! -d "$CURRENT_BACKUP_DIR" ]; then
     fail "无法回滚（未创建备份或回滚已禁用）— 请手动排查"
     return 1
@@ -428,28 +587,136 @@ restore_backup() {
   log "自动回滚到旧版本..."
   "$PROJECT_DIR/start.sh" stop 2>/dev/null || true
 
-  if [ -f "$CURRENT_BACKUP_DIR/code.tar.gz" ]; then
-    tar -xzf "$CURRENT_BACKUP_DIR/code.tar.gz" -C "$PROJECT_DIR"
+  if [ ! -f "$CURRENT_BACKUP_DIR/code.tar.gz" ]; then
+    fail "备份缺少 code.tar.gz，无法回滚"
+    return 1
   fi
+  # BUG-211：先解包到临时目录，解包失败时现有代码保持不动。
+  local code_stage code_txn
+  code_stage="$(mktemp -d "$PROJECT_DIR/.restore-code.XXXXXX")"
+  if ! tar -xzf "$CURRENT_BACKUP_DIR/code.tar.gz" -C "$code_stage"; then
+    fail "代码备份解包失败，现有代码保持不变"
+    rm -rf "$code_stage"
+    return 1
+  fi
+  if [ ! -d "$code_stage/src" ]; then
+    fail "代码备份不完整（缺少 src/），拒绝回滚覆盖现有代码"
+    rm -rf "$code_stage"
+    return 1
+  fi
+  code_txn="$(mktemp -d "$PROJECT_DIR/.restore-txn.XXXXXX")"
+  local restored=""
+  local placed=""
+  for item in src tools tests docs skills VERSION start.sh update.sh requirements.txt pyproject.toml package.json package-lock.json .env.example README.md CLAUDE.md LICENSE; do
+    if [ -e "$PROJECT_DIR/$item" ]; then
+      if ! mv "$PROJECT_DIR/$item" "$code_txn/old-$item"; then
+        fail "回滚移出旧 $item 失败，正在整体还原已处理条目并保留恢复材料"
+        for done_item in $placed; do
+          rm -rf "$code_stage/$done_item" 2>/dev/null || true
+          mv "$PROJECT_DIR/$done_item" "$code_stage/$done_item" 2>/dev/null || rm -rf "$PROJECT_DIR/$done_item"
+        done
+        for done_item in $restored; do
+          if [ -e "$code_txn/old-$done_item" ]; then
+            cp -R "$code_txn/old-$done_item" "$code_txn/recovery-$done_item" 2>/dev/null || true
+            mv "$code_txn/old-$done_item" "$PROJECT_DIR/$done_item" 2>/dev/null || true
+            if [ -e "$code_txn/recovery-$done_item" ] && [ ! -e "$code_txn/old-$done_item" ]; then
+              mv "$code_txn/recovery-$done_item" "$code_txn/old-$done_item" 2>/dev/null || true
+            fi
+          fi
+        done
+        warn "已保留恢复副本目录: $code_txn $code_stage"
+        return 1
+      fi
+      restored="$restored $item"
+    fi
+    if [ ! -e "$code_stage/$item" ]; then
+      # BUG-211 / FS-06：旧备份没有的受管条目已暂存至 code_txn，待全部回滚成功后再随事务目录清理。
+      continue
+    fi
+    if ! mv "$code_stage/$item" "$PROJECT_DIR/$item"; then
+      fail "回滚放入 $item 失败，正在整体还原现有代码并保留恢复材料"
+      for done_item in $placed; do
+        rm -rf "$code_stage/$done_item" 2>/dev/null || true
+        mv "$PROJECT_DIR/$done_item" "$code_stage/$done_item" 2>/dev/null || rm -rf "$PROJECT_DIR/$done_item"
+      done
+      for done_item in $restored; do
+        if [ -e "$code_txn/old-$done_item" ]; then
+          cp -R "$code_txn/old-$done_item" "$code_txn/recovery-$done_item" 2>/dev/null || true
+          mv "$code_txn/old-$done_item" "$PROJECT_DIR/$done_item" 2>/dev/null || true
+          if [ -e "$code_txn/recovery-$done_item" ] && [ ! -e "$code_txn/old-$done_item" ]; then
+            mv "$code_txn/recovery-$done_item" "$code_txn/old-$done_item" 2>/dev/null || true
+          fi
+        fi
+      done
+      warn "已保留恢复副本目录: $code_txn $code_stage"
+      return 1
+    fi
+    placed="$placed $item"
+  done
+  rm -rf "$code_stage" "$code_txn"
 
-  if [ -d "$CURRENT_BACKUP_DIR/runtime_config" ]; then
-    rm -rf "$RUNTIME_DIR/config"
-    cp -R "$CURRENT_BACKUP_DIR/runtime_config" "$RUNTIME_DIR/config"
-  fi
-  if [ -d "$CURRENT_BACKUP_DIR/runtime_assets" ]; then
-    rm -rf "$RUNTIME_DIR/assets"
-    cp -R "$CURRENT_BACKUP_DIR/runtime_assets" "$RUNTIME_DIR/assets"
-  fi
+  for asset in config assets; do
+    backup_dir="$CURRENT_BACKUP_DIR/runtime_$asset"
+    [ -d "$backup_dir" ] || continue
+    restore_tmp="$(mktemp -d "$RUNTIME_DIR/.restore-$asset.XXXXXX")"
+    if ! cp -R "$backup_dir" "$restore_tmp/$asset"; then
+      fail "恢复 runtime/$asset 失败：备份复制不完整，保留现有目录"
+      rm -rf "$restore_tmp"
+      return 1
+    fi
+    old_dir="$RUNTIME_DIR/.old-$asset.$$"
+    if [ -e "$RUNTIME_DIR/$asset" ] && ! mv "$RUNTIME_DIR/$asset" "$old_dir"; then
+      fail "恢复 runtime/$asset 失败：无法移走现有目录"
+      rm -rf "$restore_tmp"
+      return 1
+    fi
+    if ! mv "$restore_tmp/$asset" "$RUNTIME_DIR/$asset"; then
+      # 还原刚移走的现有目录，避免配置丢失
+      [ -e "$old_dir" ] && mv "$old_dir" "$RUNTIME_DIR/$asset"
+      fail "恢复 runtime/$asset 失败：无法放入备份目录"
+      rm -rf "$restore_tmp"
+      return 1
+    fi
+    rm -rf "$old_dir" "$restore_tmp"
+  done
 
   if [ -f "$CURRENT_BACKUP_DIR/project.env" ]; then
-    cp "$CURRENT_BACKUP_DIR/project.env" "$PROJECT_DIR/.env"
+    local env_tmp
+    env_tmp="$(mktemp "$PROJECT_DIR/.restore-env.XXXXXX")"
+    if ! cp "$CURRENT_BACKUP_DIR/project.env" "$env_tmp" || ! cmp -s "$CURRENT_BACKUP_DIR/project.env" "$env_tmp"; then
+      rm -f "$env_tmp"
+      fail "恢复项目 .env 失败：临时文件内容不完整，正式文件未改动"
+      return 1
+    fi
+    chmod 600 "$env_tmp" 2>/dev/null || true
+    if ! mv "$env_tmp" "$PROJECT_DIR/.env"; then
+      rm -f "$env_tmp"
+      fail "恢复项目 .env 失败：无法替换正式文件"
+      return 1
+    fi
   fi
   if [ -f "$CURRENT_BACKUP_DIR/src.env" ]; then
     mkdir -p "$PROJECT_DIR/src"
-    cp "$CURRENT_BACKUP_DIR/src.env" "$PROJECT_DIR/src/.env"
+    local src_env_tmp
+    src_env_tmp="$(mktemp "$PROJECT_DIR/src/.restore-env.XXXXXX")"
+    if ! cp "$CURRENT_BACKUP_DIR/src.env" "$src_env_tmp" || ! cmp -s "$CURRENT_BACKUP_DIR/src.env" "$src_env_tmp"; then
+      rm -f "$src_env_tmp"
+      fail "恢复 src/.env 失败：临时文件内容不完整，正式文件未改动"
+      return 1
+    fi
+    chmod 600 "$src_env_tmp" 2>/dev/null || true
+    if ! mv "$src_env_tmp" "$PROJECT_DIR/src/.env"; then
+      rm -f "$src_env_tmp"
+      fail "恢复 src/.env 失败：无法替换正式文件"
+      return 1
+    fi
   fi
 
-  "$PROJECT_DIR/start.sh" start
+  if ! "$PROJECT_DIR/start.sh" start; then
+    fail "回滚后启动命令失败"
+    return 1
+  fi
+  return 0
 }
 
 log "========== 版本更新开始 =========="
@@ -485,7 +752,9 @@ if [ "$CURRENT_VERSION" = "$PACKAGE_VERSION" ] && [ "$FORCE" = false ]; then
 fi
 
 stop_service
+SERVICE_STOPPED=true
 create_backup "$CURRENT_VERSION"
+UPDATE_STARTED=true
 
 # ── 关键：迁移 scan/plan 必须在代码替换之前 ──
 # 迁移工具 scan_html 需要读取旧项目 HTML 中的文本配置（login_notice 等），
@@ -521,7 +790,17 @@ if ! command -v npm &>/dev/null; then
 fi
 
 log "启动新版本服务..."
-"$PROJECT_DIR/start.sh" start
+if ! "$PROJECT_DIR/start.sh" start; then
+  fail "新版本启动命令返回非零，立即回滚"
+  if restore_backup && wait_for_health; then
+    ROLLBACK_VERSION="$(get_running_version)"
+    log "========== 回滚成功 =========="
+    log "回滚到版本: $ROLLBACK_VERSION"
+    exit 2
+  fi
+  fail "回滚后服务也无法启动 — 请手动检查"
+  exit 3
+fi
 
 log "等待服务健康检查..."
 if wait_for_health; then

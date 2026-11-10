@@ -39,12 +39,15 @@ ensure_persistent_jwt_secret() {
   fi
   JWT_SECRET="$(python3 -c "import secrets; print(secrets.token_hex(32))")"
   export JWT_SECRET
-  PYTHONPATH="$PROJECT_DIR/src" python3 - "$PROJECT_DIR/.env" "$JWT_SECRET" <<'PY'
+  # BUG-210：密钥通过环境变量传入 Python；heredoc 会占用 stdin，
+  # 不能再用管道把密钥送进脚本（否则 .env 会写成空值）。
+  PYTHONPATH="$PROJECT_DIR/src" python3 - "$PROJECT_DIR/.env" <<'PY'
+import os
 import sys
 from pathlib import Path
 from app.env_file import persist_jwt_secret
 
-persist_jwt_secret(Path(sys.argv[1]), sys.argv[2])
+persist_jwt_secret(Path(sys.argv[1]), os.environ["JWT_SECRET"])
 PY
   echo "Generated JWT_SECRET and saved to $PROJECT_DIR/.env"
 }

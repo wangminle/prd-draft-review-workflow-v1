@@ -358,6 +358,13 @@ def sha256_file(path: str, chunk_size: int = 1024 * 1024) -> str:
     return digest.hexdigest()
 
 
+def _open_output_no_follow(path: str, mode: str, encoding: str | None = None):
+    """以不跟随符号链接的方式打开输出文件（SK-03）。"""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(path, flags, 0o600)
+    return os.fdopen(fd, mode, encoding=encoding)
+
+
 def write_conversion_sentinel(
     final_output_dir: str, folder_name: str, source_sha256: str,
     on_limit: str = "reject",
@@ -376,7 +383,7 @@ def write_conversion_sentinel(
         sort_keys=True,
     )
     try:
-        with open(tmp_path, "w", encoding="utf-8") as f:
+        with _open_output_no_follow(tmp_path, "w", encoding="utf-8") as f:
             f.write(payload)
         os.replace(tmp_path, sentinel_path)
     except OSError:
@@ -1288,7 +1295,7 @@ def extract_content_from_docx(docx_path, assets_dir, on_limit="reject", skip_sta
                         image_path = os.path.join(assets_dir, corrected_name)
 
                 if not os.path.exists(image_path):
-                    with open(image_path, 'wb') as f:
+                    with _open_output_no_follow(image_path, 'wb') as f:
                         f.write(image_data)
 
                 image_by_hash.setdefault(digest, f"assets/{corrected_name}")
@@ -1552,7 +1559,7 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
         filename = f"image_{digest[:16]}{ext}"
         image_path = os.path.join(assets_dir, filename)
         if not os.path.exists(image_path):
-            with open(image_path, "wb") as f:
+            with _open_output_no_follow(image_path, "wb") as f:
                 f.write(image_data)
         image_by_hash[digest] = f"assets/{filename}"
         return {"src": f"assets/{filename}"}
@@ -1620,7 +1627,7 @@ def convert_docx_to_markdown(docx_path, output_dir, create_subfolder=True, outpu
 
     md_path = os.path.join(final_output_dir, f"{folder_name}.md")
 
-    with open(md_path, 'w', encoding='utf-8') as f:
+    with _open_output_no_follow(md_path, 'w', encoding='utf-8') as f:
         f.write(markdown)
 
     # 子目录模式的 assets 归当前文档独占，可清理旧产物。
@@ -1749,7 +1756,17 @@ def html_to_markdown(html, heading_level_map: Optional[Dict[str, int]] = None):
     def _replace_link(match):
         href = match.group("href1") or match.group("href2") or match.group("href3") or ""
         text = match.group("text")
-        return f"[{text}]({href})"
+        # BUG-217：先反复解码 HTML 实体，再判断 scheme，防止 &amp;#58; 之类在
+        # 下游渲染器中还原成 javascript:。
+        decoded_href = href
+        for _ in range(3):
+            next_href = unescape(decoded_href)
+            if next_href == decoded_href:
+                break
+            decoded_href = next_href
+        if re.match(r"^\s*(?:javascript|data|vbscript|file)\s*:", decoded_href, re.IGNORECASE):
+            return text
+        return f"[{text}]({decoded_href})"
 
     html = re.sub(
         (
@@ -1779,14 +1796,46 @@ def html_to_markdown(html, heading_level_map: Optional[Dict[str, int]] = None):
     # 处理段落
     html = re.sub(r'<p[^>]*>(.*?)</p>', r'\1\n\n', html, flags=re.DOTALL)
     
-    # 移除剩余的HTML标签（保留 <br> 供 Markdown 单元格换行显示）
-    html = re.sub(r'<(?!br\s*/?)[^>]+>', '', html, flags=re.IGNORECASE)
+    # 移除剩余的HTML标签。只匹配真正的标签名（< 后必须是字母），
+    # 避免把正文里的 “a < b and c > d” 当成标签删掉；保留 <br> 供表格单元换行。
+    html = re.sub(r"<br\s*/?>", "\x00BR\x00", html, flags=re.IGNORECASE)
+    html = re.sub(r"</?[A-Za-z][^>]*>", '', html)
+    html = html.replace("\x00BR\x00", "<br>")
     
     # 清理多余的空行
     html = re.sub(r'\n{3,}', '\n\n', html)
     
     html = html.replace('&nbsp;', ' ')
-    html = unescape(html)
+    for _ in range(3):
+        decoded = unescape(html)
+        if decoded == html:
+            break
+        html = decoded
+
+    # SK-04：实体解码后可能还原出原始 HTML，移除脚本/嵌入标签与事件属性。
+    html = re.sub(
+        r"<\s*(script|iframe|object|embed|style)\b[^>]*>.*?<\s*/\s*\1\s*>",
+        "", html, flags=re.DOTALL | re.IGNORECASE,
+    )
+    html = re.sub(
+        r"<\s*(script|iframe|object|embed|style)\b[^>]*/?>",
+        "", html, flags=re.IGNORECASE,
+    )
+    html = re.sub(
+        r"\son[a-z]+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)",
+        "", html, flags=re.IGNORECASE,
+    )
+    # 编码后的危险 Markdown 链接在 unescape 后才成形，需再次中和（含实体冒号）。
+    html = re.sub(
+        r"\]\(\s*(?:javascript|data|vbscript|file)\s*(?::|&#0*58;|&#x0*3a;)[^)]*\)",
+        "]()", html, flags=re.IGNORECASE,
+    )
+    html = re.sub(r"javascript\s*:", "", html, flags=re.IGNORECASE)
+    # 实体解码还原出的原始 HTML 统一移除（保留 br）。只匹配真正的标签名，
+    # 避免把正文里的 “a < b and c > d” 当成标签删掉。
+    html = re.sub(r"<br\s*/?>", "\x00BR\x00", html, flags=re.IGNORECASE)
+    html = re.sub(r"</?[A-Za-z][^>]*>", "", html)
+    html = html.replace("\x00BR\x00", "<br>")
 
     html = promote_numbered_bold_headings(html)
     html = promote_leading_bold_title(html)

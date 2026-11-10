@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,6 +15,7 @@ from app.repositories.knowledge_repository import KnowledgeChunkRepository
 from app.services.embedding_service import EmbeddingService
 from app.services.knowledge_vector_service import (
     VectorChunk,
+    KnowledgeVectorService,
     get_knowledge_vector_service,
 )
 
@@ -41,6 +43,32 @@ async def _load_chunk_context(
     )
     source = src_result.scalar_one_or_none()
     return doc, source
+
+
+async def _cleanup_written_vectors(
+    db: AsyncSession,
+    vector_svc: KnowledgeVectorService,
+    pairs: list[tuple[int, str, int]],
+    write_token: str,
+) -> None:
+    """只补偿本次写入，保留当前已完成身份和其他 worker 的向量。"""
+    if not pairs:
+        return
+    await db.rollback()
+    rows = await db.execute(
+        select(KnowledgeChunk.id, KnowledgeChunk.text, KnowledgeChunk.document_id)
+        .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+        .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+        .where(
+            KnowledgeChunk.id.in_([pair[0] for pair in pairs]),
+            KnowledgeChunk.embedding_status == "done",
+            KnowledgeSource.status == "active",
+        )
+    )
+    completed = {tuple(row) for row in rows.fetchall()}
+    stale = [pair for pair in pairs if pair not in completed]
+    if stale:
+        await vector_svc.delete_stale_vectors(stale, write_token=write_token)
 
 
 async def process_pending_embeddings(
@@ -83,10 +111,11 @@ async def process_pending_embeddings(
     vector_chunks: list[VectorChunk] = []
     texts: list[str] = []
     chunk_ids: list[int] = []
+    write_token = uuid.uuid4().hex
 
     for chunk in pending:
         doc, source = await _load_chunk_context(db, chunk)
-        if doc is None or source is None:
+        if doc is None or source is None or source.status != "active":
             await chunk_repo.update_embedding_status([chunk.id], "failed")
             continue
         workspace_id = source.workspace_id or 0
@@ -100,6 +129,8 @@ async def process_pending_embeddings(
                 text=chunk.text,
                 owner_id=source.owner_id,
                 visibility=chunk.visibility or source.visibility or "team",
+                document_id=chunk.document_id,
+                write_token=write_token,
             )
         )
         texts.append(chunk.text)
@@ -109,22 +140,166 @@ async def process_pending_embeddings(
         await db.commit()
         return 0
 
+    vector_write_started = False
     try:
         await chunk_repo.update_embedding_status(chunk_ids, "processing")
         await db.commit()
 
         vectors = await embedder.embed_batch(texts)
+        # BUG-214：embedding 期间源资料可能已重入库、被新 worker 完成，或已被删除归档。
+        # 先释放读快照确保读到最新已提交状态，再联合校验切块正文、切块状态与 source.status。
+        await db.rollback()
+        current_rows = await db.execute(
+            select(
+                KnowledgeChunk.id,
+                KnowledgeChunk.text,
+                KnowledgeChunk.embedding_status,
+                KnowledgeSource.id,
+                KnowledgeSource.status,
+            )
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+            .where(KnowledgeChunk.id.in_(chunk_ids))
+        )
+        current_state = {
+            row[0]: (row[1], row[2], row[3], row[4])
+            for row in current_rows.fetchall()
+        }
+        kept_chunks = []
+        kept_vectors = []
+        kept_ids = []
+        archived_chunk_ids = []
+        archived_source_ids = set()
+        for chunk, vector in zip(vector_chunks, vectors):
+            state = current_state.get(chunk.chunk_id)
+            if state is None:
+                continue
+            cur_text, cur_status, cur_source_id, cur_source_status = state
+            if cur_source_status != "active" or cur_source_id != chunk.source_id:
+                if cur_source_status != "active" and cur_text == chunk.text and cur_status != "done":
+                    archived_chunk_ids.append(chunk.chunk_id)
+                    archived_source_ids.add(cur_source_id)
+                continue
+            if cur_text != chunk.text or cur_status == "done":
+                # 正文已被替换或新 worker 已完成写入，绝不回写旧向量或覆盖新状态
+                continue
+            kept_chunks.append(chunk)
+            kept_vectors.append(vector)
+            kept_ids.append(chunk.chunk_id)
+
+        if archived_chunk_ids:
+            await chunk_repo.update_embedding_status(archived_chunk_ids, "failed")
+            await db.commit()
+        for sid in archived_source_ids:
+            try:
+                await vector_svc.delete_by_source(sid)
+            except Exception:
+                logger.warning("[EMBED-WORKER] failed to cleanup archived source=%s vectors", sid)
+
+        if not kept_chunks:
+            logger.warning("[EMBED-WORKER] all chunks changed, completed, or archived during embedding, skip stale writes")
+            return 0
+        vector_chunks, vectors, chunk_ids = kept_chunks, kept_vectors, kept_ids
+        vector_write_started = True
         written = await vector_svc.upsert(vector_chunks, vectors)
-        await chunk_repo.update_embedding_status(chunk_ids, "done")
-        await db.commit()
-        logger.info("[EMBED-WORKER] processed=%d written=%d", len(chunk_ids), written)
-        return written
+
+        # 写入向量后再次校验：若在 upsert 窗口内资料被归档或切块正文被替换，立即补偿清理。
+        await db.rollback()
+        post_rows = await db.execute(
+            select(
+                KnowledgeChunk.id,
+                KnowledgeChunk.text,
+                KnowledgeChunk.embedding_status,
+                KnowledgeSource.id,
+                KnowledgeSource.status,
+            )
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+            .where(KnowledgeChunk.id.in_(chunk_ids))
+        )
+        post_state = {
+            row[0]: (row[1], row[2], row[3], row[4])
+            for row in post_rows.fetchall()
+        }
+        final_done_pairs = []
+        post_stale_pairs = []
+        for chunk in vector_chunks:
+            state = post_state.get(chunk.chunk_id)
+            if state is None:
+                post_stale_pairs.append((chunk.chunk_id, chunk.text, chunk.document_id))
+                continue
+            cur_text, _cur_status, cur_source_id, cur_source_status = state
+            if cur_source_status != "active" or cur_source_id != chunk.source_id:
+                post_stale_pairs.append((chunk.chunk_id, chunk.text, chunk.document_id))
+                continue
+            if cur_text != chunk.text:
+                post_stale_pairs.append((chunk.chunk_id, chunk.text, chunk.document_id))
+                continue
+            final_done_pairs.append((chunk.chunk_id, chunk.text, chunk.document_id))
+
+        if post_stale_pairs:
+            try:
+                await _cleanup_written_vectors(db, vector_svc, post_stale_pairs, write_token)
+            except Exception:
+                logger.warning("[EMBED-WORKER] failed to cleanup post-upsert stale vectors")
+
+        updated_done = 0
+        if final_done_pairs:
+            # 必须把切块身份（id, text, document_id）、来源 active 与当前状态限制
+            # 放到同一条 SQL 中原子提交。
+            rejected_pairs = []
+            for pair in final_done_pairs:
+                updated = await chunk_repo.update_embedding_status_conditional(
+                    [pair], "done", expected_status="processing",
+                )
+                updated_done += updated
+                if not updated:
+                    rejected_pairs.append(pair)
+            await db.commit()
+            if rejected_pairs:
+                try:
+                    await _cleanup_written_vectors(db, vector_svc, rejected_pairs, write_token)
+                except Exception:
+                    logger.warning("[EMBED-WORKER] failed to cleanup stale vectors after status race")
+        logger.info("[EMBED-WORKER] processed=%d written=%d", updated_done, written if updated_done else 0)
+        return updated_done
     except Exception as e:
         logger.exception("[EMBED-WORKER] batch failed: %s", e)
         try:
             await db.rollback()
-            await chunk_repo.update_embedding_status(chunk_ids, "failed")
-            await db.commit()
+        except Exception:
+            logger.exception("[EMBED-WORKER] rollback failed")
+        # 只处理仍与旧正文一致且尚未被新 worker 完成的 chunk；复用 ID 的新切块不能被旧 worker 误删/误标。
+        stale_pairs = []
+        try:
+            current_rows = await db.execute(
+                select(
+                    KnowledgeChunk.id,
+                    KnowledgeChunk.text,
+                    KnowledgeChunk.embedding_status,
+                ).where(
+                    KnowledgeChunk.id.in_(chunk_ids)
+                )
+            )
+            current_info = {row[0]: (row[1], row[2]) for row in current_rows.fetchall()}
+            for chunk in vector_chunks:
+                info = current_info.get(chunk.chunk_id)
+                if info is not None and info[0] == chunk.text and info[1] != "done":
+                    stale_pairs.append((chunk.chunk_id, chunk.text, chunk.document_id))
+        except Exception:
+            logger.exception("[EMBED-WORKER] failed to filter stale chunks")
+        if vector_write_started and stale_pairs:
+            try:
+                await _cleanup_written_vectors(db, vector_svc, stale_pairs, write_token)
+            except Exception:
+                logger.exception("[EMBED-WORKER] failed to compensate vector writes")
+        try:
+            if stale_pairs:
+                # 异常路径：带条件原子更新，绝不把已被新 worker 处理为 done 的切块改回 failed
+                await chunk_repo.update_embedding_status_conditional(
+                    stale_pairs, "failed", disallowed_statuses=("done",)
+                )
+                await db.commit()
         except Exception:
             logger.exception("[EMBED-WORKER] failed to mark chunks as failed")
         return 0

@@ -148,6 +148,19 @@ class RetrievalService:
                 scope=scope,
             )
 
+        # BUG-214：补偿删除失败时，LanceDB 可能仍留有 embedding_status=failed 的
+        # chunk；检索前按 DB 状态过滤，避免召回失败向量。
+        search_results = await self._filter_done_chunks(search_results)
+        if not search_results:
+            logger.info("[RETRIEVE] 向量结果均非 done 状态，尝试降级到 FTS5")
+            return await self._fallback_fts(
+                query, workspace_id, top_k,
+                fallback_reason="vector_status_filtered",
+                start_time=start_time,
+                user_id=user_id,
+                scope=scope,
+            )
+
         # Step 4: 附加 confidence（拒答策略）
         results = self._apply_rejection_policy(search_results)
 
@@ -160,6 +173,29 @@ class RetrievalService:
             fallback_reason=fallback_reason,
             query=query,
         )
+
+    async def _filter_done_chunks(self, search_results):
+        """仅保留 DB 中 embedding_status=done 且所属资料仍为 active 的 chunk（BUG-214）。"""
+        if not self._db_session or not search_results:
+            return search_results
+        from sqlalchemy import select
+
+        from app.models.knowledge import KnowledgeChunk, KnowledgeDocument
+        from app.models.workspace import KnowledgeSource
+
+        chunk_ids = [r.chunk_id for r in search_results]
+        rows = await self._db_session.execute(
+            select(KnowledgeChunk.id)
+            .join(KnowledgeDocument, KnowledgeDocument.id == KnowledgeChunk.document_id)
+            .join(KnowledgeSource, KnowledgeSource.id == KnowledgeDocument.source_id)
+            .where(
+                KnowledgeChunk.id.in_(chunk_ids),
+                KnowledgeChunk.embedding_status == "done",
+                KnowledgeSource.status == "active",
+            )
+        )
+        done = {row[0] for row in rows.fetchall()}
+        return [r for r in search_results if r.chunk_id in done]
 
     def _apply_rejection_policy(self, search_results: list[SearchResult]) -> list[RetrievalResult]:
         """P2.E.3 拒答策略：dist[0] 绝对阈值 + gap 低置信标记。

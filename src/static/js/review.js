@@ -7,6 +7,9 @@ const Review = {
     currentMode: null,
     eventSource: null,
     _pollTimer: null,
+    _pollGeneration: 0,
+    _listenSeq: 0,
+    _resultSeq: 0,
     _bound: false,
     _stateVersion: 0,
     _reviewHistory: [],       // [{ task_id, mode, status, ... }]
@@ -96,6 +99,8 @@ const Review = {
     },
 
     _stopProgressListener() {
+        this._pollGeneration += 1;
+        this._listenSeq += 1;
         if (this.eventSource) {
             this.eventSource.close();
             this.eventSource = null;
@@ -290,6 +295,13 @@ const Review = {
     },
 
     async selectProject(id) {
+        // FE-04：切换项目前停止旧项目的 SSE/轮询并递增状态版本，
+        // 避免旧任务事件/旧报告写入新项目状态。
+        this._stopProgressListener();
+        this._nextStateVersion();
+        this._resultSeq += 1;
+        this._isReviewRunning = false;
+        this.currentTaskId = null;
         this.currentProjectId = id;
         this.selectedDocumentId = null;
         this.selectedDocName = null;
@@ -606,10 +618,18 @@ const Review = {
                 const documentIds = Array.isArray(task.document_ids) ? task.document_ids : [];
                 if (documentIds.length !== 1) return;
                 const propagates = ['running', 'pending', 'completed', 'completed_with_warnings'].includes(task.status);
-                const coveredModes = propagates ? (this.MODE_COVERS[task.mode] || [task.mode]) : [task.mode];
+                const isFailedTerminal = ['failed', 'cancelled'].includes(task.status);
+                const coveredModes = (propagates || isFailedTerminal)
+                    ? (this.MODE_COVERS[task.mode] || [task.mode])
+                    : [task.mode];
                 coveredModes.forEach(m => {
                     const key = `${documentIds[0]}_${m}`;
                     const existing = taskMap[key];
+                    // BUG-216：父模式取消/失败时清理仍为 running/pending 的子模式，
+                    // 但不覆盖已完成的低级别结果。
+                    const isCoveredChild = m !== task.mode;
+                    if (isFailedTerminal && isCoveredChild
+                        && (!existing || !['running', 'pending'].includes(existing.status))) return;
                     if (!existing || task.task_id > existing.taskId) {
                         taskMap[key] = {
                             taskId: task.task_id,
@@ -635,11 +655,17 @@ const Review = {
                 // record their exact mode — they must not shadow a previously
                 // completed lower-mode task.
                 const succeeded = task.status === 'completed' || task.status === 'completed_with_warnings';
-                const docModes = succeeded ? (this.MODE_COVERS[task.mode] || [task.mode]) : [task.mode];
+                const isFailedTerminal = task.status === 'failed' || task.status === 'cancelled';
+                const docModes = (succeeded || isFailedTerminal)
+                    ? (this.MODE_COVERS[task.mode] || [task.mode])
+                    : [task.mode];
                 analyses.forEach(a => {
                     docModes.forEach(m => {
                         const key = `${a.document_id}_${m}`;
                         const existing = docMap[key];
+                        const isCoveredChild = m !== task.mode;
+                        if (isFailedTerminal && isCoveredChild
+                            && (!existing || !['running', 'pending'].includes(existing.status))) return;
                         if (!existing || task.task_id > existing.taskId) {
                             docMap[key] = { taskId: task.task_id, status: task.status };
                         }
@@ -726,10 +752,16 @@ const Review = {
             // successful statuses propagate to covered sub-modes; failed/
             // cancelled only record their exact mode.
             const propagates = ['running', 'pending', 'completed', 'completed_with_warnings'].includes(normalized.status);
-            const coveredModes = propagates ? (this.MODE_COVERS[normalized.mode] || [normalized.mode]) : [normalized.mode];
+            const isFailedTerminal = ['failed', 'cancelled'].includes(normalized.status);
+            const coveredModes = (propagates || isFailedTerminal)
+                ? (this.MODE_COVERS[normalized.mode] || [normalized.mode])
+                : [normalized.mode];
             coveredModes.forEach(m => {
                 const key = `${normalized.documentIds[0]}_${m}`;
                 const existing = this._reviewTaskMap[key];
+                const isCoveredChild = m !== normalized.mode;
+                if (isFailedTerminal && isCoveredChild
+                    && (!existing || !['running', 'pending'].includes(existing.status))) return;
                 if (!existing || normalized.taskId >= existing.taskId) {
                     this._reviewTaskMap[key] = { ...normalized, mode: m };
                 }
@@ -739,10 +771,16 @@ const Review = {
             // 到达的同一拍角标仍读不到终态（docMap 只在整页重载后重建）。
             if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(normalized.status)) {
                 const succeeded = normalized.status === 'completed' || normalized.status === 'completed_with_warnings';
-                const docModes = succeeded ? (this.MODE_COVERS[normalized.mode] || [normalized.mode]) : [normalized.mode];
+                const isFailedTerminal = normalized.status === 'failed' || normalized.status === 'cancelled';
+                const docModes = (succeeded || isFailedTerminal)
+                    ? (this.MODE_COVERS[normalized.mode] || [normalized.mode])
+                    : [normalized.mode];
                 docModes.forEach(m => {
                     const key = `${normalized.documentIds[0]}_${m}`;
                     const existing = this._reviewDocMap[key];
+                    const isCoveredChild = m !== normalized.mode;
+                    if (isFailedTerminal && isCoveredChild
+                        && (!existing || !['running', 'pending'].includes(existing.status))) return;
                     if (!existing || normalized.taskId >= existing.taskId) {
                         this._reviewDocMap[key] = { taskId: normalized.taskId, status: normalized.status };
                     }
@@ -837,8 +875,15 @@ const Review = {
             // taskMap（docMap 未重建），同一拍角标即可切到「已完成」；docMap
             // （历史 analyses）作为补充。
             const taskTerminal = this._findDocModeTask(docId, mode, ['completed', 'completed_with_warnings', 'failed', 'cancelled']);
-            const reviewed = taskTerminal
-                ? { ...taskTerminal, label: this._terminalStatusLabel(taskTerminal.status) }
+            let preferredTerminal = taskTerminal;
+            if (preferredTerminal && ['failed', 'cancelled'].includes(preferredTerminal.status)) {
+                const docEntry = this._reviewDocMap[`${docId}_${mode}`];
+                if (docEntry && ['completed', 'completed_with_warnings'].includes(docEntry.status)) {
+                    preferredTerminal = null;
+                }
+            }
+            const reviewed = preferredTerminal
+                ? { ...preferredTerminal, label: this._terminalStatusLabel(preferredTerminal.status) }
                 : this._isDocModeReviewed(docId, mode);
             if (reviewed) {
                 if (!badge) {
@@ -1176,6 +1221,9 @@ const Review = {
     },
 
     async _listenProgress(taskId) {
+        const generation = this._pollGeneration;
+        const listenSeq = ++this._listenSeq;
+        const projectId = this.currentProjectId;
         if (this.eventSource) {
             this.eventSource.close();
         }
@@ -1184,12 +1232,25 @@ const Review = {
             this._pollTimer = null;
         }
         try {
-            this.eventSource = await API.getReviewProgress(this.currentProjectId, taskId);
+            const newSource = await API.getReviewProgress(this.currentProjectId, taskId);
+            if (generation !== this._pollGeneration
+                || listenSeq !== this._listenSeq
+                || this.currentProjectId !== projectId) {
+                try { newSource.close(); } catch (e) { /* ignore */ }
+                return;
+            }
+            this.eventSource = newSource;
             // BUG-184：handler 闭包持有本次连接的 source。事件到达时
             // this.eventSource 可能已被新的 _listenProgress 替换，直接操作
             // this.eventSource 会误关新连接（onerror 空判同理）。
             const source = this.eventSource;
             source.onmessage = async (event) => {
+                if (generation !== this._pollGeneration
+                    || listenSeq !== this._listenSeq
+                    || this.currentProjectId !== projectId) {
+                    source.close();
+                    return;
+                }
                 const data = JSON.parse(event.data);
                 // BUG-198：改密/重置密码后服务端收口旧连接，强制重新登录
                 if (data.task_status === 'session_revoked') {
@@ -1209,6 +1270,9 @@ const Review = {
                     // BUG-184：先 await 整页刷新（含 map/角标重建），再展示结果，
                     // 避免 _showResult 读到半旧数据；刷新本身已即时刷过角标。
                     await this.loadProjectDetail(this.currentProjectId);
+                    if (generation !== this._pollGeneration
+                        || listenSeq !== this._listenSeq
+                        || this.currentProjectId !== projectId) return;
                     if (taskId === this.currentTaskId) {
                         this._isReviewRunning = false;
                         this._updateResultActions();
@@ -1220,6 +1284,9 @@ const Review = {
             source.onerror = () => {
                 source.close();
                 if (this.eventSource === source) this.eventSource = null;
+                if (generation !== this._pollGeneration
+                    || listenSeq !== this._listenSeq
+                    || this.currentProjectId !== projectId) return;
                 // BUG-184：终态后服务端关流属预期（event_generator break），
                 // 不再轮询/重连——EventSource 自动重连会复用已消费的一次性
                 // ticket 导致 401 循环；确需重连时经 _listenProgress 重新
@@ -1232,7 +1299,11 @@ const Review = {
             };
         } catch (e) {
             console.error('SSE connection failed, falling back to polling');
-            this._pollProgress(taskId);
+            if (generation === this._pollGeneration
+                && listenSeq === this._listenSeq
+                && this.currentProjectId === projectId) {
+                this._pollProgress(taskId);
+            }
         }
     },
 
@@ -1246,9 +1317,18 @@ const Review = {
     },
 
     async _pollProgress(taskId) {
+        const generation = this._pollGeneration;
+        const listenSeq = this._listenSeq;
+        const projectId = this.currentProjectId;
         const poll = async () => {
+            if (generation !== this._pollGeneration
+                || listenSeq !== this._listenSeq
+                || this.currentProjectId !== projectId) return;
             try {
-                const data = await API.getReviewTaskStatus(this.currentProjectId, taskId);
+                const data = await API.getReviewTaskStatus(projectId, taskId);
+                if (generation !== this._pollGeneration
+                    || listenSeq !== this._listenSeq
+                    || this.currentProjectId !== projectId) return;
                 const current = this._getTaskInfo(taskId) || { taskId, mode: this.currentMode, documentIds: this.selectedDocumentId ? [this.selectedDocumentId] : [] };
                 this._upsertReviewTask({ ...current, status: data.task_status, current_step: data.current_step });
                 this._updateProgress(data);
@@ -1265,6 +1345,9 @@ const Review = {
                     return;
                 }
             } catch (e) { /* ignore */ }
+            if (generation !== this._pollGeneration
+                || listenSeq !== this._listenSeq
+                || this.currentProjectId !== projectId) return;
             this._pollTimer = setTimeout(poll, 3000);
         };
         poll();
@@ -1309,7 +1392,7 @@ const Review = {
             docsEl.innerHTML = data.doc_progress.map(d => `
                 <div class="progress-doc-item">
                     <span>${this._esc(d.filename || d.title || '')}</span>
-                    <span class="doc-item-status ${d.status}">${this._statusLabel(d.status)}</span>
+                    <span class="doc-item-status ${String(d.status || '').replace(/[^A-Za-z0-9_-]/g, '')}">${this._statusLabel(d.status)}</span>
                 </div>
             `).join('');
         }
@@ -1349,6 +1432,7 @@ const Review = {
 
     async _showResult(options = {}) {
         const { activeTab = null, preserveActiveTab = false } = options;
+        const resultToken = ++this._resultSeq;
         this._setShellState('has-result');
         // Work panel: keep workspace visible
         document.getElementById('review-empty').style.display = 'none';
@@ -1368,22 +1452,44 @@ const Review = {
         }
 
         const taskInfo = this._getTaskInfo(this.currentTaskId);
+        const reportStateVersion = this._stateVersion;
+        const reportProjectId = this.currentProjectId;
+        const reportTaskId = this.currentTaskId;
         if (this._isRunningTask(taskInfo)) {
             this._isReviewRunning = true;
             this._syncResultTitle();
             this._updateResultActions();
             this._renderEmbeddedProgress(mode, taskInfo);
             try {
-                const data = await API.getReviewTaskStatus(this.currentProjectId, this.currentTaskId);
+                const data = await API.getReviewTaskStatus(reportProjectId, reportTaskId);
+                // BUG-216：在途状态请求返回后，先校验 stateVersion/project/task，避免跨项目覆盖任务与进度。
+                if (resultToken !== this._resultSeq
+                    || this._isStaleState(reportStateVersion)
+                    || this.currentProjectId !== reportProjectId
+                    || this.currentTaskId !== reportTaskId) {
+                    return;
+                }
                 this._upsertReviewTask({ ...taskInfo, status: data.task_status, current_step: data.current_step });
                 if (['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(data.task_status)) {
                     this._isReviewRunning = false;
                     await this.loadProjectDetail(this.currentProjectId);
+                    if (resultToken !== this._resultSeq
+                        || this._isStaleState(reportStateVersion)
+                        || this.currentProjectId !== reportProjectId
+                        || this.currentTaskId !== reportTaskId) {
+                        return;
+                    }
                     return this._showResult({ activeTab: document.querySelector('.result-tab.active')?.dataset.tab || activeTab, preserveActiveTab: true });
                 }
                 this._updateProgress(data);
                 this._listenProgress(this.currentTaskId);
             } catch (e) {
+                if (resultToken !== this._resultSeq
+                    || this._isStaleState(reportStateVersion)
+                    || this.currentProjectId !== reportProjectId
+                    || this.currentTaskId !== reportTaskId) {
+                    return;
+                }
                 this._listenProgress(this.currentTaskId);
             }
             return;
@@ -1395,9 +1501,25 @@ const Review = {
 
         try {
             const currentReport = await API.getReviewReport(this.currentProjectId, this.currentTaskId);
+            if (resultToken !== this._resultSeq
+                || this._isStaleState(reportStateVersion)
+                || this.currentProjectId !== reportProjectId
+                || this.currentTaskId !== reportTaskId) {
+                return;
+            }
             const aggregated = await this._aggregateDocReports(currentReport);
+            if (this._isStaleState(reportStateVersion)
+                || this.currentProjectId !== reportProjectId
+                || this.currentTaskId !== reportTaskId) {
+                return;
+            }
             this._renderReport(aggregated);
         } catch (e) {
+            if (this._isStaleState(reportStateVersion)
+                || this.currentProjectId !== reportProjectId
+                || this.currentTaskId !== reportTaskId) {
+                return;
+            }
             if (window.RichContent) window.RichContent.revoke(document.getElementById('result-content'));
             document.getElementById('result-content').innerHTML = '<div class="empty-state"><p>加载报告失败</p></div>';
         }
@@ -1860,7 +1982,7 @@ const Review = {
             advantage: '优势', disadvantage: '劣势',
         };
         if (map[key]) return map[key];
-        return key.replace(/_/g, ' ');
+        return this._esc(String(key).replace(/_/g, ' '));
     },
 
     _renderStructuredContent(data, contextKey) {
@@ -2629,7 +2751,7 @@ const Review = {
                     html += `<div class="insight-gap-item">
                         <div class="insight-gap-name">${this._esc(g.name || g.feature || '未命名缺口')}</div>
                         ${g.description ? `<div class="insight-gap-desc">${this._esc(String(g.description).substring(0, 150))}</div>` : ''}
-                        ${g.priority ? `<span class="insight-gap-priority ${(g.priority||'').toLowerCase()}">${this._esc(g.priority)}</span>` : ''}
+                        ${g.priority ? `<span class="insight-gap-priority ${String(g.priority || '').toLowerCase().replace(/[^a-z0-9_-]/g, '')}">${this._esc(g.priority)}</span>` : ''}
                     </div>`;
                 }
                 html += '</div>';
@@ -2667,12 +2789,12 @@ const Review = {
         };
 
         for (const m of matches) {
-            const issueLabel = trunc(m.issue);
+            const issueLabel = this._escapeMermaidLabel(trunc(m.issue));
             const issueId = nodeIds[issueLabel] || safeId(issueLabel);
             const status = m.status || 'unresolved';
 
             if (m.resolved_version && status !== 'unresolved') {
-                const verLabel = trunc(m.resolved_version);
+                const verLabel = this._escapeMermaidLabel(trunc(m.resolved_version));
                 const verId = nodeIds[verLabel] || safeId(verLabel);
                 const style = status === 'resolved' ? 'resolved' : 'partial';
                 lines.push(`${issueId}["${issueLabel}"] -->|${status === 'resolved' ? '已解决' : '部分解决'}| ${verId}["${verLabel}"]`);
@@ -2694,7 +2816,8 @@ const Review = {
             return;
         }
         try {
-            mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'loose', themeVariables: { fontSize: '14px' } });
+            mermaid.initialize({ startOnLoad: false, theme: 'base', securityLevel: 'strict',
+                htmlLabels: false, themeVariables: { fontSize: '14px' } });
             for (const el of charts) {
                 const rawCode = this._getMermaidSource(el);
                 if (!rawCode) continue;
@@ -2703,7 +2826,7 @@ const Review = {
                     await mermaid.parse(code);
                     const id = 'mermaid-' + Math.random().toString(36).substring(2, 8);
                     const { svg } = await mermaid.render(id, code);
-                    el.innerHTML = svg;
+                    el.innerHTML = this._sanitizeMermaidSvg(svg);
                     el.removeAttribute('data-mermaid');
                 } catch (renderErr) {
                     this._markMermaidChartsFailed([el], renderErr?.message || 'Mermaid render failed');
@@ -2713,6 +2836,18 @@ const Review = {
             console.warn('Mermaid render failed:', e);
             this._markMermaidChartsFailed(charts, e?.message || 'Mermaid render failed');
         }
+    },
+
+    _sanitizeMermaidSvg(svg) {
+        if (!svg) return '';
+        if (window.DOMPurify) {
+            return window.DOMPurify.sanitize(String(svg), {
+                USE_PROFILES: { svg: true, svgFilters: true },
+                FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
+                FORBID_ATTR: ['onload', 'onclick', 'onerror', 'onmouseover', 'onfocus', 'onbegin'],
+            });
+        }
+        return '';
     },
 
     _markMermaidChartsFailed(charts, reason = 'Mermaid render failed') {
@@ -2739,6 +2874,10 @@ const Review = {
 
     _normalizeMermaidCode(code) {
         return String(code || '')
+            // BUG-216：移除 YAML frontmatter 与图内 init/config 指令，防止
+            // htmlLabels 等配置绕过 sanitizer 导致标签文字被清空。
+            .replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '')
+            .replace(/%%\{[\s\S]*?\}%%/g, '')
             .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\[([^"\]\n][^\]\n]*)\]/g, (_, prefix, id, label) => {
                 return `${prefix}${id}["${this._escapeMermaidLabel(label)}"]`;
             })
@@ -2748,7 +2887,16 @@ const Review = {
     },
 
     _escapeMermaidLabel(label) {
-        return String(label || '').replace(/"/g, '\\"');
+        return String(label || '')
+            .replace(/&/g, '&amp;')
+            .replace(/"/g, "'")
+            .replace(/\\/g, '')
+            .replace(/\[/g, '&#91;')
+            .replace(/\]/g, '&#93;')
+            .replace(/\{/g, '&#123;')
+            .replace(/\}/g, '&#125;')
+            .replace(/[<>]/g, '')
+            .replace(/[\r\n]+/g, ' ');
     },
 
     _renderDraft(report) {

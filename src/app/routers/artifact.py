@@ -203,10 +203,34 @@ async def confirm_artifact(
     from app.services.notification_service import NotificationService
     notif_service = NotificationService(db, defer_push=True)
     if artifact.object_type == "review_request":
-        from app.repositories.review_request_repository import ReviewParticipantRepository
+        from app.repositories.review_request_repository import ReviewParticipantRepository, ReviewRequestRepository
+        from app.repositories.review_project_repository import ReviewProjectRepository
+        from app.repositories.workspace_repository import WorkspaceRepository
+        from app.services.workspace_access import is_active_member
+
         participant_repo = ReviewParticipantRepository(db)
         participants = await participant_repo.list_by_request(artifact.object_id)
-        recipient_ids = [p.user_id for p in participants if p.user_id != user.id and p.status == "active"]
+
+        req_row = await ReviewRequestRepository(db).get_by_id(artifact.object_id)
+        ws_id = None
+        if req_row:
+            p = await ReviewProjectRepository(db).get_project(req_row.project_id)
+            if p:
+                ws_id = p.workspace_id
+        if ws_id is None:
+            default_ws = await WorkspaceRepository(db).get_default()
+            ws_id = default_ws.id if default_ws else None
+
+        ws_repo = WorkspaceRepository(db)
+        recipient_ids = []
+        for p in participants:
+            if p.user_id != user.id and p.status == "active":
+                if ws_id is not None:
+                    m = await ws_repo.get_member(ws_id, p.user_id)
+                    if not is_active_member(m):
+                        continue
+                recipient_ids.append(p.user_id)
+
         await notif_service.notify_artifact_confirmed(
             artifact_id=artifact.id,
             object_type=artifact.object_type,
@@ -250,9 +274,25 @@ async def create_snapshot(
 ):
     """P4.B.1: 创建知识快照。"""
     await assert_project_access(db, req.project_id, user.id, action="write")
+    from app.repositories.review_project_repository import ReviewProjectRepository
+    from app.repositories.workspace_repository import WorkspaceRepository
+    project = await ReviewProjectRepository(db).get_project(req.project_id)
+    if not project:
+        raise HTTPException(404, "项目不存在")
+    actual_ws_id = project.workspace_id
+    if actual_ws_id is None:
+        default_ws = await WorkspaceRepository(db).get_default()
+        actual_ws_id = default_ws.id if default_ws else req.workspace_id
+
+    if req.request_id is not None:
+        from app.repositories.review_request_repository import ReviewRequestRepository
+        req_row = await ReviewRequestRepository(db).get_by_id(req.request_id)
+        if not req_row or req_row.project_id != req.project_id:
+            raise HTTPException(400, "指定的审查请求不存在或不属于该项目")
+
     repo = KnowledgeSnapshotRepository(db)
     snapshot = await repo.create(
-        workspace_id=req.workspace_id,
+        workspace_id=actual_ws_id,
         project_id=req.project_id,
         request_id=req.request_id,
         source_refs_json=req.source_refs_json,

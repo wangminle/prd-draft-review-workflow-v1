@@ -30,7 +30,7 @@
 | **材料确认** | 发起人 / Reviewer / Approver / 项目管理员 | 冻结(frozen)的 Artifact,版本固定 | 内容锁定,不可改 |
 | **协作评审** | 审批人(可决策)+ Reviewer(可评论)+ Observer(只读) | 审批决定 + 评论 + 通知 | 以「轮次」为单位推进决策 |
 
-核心思想:**先冻结材料,再审材料**——评审对象必须是确定的版本,而不是一边审一边还在改的草稿。
+建议先确认冻结材料，再进行协作评审，让审批人围绕确定的内容讨论。材料冻结由 Artifact 的 `confirm` 操作控制。
 
 ### 2. 整体流程图
 
@@ -47,12 +47,12 @@ flowchart TD
     H -- approved --> I[✅ approved 流程结束]
     H -- rejected --> J[rejected 发起人收到通知]
     J --> K[发起人修改材料]
-    K --> L[重新提交 POST /resubmit<br/>新轮次继承 approver_id]
+    K --> L[重新提交 POST /resubmit<br/>选择仍有效的审批人]
     L --> G
     E -. unconfirm 解除 .-> C
 ```
 
-**为什么强调「冻结后再审」**:协作评审以**轮次(Round)**为单位决策,每个轮次锁定一份材料快照。如果材料还能被随意改动,审批人就失去了判断基准。
+协作评审以**轮次（Round）**为单位决策。轮次模型提供可选的快照和材料引用字段，当前创建与重新提交接口只登记轮次及审批人，两个引用字段默认为空。材料确认与知识快照需要分别通过对应接口管理。
 
 ### 3. 协作评审请求(ReviewRequest)
 
@@ -77,6 +77,7 @@ POST /api/review/requests
 - **必须指定至少一名审批人(`approver_ids` 必填、非空)**。否则返回 `422`「至少指定一名审批人」。
   > 这是 **BUG-084** 的修复:早期版本允许创建一个「无人审批」的请求,导致流程卡死、永远无人能拍板。
 - 只有**项目创建者**能发起协作审查;否则 `403`「只有项目创建者可以发起协作审查」。
+- **审批人必须满足**:是项目所在 workspace 的活跃成员、具备 `write` 权限，且**不能是发起人本人**。用户不存在、全局账号禁用或指定本人审批时返回 `422`；非空间成员、空间成员停用或角色无写权限时返回 `403`。发起人停用或降为 `viewer` 后也不能再发起。
 - 创建后:自动开第 1 轮(`round_no=1`)、把发起人加为 `Reviewer`、把审批人加为 `Approver`,请求状态变为 `pending_approval`。
 - 审批人会收到一条**实时通知**(采用 `defer_push`:数据库提交成功后才推送,避免「幽灵通知」**BUG-106**)。
 
@@ -84,12 +85,12 @@ POST /api/review/requests
 
 | 端点 | 说明 |
 |------|------|
-| `GET /api/review/requests?project_id=...` | 列表(按项目过滤时做权限收敛:非创建者只能看到自己参与的请求) |
+| `GET /api/review/requests?project_id=...` | 先校验项目可见性。活跃项目创建者及 workspace owner/admin 可查询；普通非创建者即使是参与者，也不能使用此项目列表入口，可使用请求详情入口 |
 | `GET /api/review/requests/{request_id}` | 请求详情 |
 
 ### 4. 多轮审批(核心)
 
-协作评审不是「一次性通过/驳回」,而是可以**多轮来回**。每一轮是一个 `ReviewRound`,记录该轮提交的快照、指定审批人、以及决策结果。
+协作评审可以**多轮来回**。每一轮是一个 `ReviewRound`，记录指定审批人和决策结果，并提供可选的提交快照与材料引用字段。
 
 #### 4.1 轮次与决策
 
@@ -108,10 +109,12 @@ POST /api/review/requests
 
 #### 4.2 审批权限校验(重点)
 
-不是任何参与者都能做决策,系统分两层校验:
+不是任何参与者都能做决策,系统按以下顺序校验:
 
-1. 如果该轮次**指定了 `approver_id`**,但当前用户不是这个人 → 进一步检查该用户是否为该请求的 `Approver` 参与者;都不是则 `403`「只有指定的审批人可以做出决策」。
-2. 如果**未指定 `approver_id`** → 当前用户必须是该请求中角色为 `Approver` 的参与者;否则 `403`「只有审批人角色可以做出决策」。
+1. 当前用户必须是项目所在 workspace 的**活跃 `write` 成员**;否则 `403`。
+2. **发起人不能批准自己的协作审查请求**;存量数据把发起人写成 `approver_id` 时也返回 `403`。
+3. 当前用户必须是该请求的 **active `Approver` 参与者**;若已被停用、移出空间或降为 `Reviewer`/`Observer`,返回 `403`。仅对尚未写入参与者行的极旧数据保留“指定 `approver_id`”兼容。
+4. workspace `owner` / `admin` 仍需满足活跃成员条件,但不会被“必须是项目创建者”的可见性规则误伤。
 
 决策结果会同步更新请求状态:`approved` → 请求 `approved`;`rejected` → 请求 `rejected`,并通知发起人。
 
@@ -127,7 +130,8 @@ POST /api/review/requests/{request_id}/resubmit
 
 - 只有 `rejected` 状态的请求可重新提交(`400`「只有被驳回的请求可以重新提交」)。
 - 只有**发起人**能重新提交(`403`「只有发起人可以重新提交」)。
-- **新轮次会自动继承上一轮的 `approver_id`**,避免「上一轮有人审、新一轮没人审」。
+- 发起人必须仍具备 workspace 活跃成员的 `write` 权限。系统按历史轮次从新到旧、再到当前 active `Approver` 参与者的顺序查找有效独立审批人，跳过停用、降权或属于发起人本人的候选者。
+- 优先沿用仍然有效的上一轮 `approver_id`。找不到有效审批人时返回 `422`「原审批人已停用或无权审批,请先添加有效审批人」，请求保持驳回状态。
 - 状态重新置为 `pending_approval`,并通知审批人(同样使用 `defer_push`)。
 
 #### 4.4 多轮状态流转
@@ -137,7 +141,7 @@ stateDiagram-v2
     [*] --> pending_approval : 创建请求 (round 1)
     pending_approval --> approved : decide(approved)
     pending_approval --> rejected : decide(rejected)
-    rejected --> pending_approval : resubmit\n(开新轮, 继承 approver_id)
+    rejected --> pending_approval : resubmit\n(开新轮, 选有效审批人)
     approved --> [*]
 ```
 
@@ -160,7 +164,7 @@ stateDiagram-v2
 | **Reviewer** | 可写、可评论、可确认材料 | 一起打磨方案的人 |
 | **Approver** | 可写、可确认、**可做审批决策** | 拍板的人 |
 
-补充:发起人和项目管理员(admin/owner)天然可写、可确认。`role` 必须是 `Reviewer`/`Approver`/`Observer` 之一,否则 `422`。
+补充：发起人、项目创建者须保有 workspace 写权限才能修改或确认。其他成员按参与者角色校验，显式 `Observer` 或 inactive 参与者会优先被拒绝，workspace admin/owner 也适用；未被这样限制的活跃 admin/owner 可写、可确认。`role` 必须是 `Reviewer`/`Approver`/`Observer` 之一，否则 `422`。添加参与者时，目标用户必须是该 workspace 的活跃成员；不能把发起人添加为 `Approver`。评论的发表、删除、解决均要求对象写权限（删除还要求作者本人）。
 
 ### 6. 对象级访问与权限拆分(安全重点)
 
@@ -170,18 +174,18 @@ stateDiagram-v2
 
 - **读(read)** vs **写(write)** 拆开校验:同一对象,有的角色只能看、有的能改。
 - **Observer 是只读**:不可写、不可确认材料。系统会**阻止只读角色(Observer / 空间 viewer)篡改内容**。
-- 发起人 / Reviewer / Approver / 项目管理员可写、可确认。
+- 发起人、项目创建者及 active Reviewer/Approver 在具备 workspace 写权限时可写、可确认。其他 workspace admin/owner 的写权限还受显式参与者角色与状态限制。
 
 #### 6.2 BOLA 防护
 
 - **BOLA**(Broken Object-Level Authorization,对象级越权):系统阻止「用户 A 用自己的登录态访问/改动用户 B 的请求、产物、评论」。
 - 每个涉及 `object_type + object_id` 的操作都会经过 `assert_object_access` / `assert_artifact_access` / `assert_artifact_write_access`,按对象归属解析权限。
-- 无法访问时返回 `404`(而非 `403`),避免泄露对象是否存在。
+- 对象不存在通常返回 `404`，权限不足也可能返回 `403`，以具体端点为准。例如无权读取协作请求详情、Observer 或空间 viewer 尝试写操作会返回 `403`。
 
 #### 6.3 统一权限入口
 
 - **`require_action(member, action)`** + **`is_active_member(member)`** 覆盖所有 review 域操作,把「空间成员角色(owner/admin/member/viewer)→ 允许的动作(manage/write/read)」的映射集中收口,杜绝零散的 `if role == ...` 判断。
-- 审计:每次拒绝都会写一条 `workspace_access.deny` 警告日志(含 user_id / role / action / 原因)。
+- `require_action` 拒绝操作时会写入 `workspace_access.deny` 警告日志（含 user_id / role / action / 原因）。
 
 ### 7. 产物与快照(Artifact & Snapshot)
 
@@ -208,7 +212,7 @@ GET  /api/review/artifacts/{id}                 详情
 
 #### 7.2 知识快照(KnowledgeSnapshot)
 
-汇报 / 评审依赖的「项目来源」会自动做**版本化快照**,保证「现在审的内容」和「将来回溯的内容」一致:
+`KnowledgeSnapshot` 通过以下接口显式创建。项目来源引用可指定版本，未指定的引用版本在评审管线启动阶段记录；这与创建 `KnowledgeSnapshot` 记录是两个操作。
 
 ```
 POST /api/review/snapshots        创建
@@ -216,7 +220,7 @@ GET  /api/review/snapshots        列表(按 project_id 或 request_id)
 GET  /api/review/snapshots/{id}   详情
 ```
 
-快照记录 `prompt_version`、`skill_version`、`model_config_hash` 等,可复现当时的评审上下文。
+快照保存调用方提供的 `prompt_version`、`skill_version`、`model_config_hash` 等可选元数据。创建时使用项目真实的 workspace 归属，指定的 `request_id` 必须属于该项目，否则返回 `400`。
 
 ### 8. 评论与 @mention
 
@@ -251,6 +255,7 @@ POST /api/notifications/batch-read      批量已读(P5 增强)
 - **SSE 认证**:EventSource 不支持自定义 Header,前端先 `POST /api/auth/sse-ticket` 拿**短票据**,再以 `?ticket=...` 传入流端点;票据一次性、有过期。
 - 流每 5 秒发一次 `heartbeat` 保活,响应头带 `X-Accel-Buffering: no` 避免 Nginx 缓冲。
 - **`defer_push` 机制**(贯穿全文):创建请求、决策、重新提交、确认产物、评论等关键通知,都是先缓冲、**数据库 commit 成功后才推送**。这样即便事务回滚,也不会发出指向已回滚行的「幽灵通知」(BUG-106 的根因修复)。
+- **产物确认通知**发给仍为 active 的请求参与者，并校验其 workspace 成员仍活跃，确认者本人除外。
 
 ### 10. 常见问题
 
@@ -258,13 +263,13 @@ POST /api/notifications/batch-read      批量已读(P5 增强)
   A:必须传非空的 `approver_ids`。这是 BUG-084 的硬约束——没有审批人,流程就没人能拍板。
 
 - **Q:重新提交后谁来审?**
-  A:新轮次**自动继承上一轮的 `approver_id`**,默认还是同一位审批人;不需要重新指定,避免「新一轮没人审」。
+  A:优先沿用仍有效的上一轮审批人，失效时继续从历史轮次及 active `Approver` 参与者中选择。没有有效独立审批人时返回 `422`，需先添加有效审批人再重提。
 
 - **Q:为什么审批人说自己不能决策?**
-  A:检查两点:① 该轮次是否指定了 `approver_id` 且不是他本人;② 他是否是该请求中 `Approver` 角色的参与者。任一不满足都会 `403`。
+  A:检查账号及空间成员是否仍启用、是否具备 workspace 写权限、是否为 active `Approver`，以及是否与发起人不同。有效 `Approver` 可以决策，不要求其 ID 等于轮次的 `approver_id`；缺少参与者行的极旧数据只兼容指定审批人。
 
 - **Q:Observer 想改内容被拒?**
-  A:符合预期。Observer / 空间 viewer 是只读角色,系统会阻止只读角色篡改内容。需要可写就让发起人把他改成 `Reviewer`。
+  A:符合预期。协作请求中的 Observer 或空间 viewer 无写权限。需要可写时，由发起人授予 `Reviewer` 或 `Approver` 角色，并确保该用户具备 workspace 写权限。
 
 - **Q:已经 confirm 的 Artifact 还能改吗?**
   A:不能直接改。先 `unconfirm` 回到 `draft`,改完再 `confirm`。冻结是为了让评审基线稳定。
@@ -302,7 +307,7 @@ These three steps are the key to the whole document:
 | **Material Confirmation** | Initiator / Reviewer / Approver / Project admin | A frozen Artifact with a fixed version | Content locked, immutable |
 | **Collaborative Review** | Approver (decides) + Reviewer (comments) + Observer (read-only) | Approval decisions + comments + notifications | Advances decision per **Round** |
 
-Core idea: **freeze the material first, then review it** — the object under review must be a fixed version, not a draft still being edited mid-review.
+Confirm and freeze the material before collaborative review so approvers discuss a stable version. Artifact freezing is controlled by the `confirm` operation.
 
 ### 2. End-to-end flow
 
@@ -319,12 +324,12 @@ flowchart TD
     H -- approved --> I[✅ approved, flow ends]
     H -- rejected --> J[rejected, initiator notified]
     J --> K[Initiator revises material]
-    K --> L[Resubmit POST /resubmit<br/>new round inherits approver_id]
+    K --> L[Resubmit POST /resubmit<br/>select an eligible approver]
     L --> G
     E -. unconfirm to unlock .-> C
 ```
 
-**Why "freeze then review":** Collaborative review decides per **Round**, and each round locks a snapshot of the material. If the material can still be freely changed, the approver loses a stable basis to judge.
+Collaborative review decides per **Round**. The round model provides optional snapshot and artifact reference fields. The current creation and resubmission endpoints record the round and approver, leaving both reference fields empty by default. Material confirmation and knowledge snapshots are managed through their respective endpoints.
 
 ### 3. The review request (ReviewRequest)
 
@@ -349,6 +354,7 @@ Body:
 - **At least one approver is required (`approver_ids` must be non-empty).** Otherwise `422` "at least one approver must be specified".
   > This is the **BUG-084** fix: an earlier version allowed creating a request with no approver, freezing the flow with no one able to decide.
 - Only the **project creator** can start a collaborative review; otherwise `403` "only the project creator can start a collaborative review".
+- **Approvers must be active members with `write` access** in the project workspace and **must not be the initiator**. A nonexistent or globally disabled user, or an initiator selecting themselves, returns `422`. Non-members, inactive workspace members, or roles without write access return `403`. An initiator who is deactivated or downgraded to `viewer` can no longer create requests.
 - After creation: round 1 (`round_no=1`) is opened, the initiator is added as `Reviewer`, approvers are added as `Approver`, and the request enters `pending_approval`.
 - Approvers receive a **real-time notification** (using `defer_push`: pushed only after the DB commit succeeds, avoiding "ghost notifications" — **BUG-106**).
 
@@ -356,12 +362,12 @@ Body:
 
 | Endpoint | Description |
 |----------|-------------|
-| `GET /api/review/requests?project_id=...` | List (when filtering by project, visibility is narrowed: non-creators see only requests they participate in) |
+| `GET /api/review/requests?project_id=...` | Checks project visibility first. Active project creators and workspace owners/admins can query it. Ordinary non-creators cannot use this project-list endpoint even when participating; they can use the request-detail endpoint |
 | `GET /api/review/requests/{request_id}` | Request detail |
 
 ### 4. Multi-round approval (core)
 
-Collaborative review is not "one-shot approve/reject" — it can go **multiple rounds**. Each round is a `ReviewRound` recording the submitted snapshot, the assigned approver, and the decision.
+Collaborative review can span **multiple rounds**. Each `ReviewRound` records the assigned approver and decision, with optional fields for submitted snapshot and artifact references.
 
 #### 4.1 Rounds and decisions
 
@@ -380,10 +386,12 @@ Decision body:
 
 #### 4.2 Approval permission check (important)
 
-Not every participant can decide — the system checks two layers:
+Not every participant can decide — the system checks in this order:
 
-1. If the round **has an `approver_id`** but the current user is not that person → further check whether the user is an `Approver` participant of this request; otherwise `403` "only the designated approver can make a decision".
-2. If **no `approver_id`** is set → the current user must be an `Approver` participant; otherwise `403` "only an approver role can make a decision".
+1. The user must be an **active `write` member** of the project workspace; otherwise `403`.
+2. **The initiator cannot approve their own request**; legacy data that wrote the initiator as `approver_id` also returns `403`.
+3. The user must be an **active `Approver` participant**; a deactivated, removed, or downgraded participant (`Reviewer`/`Observer`) gets `403`. Only extremely old rows without participant records retain the "designated `approver_id`" compatibility.
+4. Workspace `owner` / `admin` still must be active members, but are not blocked by the "must be project creator" visibility rule.
 
 The decision also updates the request status: `approved` → request `approved`; `rejected` → request `rejected`, and the initiator is notified.
 
@@ -399,7 +407,8 @@ Rules:
 
 - Only a `rejected` request can be resubmitted (`400` "only a rejected request can be resubmitted").
 - Only the **initiator** can resubmit (`403` "only the initiator can resubmit").
-- The **new round automatically inherits the previous round's `approver_id`**, avoiding "round N had an approver but round N+1 has none".
+- The initiator must remain an active workspace member with `write` access. The system checks historical rounds from newest to oldest, then current active `Approver` participants, skipping disabled or downgraded candidates and the initiator.
+- An eligible previous-round `approver_id` is preferred. If no eligible approver remains, the endpoint returns `422` "the previous approver is disabled or unauthorized; add a valid approver first", keeping the request rejected.
 - Status resets to `pending_approval`, and the approver is notified (again via `defer_push`).
 
 #### 4.4 Multi-round state flow
@@ -409,7 +418,7 @@ stateDiagram-v2
     [*] --> pending_approval : create request (round 1)
     pending_approval --> approved : decide(approved)
     pending_approval --> rejected : decide(rejected)
-    rejected --> pending_approval : resubmit\n(open new round, inherit approver_id)
+    rejected --> pending_approval : resubmit\n(open new round, select eligible approver)
     approved --> [*]
 ```
 
@@ -432,7 +441,7 @@ Three roles:
 | **Reviewer** | Can write, comment, confirm material | People shaping the proposal together |
 | **Approver** | Can write, confirm, **and make approval decisions** | The decision-maker |
 
-Additionally: the initiator and project admins (admin/owner) can write and confirm by default. `role` must be one of `Reviewer`/`Approver`/`Observer`, otherwise `422`.
+Additionally, the initiator and project creator must retain workspace write access to modify or confirm. Other users are checked by participant role first. An explicit `Observer` or inactive participant is denied, including a workspace admin/owner. Active admins/owners without such a restriction can write and confirm. `role` must be one of `Reviewer`/`Approver`/`Observer`, otherwise `422`. New participants must be active workspace members, and the initiator cannot be added as `Approver`. Creating, deleting or resolving a comment requires object write permission (deletion also requires authorship).
 
 ### 6. Object-level access and permission split (security focus)
 
@@ -442,18 +451,18 @@ Collaborative-review permissions are not "logged in = can use" — they are base
 
 - **Read** vs **write** are validated separately: the same object may be readable by some roles and editable by others.
 - **Observer is read-only**: cannot write or confirm material. The system **prevents read-only roles (Observer / workspace viewer) from tampering with content**.
-- Initiator / Reviewer / Approver / project admins can write and confirm.
+- The initiator, project creator, and active Reviewers/Approvers can write and confirm while retaining workspace write access. Other workspace admins/owners are also subject to explicit participant roles and status.
 
 #### 6.2 BOLA protection
 
 - **BOLA** (Broken Object-Level Authorization): the system stops "user A using their own session to access or alter user B's request, artifact, or comment".
 - Every operation involving `object_type + object_id` passes through `assert_object_access` / `assert_artifact_access` / `assert_artifact_write_access`, resolving permission by object ownership.
-- On denial it returns `404` (not `403`) to avoid leaking whether the object exists.
+- Missing objects normally return `404`, while insufficient permission can return `403`, depending on the endpoint. Unauthorized request-detail reads and write attempts by Observers or workspace viewers return `403`.
 
 #### 6.3 Unified permission entry
 
 - **`require_action(member, action)`** + **`is_active_member(member)`** cover all review-domain operations, centralizing the "workspace member role (owner/admin/member/viewer) → allowed actions (manage/write/read)" mapping and eliminating scattered `if role == ...` checks.
-- Auditing: every denial writes a `workspace_access.deny` warning log (with user_id / role / action / reason).
+- A denial by `require_action` writes a `workspace_access.deny` warning log (with user_id / role / action / reason).
 
 ### 7. Artifacts and snapshots
 
@@ -480,7 +489,7 @@ GET  /api/review/artifacts/{id}                 detail
 
 #### 7.2 Knowledge snapshot
 
-The "project source" that reporting/review relies on is **auto-snapshotted with versioning**, so "what is reviewed now" matches "what can be traced later":
+`KnowledgeSnapshot` records are explicitly created through the following endpoint. Project source references can specify a version. When omitted, the reference version is recorded at review-pipeline startup. Recording that source version and creating a `KnowledgeSnapshot` are separate operations.
 
 ```
 POST /api/review/snapshots        create
@@ -488,7 +497,7 @@ GET  /api/review/snapshots        list (by project_id or request_id)
 GET  /api/review/snapshots/{id}   detail
 ```
 
-The snapshot records `prompt_version`, `skill_version`, `model_config_hash`, etc., so the review context at the time is reproducible.
+The snapshot stores optional metadata supplied by the caller, including `prompt_version`, `skill_version`, and `model_config_hash`. Creation uses the project's actual workspace. A supplied `request_id` must belong to that project, otherwise the endpoint returns `400`.
 
 ### 8. Comments and @mention
 
@@ -523,6 +532,7 @@ Notes:
 - **SSE auth**: EventSource cannot set custom headers, so the frontend first `POST /api/auth/sse-ticket` to get a **short ticket**, then passes it as `?ticket=...` to the stream endpoint; the ticket is single-use and expires.
 - The stream sends a `heartbeat` every 5 seconds to stay alive, with the `X-Accel-Buffering: no` header to avoid Nginx buffering.
 - **`defer_push` mechanism** (throughout this doc): key notifications — request created, decision, resubmit, artifact confirmed, comment — are buffered and **pushed only after the DB commit succeeds**. This way, even if the transaction rolls back, no "ghost notification" pointing to a rolled-back row is emitted (the root-cause fix for BUG-106).
+- **Artifact confirmation notifications** go to active request participants whose workspace membership remains active, excluding the confirmer.
 
 ### 10. FAQ
 
@@ -530,13 +540,13 @@ Notes:
   A: You must pass a non-empty `approver_ids`. This is the BUG-084 hard constraint — without an approver, no one can decide and the flow stalls.
 
 - **Q: After resubmitting, who reviews it?**
-  A: The new round **inherits the previous round's `approver_id`**, so by default it's the same approver; you don't need to re-specify, avoiding "a new round with no approver".
+  A: The previous approver is preferred while eligible. Otherwise, the system checks historical rounds and active `Approver` participants. If no independent eligible approver remains, it returns `422`; add a valid approver before resubmitting.
 
 - **Q: Why can't our approver make a decision?**
-  A: Check two things: ① whether the round has an `approver_id` that isn't them; ② whether they are an `Approver` participant of this request. Either failing yields `403`.
+  A: Check that the account and workspace membership remain active, the user has workspace write access, is an active `Approver`, and differs from the initiator. An eligible `Approver` can decide even when their ID differs from the round's `approver_id`. Very old data without a participant row accepts only the designated approver.
 
 - **Q: An Observer was blocked from editing content?**
-  A: That's expected. Observer / workspace viewer are read-only roles; the system prevents read-only roles from tampering with content. To make them writable, the initiator should change their role to `Reviewer`.
+  A: That's expected. Observers on a collaborative request and workspace viewers lack write access. To grant it, the initiator assigns `Reviewer` or `Approver`, and the user must also have workspace write access.
 
 - **Q: Can a confirmed Artifact still be changed?**
   A: Not directly. First `unconfirm` back to `draft`, edit, then `confirm` again. Freezing keeps the review baseline stable.

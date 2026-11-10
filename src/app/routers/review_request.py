@@ -18,9 +18,44 @@ from app.repositories.review_request_repository import (
     ReviewParticipantRepository,
 )
 from app.repositories.review_project_repository import ReviewProjectRepository
+from app.repositories.workspace_repository import WorkspaceRepository
+from app.services.workspace_access import require_action
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def _resolve_project_workspace_id(db: AsyncSession, project) -> int | None:
+    """解析项目所属 workspace；legacy 项目回退到默认 workspace。"""
+    if project is None:
+        return None
+    if project.workspace_id is not None:
+        return project.workspace_id
+    default_ws = await WorkspaceRepository(db).get_default()
+    return default_ws.id if default_ws else None
+
+
+async def _assert_active_workspace_user(
+    db: AsyncSession,
+    workspace_id: int | None,
+    target_user_id: int,
+    *,
+    action: str = "read",
+    target_desc: str = "访问协作审查",
+) -> None:
+    """SEC-05/07：目标必须是存在且启用的活跃 workspace 成员。"""
+    from sqlalchemy import select
+
+    if workspace_id is None:
+        raise HTTPException(403, "项目未关联团队空间，无法校验成员资格")
+    user_row = await db.execute(
+        select(User).where(User.id == target_user_id, User.is_active == True)  # noqa: E712
+    )
+    if user_row.scalar_one_or_none() is None:
+        raise HTTPException(422, "目标用户不存在或已被禁用")
+    member = await WorkspaceRepository(db).get_member(workspace_id, target_user_id)
+    require_action(member, action, target_desc)
+
 
 
 # ─── Schemas ──────────────────────────────────────────────────
@@ -78,20 +113,14 @@ def _serialize_participant(p: ReviewParticipant) -> dict:
 
 
 async def _can_access_request(db: AsyncSession, req: ReviewRequest, user_id: int) -> bool:
-    """检查用户是否有权访问某个审查请求（发起人/项目创建者/参与者）。"""
-    if req.initiator_id == user_id:
+    """检查用户是否有权访问某个审查请求（SEC-09：含活跃成员校验）。"""
+    from app.services.object_access import assert_review_request_access
+
+    try:
+        await assert_review_request_access(db, req.id, user_id)
         return True
-    # 项目创建者
-    project_repo = ReviewProjectRepository(db)
-    project = await project_repo.get_project(req.project_id)
-    if project and project.created_by == user_id:
-        return True
-    # 参与者
-    participant_repo = ReviewParticipantRepository(db)
-    participant = await participant_repo.get_by_request_and_user(req.id, user_id)
-    if participant and participant.status == "active":
-        return True
-    return False
+    except HTTPException:
+        return False
 
 
 # ─── Endpoints ────────────────────────────────────────────────
@@ -118,6 +147,25 @@ async def create_review_request(
     # BUG-084：协作审查必须至少指定一名审批人，否则创建后无人可决策
     if not req.approver_ids:
         raise HTTPException(422, "至少指定一名审批人")
+
+    # SEC-05：发起人也必须是项目 workspace 的活跃成员，否则停用成员仍可发起新请求。
+    workspace_id = await _resolve_project_workspace_id(db, project)
+    await _assert_active_workspace_user(
+        db, workspace_id, user.id,
+        action="write", target_desc="发起协作审查",
+    )
+    deduped_approvers: list[int] = []
+    for approver_id in req.approver_ids:
+        if approver_id == user.id:
+            raise HTTPException(422, "发起人不能将自己指定为审批人")
+        if approver_id in deduped_approvers:
+            continue
+        await _assert_active_workspace_user(
+            db, workspace_id, approver_id,
+            action="write", target_desc="成为协作审查审批人",
+        )
+        deduped_approvers.append(approver_id)
+    req.approver_ids = deduped_approvers
 
     # 创建 ReviewRequest
     request_repo = ReviewRequestRepository(db)
@@ -178,23 +226,25 @@ async def list_review_requests(
     """列出协作审查请求（按项目或当前用户过滤）。"""
     request_repo = ReviewRequestRepository(db)
     if project_id:
-        # 权限校验：按项目查询时，需验证用户可访问该项目
-        project_repo = ReviewProjectRepository(db)
-        project = await project_repo.get_project_if_accessible(project_id, user.id)
-        if not project:
+        # 权限校验：按项目查询时，需验证用户是活跃成员且可访问该项目
+        from app.services.object_access import assert_project_access
+
+        try:
+            await assert_project_access(db, project_id, user.id, action="read")
+        except HTTPException:
             raise HTTPException(403, "无权查看该项目的协作审查")
         all_requests = await request_repo.list_by_project(project_id)
-        # 非项目创建者仅能看到自己参与的请求
-        if project.created_by != user.id:
-            accessible = []
-            for req_item in all_requests:
-                if await _can_access_request(db, req_item, user.id):
-                    accessible.append(req_item)
-            requests = accessible
-        else:
-            requests = all_requests
+        # BUG-212：即使项目创建者也要逐条校验活跃成员资格，停用后不可继续查看。
+        requests = []
+        for req_item in all_requests:
+            if await _can_access_request(db, req_item, user.id):
+                requests.append(req_item)
     else:
-        requests = await request_repo.list_by_initiator(user.id)
+        own_requests = await request_repo.list_by_initiator(user.id)
+        requests = []
+        for req_item in own_requests:
+            if await _can_access_request(db, req_item, user.id):
+                requests.append(req_item)
     return [_serialize_request(r) for r in requests]
 
 
@@ -253,23 +303,32 @@ async def decide_round(
     if review_round.decision != "pending":
         raise HTTPException(400, f"轮次已决策: {review_round.decision}")
 
-    # 权限校验：当前用户必须是该轮次的指定审批人或有效 Approver 参与者
-    if review_round.approver_id and review_round.approver_id != user.id:
-        # 指定了 approver_id 但不是当前用户 → 检查是否为该请求的 Approver 参与者
-        participant_repo = ReviewParticipantRepository(db)
-        participant = await participant_repo.get_by_request_and_user(
-            review_round.request_id, user.id,
-        )
-        if not participant or participant.role != "Approver":
+    # SEC-06：无论是否命中指定审批人，都必须校验当前用户仍是该 workspace
+    # 的活跃成员，并且仍是 active Approver 参与者。仅匹配 approver_id
+    # 不能作为授权依据（指定审批人可能已被移出团队/停用）。
+    participant_repo = ReviewParticipantRepository(db)
+    participant = await participant_repo.get_by_request_and_user(
+        review_round.request_id, user.id,
+    )
+    request_repo = ReviewRequestRepository(db)
+    review_req = await request_repo.get_by_id(review_round.request_id)
+    if review_req is None:
+        raise HTTPException(404, "审查请求不存在")
+    project = await ReviewProjectRepository(db).get_project(review_req.project_id)
+    workspace_id = await _resolve_project_workspace_id(db, project)
+    await _assert_active_workspace_user(
+        db, workspace_id, user.id,
+        action="write", target_desc="做出审查决策",
+    )
+    # BUG-212：存量请求可能把发起人写成审批人，必须拒绝自批。
+    if review_req.initiator_id == user.id:
+        raise HTTPException(403, "发起人不能批准自己的协作审查请求")
+    if participant is None:
+        # 兼容存量数据：指定审批人尚未写入参与者行的旧请求。
+        if review_round.approver_id != user.id:
             raise HTTPException(403, "只有指定的审批人可以做出决策")
-    elif not review_round.approver_id:
-        # 未指定 approver_id，检查参与者中是否有 Approver 角色
-        participant_repo = ReviewParticipantRepository(db)
-        participant = await participant_repo.get_by_request_and_user(
-            review_round.request_id, user.id,
-        )
-        if not participant or participant.role != "Approver":
-            raise HTTPException(403, "只有审批人角色可以做出决策")
+    elif participant.status != "active" or participant.role != "Approver":
+        raise HTTPException(403, "只有有效的审批人可以做出决策")
 
     # 决策
     review_round = await round_repo.decide(
@@ -280,8 +339,6 @@ async def decide_round(
     )
 
     # 更新 ReviewRequest 状态
-    request_repo = ReviewRequestRepository(db)
-    review_req = await request_repo.get_by_id(review_round.request_id)
     notif_service = None
     if review_req:
         if req.decision == "approved":
@@ -323,16 +380,49 @@ async def resubmit_review_request(
     if review_req.initiator_id != user.id:
         raise HTTPException(403, "只有发起人可以重新提交")
 
-    # 创建新轮次 — 继承上一轮的 approver_id，避免"无人审批"
+    # BUG-212：重新提交前校验发起人仍为 workspace 活跃成员。
+    project = await ReviewProjectRepository(db).get_project(review_req.project_id)
+    workspace_id = await _resolve_project_workspace_id(db, project)
+    await _assert_active_workspace_user(
+        db, workspace_id, user.id,
+        action="write", target_desc="重新提交协作审查",
+    )
+
+    # 创建新轮次 — 仅继承仍然有效且活跃的 approver_id，避免将停用审批人继续绑定到新轮次或泄露目标正文通知
     round_repo = ReviewRoundRepository(db)
+    participant_repo = ReviewParticipantRepository(db)
     new_round_no = review_req.current_round + 1
-    # 查找上一轮的 approver_id
     prev_rounds = await round_repo.list_by_request(review_req.id)
-    prev_approver_id = None
+    participants = await participant_repo.list_by_request(review_req.id)
+
+    candidate_approvers: list[int] = []
     for r in reversed(prev_rounds):
-        if r.approver_id:
-            prev_approver_id = r.approver_id
-            break
+        if r.approver_id and r.approver_id not in candidate_approvers:
+            candidate_approvers.append(r.approver_id)
+    for p in participants:
+        if p.status == "active" and p.role == "Approver" and p.user_id not in candidate_approvers:
+            candidate_approvers.append(p.user_id)
+
+    eligible_approvers: list[int] = []
+    for candidate_id in candidate_approvers:
+        if candidate_id == review_req.initiator_id:
+            continue
+        p_row = await participant_repo.get_by_request_and_user(review_req.id, candidate_id)
+        if p_row is not None and (p_row.status != "active" or p_row.role != "Approver"):
+            continue
+        try:
+            await _assert_active_workspace_user(
+                db, workspace_id, candidate_id,
+                action="write", target_desc="成为协作审查审批人",
+            )
+            eligible_approvers.append(candidate_id)
+        except HTTPException:
+            continue
+
+    if not eligible_approvers:
+        raise HTTPException(422, "原审批人已停用或无权审批，请先添加有效审批人")
+
+    prev_approver_id = eligible_approvers[0]
     await round_repo.create(
         request_id=review_req.id,
         round_no=new_round_no,
@@ -405,19 +495,36 @@ async def add_review_participant(
     req = await request_repo.get_by_id(request_id)
     if not req:
         raise HTTPException(404, "审查请求不存在")
+    project_repo = ReviewProjectRepository(db)
+    project = await project_repo.get_project(req.project_id)
     if req.initiator_id != user.id:
-        project_repo = ReviewProjectRepository(db)
-        project = await project_repo.get_project(req.project_id)
         if not project or project.created_by != user.id:
             raise HTTPException(403, "只有发起人或项目创建者可以添加参与者")
 
     if role not in ("Reviewer", "Approver", "Observer"):
         raise HTTPException(422, "role must be Reviewer/Approver/Observer")
 
+    target_user_id = user_id or user.id
+    # BUG-212：调用者自身也必须是活跃成员。
+    workspace_id = await _resolve_project_workspace_id(db, project)
+    await _assert_active_workspace_user(
+        db, workspace_id, user.id,
+        action="write", target_desc="管理协作审查参与者",
+    )
+    # SEC-07：目标必须是该 workspace 的活跃成员；否则会通过参与者身份
+    # 获得审查请求与产物的读取权。
+    await _assert_active_workspace_user(
+        db, workspace_id, target_user_id,
+        action="write" if role == "Approver" else "read",
+        target_desc="加入协作审查",
+    )
+    if role == "Approver" and target_user_id == req.initiator_id:
+        raise HTTPException(422, "发起人不能作为本请求的审批人")
+
     participant_repo = ReviewParticipantRepository(db)
     p = await participant_repo.add_participant(
         request_id=request_id,
-        user_id=user_id or user.id,
+        user_id=target_user_id,
         role=role,
     )
     await db.commit()

@@ -12,7 +12,11 @@ class KnowledgeSourceRepository:
         self._db = db
 
     async def get_by_id(self, id: int) -> KnowledgeSource | None:
-        result = await self._db.execute(select(KnowledgeSource).where(KnowledgeSource.id == id))
+        result = await self._db.execute(
+            select(KnowledgeSource)
+            .options(selectinload(KnowledgeSource.owner))
+            .where(KnowledgeSource.id == id)
+        )
         return result.scalar_one_or_none()
 
     async def list_by_workspace(
@@ -25,11 +29,12 @@ class KnowledgeSourceRepository:
         visibility: str | None = None,
         offset: int = 0,
         limit: int = 50,
+        *,
+        user_id: int | None = None,
     ) -> list[KnowledgeSource]:
         """列出团队资料（默认只返回 owner_type=workspace, visibility=team 的团队可见资料）。
 
-        个人私有资料（owner_type=user, visibility=private）只能通过 list_personal_sources 访问，
-        不会在此方法中返回，防止同 workspace 成员看到他人的私有资料。
+        请求私有或个人资料时仅返回当前用户所有的记录，缺少用户上下文时返回空列表。
         """
         # BUG-078 修复：默认只返回团队可见资料，防止私有资料泄露
         effective_owner_type = owner_type if owner_type is not None else "workspace"
@@ -42,6 +47,10 @@ class KnowledgeSourceRepository:
             KnowledgeSource.owner_type == effective_owner_type,
             KnowledgeSource.visibility == effective_visibility,
         ).order_by(KnowledgeSource.updated_at.desc())
+        if effective_owner_type == "user" or effective_visibility == "private":
+            if user_id is None:
+                return []
+            query = query.where(KnowledgeSource.owner_id == user_id)
         if status:
             query = query.where(KnowledgeSource.status == status)
         else:

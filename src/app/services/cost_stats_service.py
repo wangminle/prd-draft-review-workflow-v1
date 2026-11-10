@@ -26,6 +26,8 @@ def infer_mode_from_model(model: str) -> str:
     使用较精确的规则，避免 ``pipeline`` 等名称因包含 ``pi`` 被误判为 agent。
     """
     model_lower = (model or "").lower()
+    if "embedding" in model_lower:
+        return "embedding"
     if "review" in model_lower or "per-analysis" in model_lower:
         return "review"
     if "agent" in model_lower:
@@ -104,8 +106,13 @@ class CostStatsService:
                             "total_elapsed_ms": 0,
                         }
                     agg[key]["call_count"] += 1
-                    agg[key]["input_tokens"] += input_tokens
-                    agg[key]["output_tokens"] += output_tokens
+                    if entry_mode == "embedding":
+                        # BUG-214：只有显式 embedding 模式才计入 embedding_tokens，
+                        # 模型名含 embedding 但 mode=chat 的显式记录仍按 chat 统计。
+                        agg[key]["embedding_tokens"] += input_tokens
+                    else:
+                        agg[key]["input_tokens"] += input_tokens
+                        agg[key]["output_tokens"] += output_tokens
                     agg[key]["total_elapsed_ms"] += elapsed_ms or 0
 
         except Exception as e:

@@ -13,6 +13,7 @@ from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.repositories.knowledge_source_repository import KnowledgeSourceRepository
 from app.repositories.workspace_repository import WorkspaceRepository
+from app.services.upload_limits import read_upload_limited
 from app.services.workspace_access import require_action
 from app.storage.knowledge_file_storage import KnowledgeFileStorage
 from app.log_writers.audit_log_writer import AuditLogWriter
@@ -26,9 +27,8 @@ logger = logging.getLogger(__name__)
 
 def _assert_team_source_readable(source, user: User) -> None:
     """BUG-086: 团队资料 API 不可读取他人 private 资料。"""
-    if source.visibility == "private" and source.owner_type == "user":
-        if source.owner_id != user.id:
-            raise HTTPException(404, "资料不存在")
+    if (source.visibility == "private" or source.owner_type == "user") and source.owner_id != user.id:
+        raise HTTPException(404, "资料不存在")
 
 
 def _source_to_info(source):
@@ -306,6 +306,7 @@ async def list_sources(
         visibility=visibility,
         offset=offset,
         limit=limit,
+        user_id=user.id,
     )
     return [_source_to_info(s) for s in sources]
 
@@ -448,10 +449,7 @@ async def upload_source(
         member = await ws_repo.get_member(workspace_id, user.id)
         require_action(member, "read", "上传个人资料")
 
-    content = await file.read()
-    max_size = 20 * 1024 * 1024
-    if len(content) > max_size:
-        raise HTTPException(413, "文件过大，最大允许 20MB")
+    content = await read_upload_limited(file, 20 * 1024 * 1024, filename=file.filename)
 
     filename = file.filename or "upload"
     stored = _knowledge_storage.save_upload(filename=filename, content=content)
@@ -472,10 +470,12 @@ async def upload_source(
     )
 
     # P2.A.3: 上传后同步完成解析正文的切块与 FTS5 索引；向量索引可由后续 embedding 流程补齐。
+    ingestion_service = None
     if stored.extracted_text and stored.extracted_text.strip():
         try:
             from app.services.knowledge_ingestion import KnowledgeIngestionService
-            await KnowledgeIngestionService(db).ingest_source(source.id)
+            ingestion_service = KnowledgeIngestionService(db)
+            await ingestion_service.ingest_source(source.id)
         except Exception as e:
             logger.error(f"[INGEST] 上传后自动入库失败 source_id={source.id}: {e}")
             source.status = "failed"
@@ -483,6 +483,8 @@ async def upload_source(
             raise HTTPException(500, "资料上传成功但入库失败，请稍后重试")
 
     await db.commit()
+    if ingestion_service is not None:
+        await ingestion_service.cleanup_pending_vectors()
 
     _audit_log_writer.write(
         "source.upload",
@@ -602,12 +604,13 @@ async def retrieve_knowledge(
 
     from app.services.retrieval_service import RetrievalService
     try:
-        retrieval = RetrievalService()
+        retrieval = RetrievalService(db_session=db)
         response = await retrieval.retrieve(
             query=body.query,
             workspace_id=workspace_id,
             filters=body.filters,
             top_k=body.top_k,
+            user_id=user.id,
         )
     except Exception as e:
         logger.error(f"[RETRIEVE] 检索失败: {e}")
@@ -672,6 +675,11 @@ async def ingest_source(
     if source is None or source.workspace_id != workspace_id:
         raise HTTPException(404, "资料不存在")
 
+    # SEC-18：个人私有资料只能由 owner 触发重新入库，避免其他 writer
+    # 删除并重建他人索引。
+    if (source.owner_type == "user" or source.visibility == "private") and source.owner_id != user.id:
+        raise HTTPException(404, "资料不存在")
+
     from app.services.knowledge_ingestion import KnowledgeIngestionService
     try:
         ingestion = KnowledgeIngestionService(db)
@@ -684,6 +692,7 @@ async def ingest_source(
         raise HTTPException(422, "资料无正文或入库失败")
 
     await db.commit()
+    await ingestion.cleanup_pending_vectors()
 
     _audit_log_writer.write(
         "source.ingest",
@@ -736,10 +745,7 @@ async def upload_personal_source(
     db: AsyncSession = Depends(get_db),
 ):
     """P5.A.1: 上传文件到个人私有资料库（owner_type=user, visibility=private）"""
-    content = await file.read()
-    max_size = 20 * 1024 * 1024
-    if len(content) > max_size:
-        raise HTTPException(413, "文件过大，最大允许 20MB")
+    content = await read_upload_limited(file, 20 * 1024 * 1024, filename=file.filename)
 
     filename = file.filename or "upload"
     stored = _knowledge_storage.save_upload(filename=filename, content=content)
@@ -764,10 +770,12 @@ async def upload_personal_source(
     )
 
     # 自动入库
+    ingestion_service = None
     if stored.extracted_text and stored.extracted_text.strip():
         try:
             from app.services.knowledge_ingestion import KnowledgeIngestionService
-            await KnowledgeIngestionService(db).ingest_source(source.id)
+            ingestion_service = KnowledgeIngestionService(db)
+            await ingestion_service.ingest_source(source.id)
         except Exception as e:
             logger.error(f"[INGEST] 个人资料上传后自动入库失败 source_id={source.id}: {e}")
             source.status = "failed"
@@ -775,6 +783,8 @@ async def upload_personal_source(
             raise HTTPException(500, "资料上传成功但入库失败，请稍后重试")
 
     await db.commit()
+    if ingestion_service is not None:
+        await ingestion_service.cleanup_pending_vectors()
 
     _audit_log_writer.write(
         "source.upload_personal",

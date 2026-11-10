@@ -63,7 +63,7 @@ const Chat = {
             const sel = document.getElementById('model-select');
             sel.innerHTML = models
                 .filter(m => m.enabled)
-                .map(m => `<option value="${m.id}">${m.name}</option>`)
+                .map(m => `<option value="${this._esc(m.id)}">${this._esc(m.name)}</option>`)
                 .join('');
             this._updateThinkingDropdown();
             sel.addEventListener('change', () => this._updateThinkingDropdown());
@@ -724,7 +724,8 @@ const Chat = {
             window.mermaid.initialize({
                 startOnLoad: false,
                 theme: 'base',
-                securityLevel: 'loose',
+                securityLevel: 'strict',
+                htmlLabels: false,
                 themeVariables: { fontSize: '14px' },
             });
 
@@ -736,7 +737,7 @@ const Chat = {
                     await window.mermaid.parse(code);
                     const id = 'chat-mermaid-' + Math.random().toString(36).substring(2, 8);
                     const { svg } = await window.mermaid.render(id, code);
-                    el.innerHTML = svg;
+                    el.innerHTML = this._sanitizeMermaidSvg(svg);
                     el.removeAttribute('data-mermaid');
                 } catch (renderErr) {
                     this._markMermaidChartsFailed([el], renderErr?.message || 'Mermaid render failed');
@@ -746,6 +747,18 @@ const Chat = {
             console.warn('Chat Mermaid render failed:', e);
             this._markMermaidChartsFailed(charts, e?.message || 'Mermaid render failed');
         }
+    },
+
+    _sanitizeMermaidSvg(svg) {
+        if (!svg) return '';
+        if (window.DOMPurify) {
+            return window.DOMPurify.sanitize(String(svg), {
+                USE_PROFILES: { svg: true, svgFilters: true },
+                FORBID_TAGS: ['script', 'foreignObject', 'iframe', 'object', 'embed'],
+                FORBID_ATTR: ['onload', 'onclick', 'onerror', 'onmouseover', 'onfocus', 'onbegin'],
+            });
+        }
+        return '';
     },
 
     _markMermaidChartsFailed(charts, reason = 'Mermaid render failed') {
@@ -772,6 +785,10 @@ const Chat = {
 
     _normalizeMermaidCode(code) {
         return String(code || '')
+            // BUG-216：移除 YAML frontmatter 与图内 init/config 指令，防止
+            // htmlLabels 等配置绕过 sanitizer 导致标签文字被清空。
+            .replace(/^---\s*\n[\s\S]*?\n---\s*\n?/, '')
+            .replace(/%%\{[\s\S]*?\}%%/g, '')
             .replace(/(^|[\s>|-])([A-Za-z][\w-]*)\[([^"\]\n][^\]\n]*)\]/g, (_, prefix, id, label) => {
                 return `${prefix}${id}["${this._escapeMermaidLabel(label)}"]`;
             })
